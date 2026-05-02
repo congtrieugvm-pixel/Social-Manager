@@ -329,9 +329,12 @@ export default function ReachDashboard() {
     setDraftFrom(parseISO(customFrom));
     setDraftTo(parseISO(customTo));
     setDraftPresetKey(presetLabel ? RANGE_PRESETS.find((p) => p.label === presetLabel)?.key ?? null : null);
-    // Anchor calendar so the LEFT pane shows the month containing draftFrom
-    // (or the previous month if draftFrom is in the same month as today).
-    const anchor = startOfMonth(parseISO(customFrom));
+    // Cap anchor so the RIGHT pane never displays a fully-future month.
+    // Right pane = anchor + 1; max allowed right pane = current month → max
+    // anchor = current month - 1.
+    const cap = startOfMonth(addMonths(new Date(), -1));
+    const fromMonth = startOfMonth(parseISO(customFrom));
+    const anchor = fromMonth.getTime() < cap.getTime() ? fromMonth : cap;
     setCalAnchor(anchor);
     setPickerOpen(true);
   }
@@ -357,8 +360,11 @@ export default function ReachDashboard() {
     setDraftFrom(from);
     setDraftTo(to);
     setDraftPresetKey(key);
-    // Re-anchor so the LEFT pane contains the start of the picked range.
-    setCalAnchor(startOfMonth(from));
+    // Re-anchor so the LEFT pane contains the start of the picked range,
+    // capped so the RIGHT pane never displays a fully-future month.
+    const cap = startOfMonth(addMonths(new Date(), -1));
+    const fromMonth = startOfMonth(from);
+    setCalAnchor(fromMonth.getTime() < cap.getTime() ? fromMonth : cap);
   }
   function pickCalDay(d: Date) {
     if (!draftFrom || (draftFrom && draftTo)) {
@@ -1793,6 +1799,12 @@ function DateRangePopover({
 }) {
   const leftMonth = calAnchor;
   const rightMonth = addMonths(calAnchor, 1);
+  const today = startOfDay(new Date());
+  // Right pane is at the current month → forward nav would show only future
+  // dates, so disable the `›` arrow there.
+  const rightAtCurrent =
+    rightMonth.getFullYear() === today.getFullYear() &&
+    rightMonth.getMonth() === today.getMonth();
   const canApply = !!(draftFrom && draftTo);
   const fromIsBeforeTo =
     draftFrom && draftTo && draftFrom.getTime() <= draftTo.getTime();
@@ -1876,6 +1888,7 @@ function DateRangePopover({
             month={leftMonth}
             from={normFrom}
             to={normTo}
+            maxDate={today}
             onPick={onPickDay}
             onPrev={() => setCalAnchor(addMonths(calAnchor, -1))}
             onNext={null}
@@ -1886,11 +1899,12 @@ function DateRangePopover({
             month={rightMonth}
             from={normFrom}
             to={normTo}
+            maxDate={today}
             onPick={onPickDay}
             onPrev={null}
-            onNext={() => setCalAnchor(addMonths(calAnchor, 1))}
+            onNext={rightAtCurrent ? null : () => setCalAnchor(addMonths(calAnchor, 1))}
             showPrev={false}
-            showNext
+            showNext={!rightAtCurrent}
           />
         </div>
 
@@ -1955,6 +1969,7 @@ function CalendarPane({
   month,
   from,
   to,
+  maxDate,
   onPick,
   onPrev,
   onNext,
@@ -1964,6 +1979,8 @@ function CalendarPane({
   month: Date;
   from: Date | null;
   to: Date | null;
+  /** Cells strictly after this date render as disabled (cannot select future). */
+  maxDate: Date;
   onPick: (d: Date) => void;
   onPrev: (() => void) | null;
   onNext: (() => void) | null;
@@ -2056,6 +2073,7 @@ function CalendarPane({
         {cells.map((c, i) => {
           const inMonth = c.getMonth() === month.getMonth();
           const ms = startOfDay(c).getTime();
+          const isFuture = ms > maxDate.getTime();
           const isStart = fromMs === ms;
           const isEnd = toMs === ms;
           const inRange =
@@ -2064,7 +2082,10 @@ function CalendarPane({
           return (
             <button
               key={i}
-              onClick={() => onPick(startOfDay(c))}
+              onClick={() => !isFuture && onPick(startOfDay(c))}
+              disabled={isFuture}
+              aria-disabled={isFuture}
+              title={isFuture ? "Không thể xem ngày tương lai" : undefined}
               style={{
                 padding: "6px 0",
                 border: "none",
@@ -2080,15 +2101,18 @@ function CalendarPane({
                   : inRange
                     ? "rgba(24,119,242,0.16)"
                     : "transparent",
-                color: isEdge
-                  ? "#fff"
-                  : inMonth
-                    ? "var(--ink)"
-                    : "var(--muted)",
-                cursor: "pointer",
+                color: isFuture
+                  ? "var(--line)"
+                  : isEdge
+                    ? "#fff"
+                    : inMonth
+                      ? "var(--ink)"
+                      : "var(--muted)",
+                cursor: isFuture ? "not-allowed" : "pointer",
                 fontFamily: "inherit",
                 fontSize: 11,
                 fontWeight: isEdge ? 700 : 400,
+                opacity: isFuture ? 0.5 : 1,
               }}
             >
               {c.getDate()}
