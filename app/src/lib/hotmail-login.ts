@@ -62,9 +62,16 @@ export async function startHotmailLogin(opts: {
   // playwright package + Chromium binary are NEVER copied into the CF
   // Worker bundle. The dynamic import only fires on Node where playwright
   // resolves normally from node_modules.
-  const playwrightSpec = ["play", "wright"].join("");
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const { chromium } = (await import(/* webpackIgnore: true */ playwrightSpec)) as any;
+  // Function-constructor dynamic import. Turbopack constant-folds string
+  // expressions like `["play","wright"].join("")` back to the literal
+  // "playwright", and esbuild then tries to resolve it during the CF bundle
+  // step (after clean-cf-deps removed the package). Wrapping the import in
+  // `new Function(...)` produces an opaque body that NEITHER bundler can
+  // statically analyze — the resolution is fully deferred to runtime, where
+  // we never reach this code on Cloudflare anyway (IS_EDGE guard above).
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-implied-eval
+  const dynImport = new Function("spec", "return import(spec)") as (s: string) => Promise<any>;
+  const { chromium } = await dynImport(["play", "wright"].join(""));
   const userDataDir = profileDir(opts.profileKey ?? opts.accountId);
   await fs.mkdir(userDataDir, { recursive: true });
 
