@@ -637,13 +637,12 @@ export default function ReachDashboard() {
     setSyncMsg("");
     setSyncErr("");
     try {
-      // Snapshot insights always pull the last 365 days (library chunks >93d
-      // windows). The display range selector only filters what the chart
-      // shows — the underlying snapshot covers a full year.
-      // Earnings, by contrast, are stored as a SINGLE total per fanpage (no
-      // daily breakdown), so we sync them for the user's currently-selected
-      // window so the displayed number matches the picker.
-      const SYNC_DAYS = 365;
+      // Snapshot insights pull the last 30 days. FB Insights aggregates
+      // monthly so a 30-day window is the natural reporting period and
+      // keeps Graph API calls fast. Earnings sync to the user-selected
+      // picker range (no daily breakdown so the total must match the
+      // displayed window).
+      const SYNC_DAYS = 30;
       const [insightsRes, earningsRes] = await Promise.all([
         fetch("/api/fanpages/insights/batch", {
           method: "POST",
@@ -784,8 +783,12 @@ export default function ReachDashboard() {
     return out;
   }, [dailySeries, prevTotals]);
 
+  // "Top page reach · Tháng này" — locked to reach metric (not the user's
+  // activeMetric tab), and to the latest snapshot which now represents the
+  // last 30 days of sync. Each value = the single most recent snapshot per
+  // fanpage so it reflects whatever was last pulled from FB Insights.
   const topFanpages = useMemo(() => {
-    const latest = metricStats[activeMetric].perFpLatest;
+    const latest = metricStats.pageImpressionsUnique.perFpLatest;
     const rows: { id: number; name: string; value: number; pictureUrl: string | null; link: string }[] = [];
     for (const [fpId, v] of latest) {
       const fp = fanpages.find((f) => f.id === fpId);
@@ -799,7 +802,7 @@ export default function ReachDashboard() {
     }
     rows.sort((a, b) => b.value - a.value);
     return rows;
-  }, [metricStats, activeMetric, fanpages]);
+  }, [metricStats, fanpages]);
 
   const active = metricStats[activeMetric];
 
@@ -936,7 +939,7 @@ export default function ReachDashboard() {
             style={{ padding: "6px 12px", fontSize: 11 }}
             title={`Gọi Graph API cho ${selectedIds.size} fanpage — luôn pull 365 ngày, hiển thị filter theo ${rangeLabel}`}
           >
-            {syncing ? "Đang cập nhật…" : `⟳ Cập nhật reach · 365d`}
+            {syncing ? "Đang cập nhật…" : `⟳ Cập nhật reach · 30d`}
           </button>
           <button
             onClick={syncEarningsOnly}
@@ -1775,7 +1778,7 @@ export default function ReachDashboard() {
                   marginBottom: 10,
                 }}
               >
-                Top fanpage · {METRIC_DEFS[activeMetric].title}
+                Top page reach · Tháng này
               </div>
               {topFanpages.length === 0 && (
                 <div className="mono" style={{ fontSize: 10, color: "var(--muted)", padding: 12 }}>
@@ -1783,7 +1786,10 @@ export default function ReachDashboard() {
                 </div>
               )}
               {topFanpages.map((fp, i) => {
-                const pct = active.total > 0 ? (fp.value / active.total) * 100 : 0;
+                // Percentage relative to the locked reach metric total (not
+                // active.total which follows whatever tab the user picked).
+                const reachTotal = metricStats.pageImpressionsUnique.total;
+                const pct = reachTotal > 0 ? (fp.value / reachTotal) * 100 : 0;
                 return (
                   <div
                     key={fp.id}
@@ -1857,7 +1863,7 @@ export default function ReachDashboard() {
                         style={{
                           width: `${Math.min(100, pct)}%`,
                           height: "100%",
-                          background: METRIC_DEFS[activeMetric].color,
+                          background: METRIC_DEFS.pageImpressionsUnique.color,
                         }}
                       />
                     </div>
