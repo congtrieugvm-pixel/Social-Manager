@@ -53,15 +53,26 @@ export async function POST(req: Request) {
     );
   }
 
-  const { token } = await createSession(user.id);
-  const jar = await cookies();
-  jar.set(SESSION_COOKIE, token, COOKIE_OPTIONS);
-  return NextResponse.json({
-    ok: true,
-    user: {
-      id: user.id,
-      username: user.username,
-      role: user.role,
-    },
-  });
+  try {
+    const { token } = await createSession(user.id);
+    console.log("[login] session created, token len:", token.length);
+    const jar = await cookies();
+    jar.set(SESSION_COOKIE, token, COOKIE_OPTIONS);
+    console.log("[login] cookie set OK");
+    return NextResponse.json({
+      ok: true,
+      user: {
+        id: user.id,
+        username: user.username,
+        role: user.role,
+      },
+    });
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    console.log("[login] success-path err:", msg);
+    return NextResponse.json(
+      { error: `Lỗi tạo session: ${msg}` },
+      { status: 500 },
+    );
+  }
 }
