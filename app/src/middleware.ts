@@ -51,8 +51,12 @@ export function middleware(req: NextRequest) {
 }
 
 export const config = {
-  // Skip Next internals + static assets so middleware doesn't run for them.
+  // Skip Next internals, static assets, AND all /api/* — opennextjs's
+  // middleware adapter on Cloudflare Workers consumes POST bodies before
+  // they reach route handlers, breaking req.json()/req.text(). API routes
+  // self-protect via requireUser() / public-prefix checks; middleware was
+  // only redundant convenience there.
   matcher: [
-    "/((?!_next/|favicon\\.ico|.*\\.(?:png|jpg|jpeg|gif|svg|webp|ico|css|js|map|woff2?)$).*)",
+    "/((?!_next/|api/|favicon\\.ico|.*\\.(?:png|jpg|jpeg|gif|svg|webp|ico|css|js|map|woff2?)$).*)",
   ],
 };
