@@ -600,7 +600,7 @@ function CalendarPane({
                     ? "rgba(24,119,242,0.16)"
                     : "transparent",
                 color: isFuture
-                  ? "var(--line)"
+                  ? "var(--muted)"
                   : isEdge
                     ? "#fff"
                     : "var(--ink)",
@@ -608,7 +608,10 @@ function CalendarPane({
                 fontFamily: "inherit",
                 fontSize: 11,
                 fontWeight: isEdge ? 700 : 400,
-                opacity: isFuture ? 0.5 : 1,
+                // Future cells stay readable (muted ink) but visually
+                // dimmed so user can still see which dates exist; cell
+                // becomes clickable as soon as the day arrives.
+                opacity: isFuture ? 0.55 : 1,
               }}
             >
               {c.getDate()}
