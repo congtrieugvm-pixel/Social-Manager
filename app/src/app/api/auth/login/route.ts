@@ -16,24 +16,17 @@ interface Body {
 }
 
 export async function POST(req: Request) {
+  // unenv (CF Workers' Node-compat polyfill used by opennextjs) doesn't
+  // implement async iteration on Readable, so req.json() / req.text() /
+  // getReader() / Response(req.body) all throw before delivering body.
+  // arrayBuffer() routes through a non-iterating path that DOES work.
   let body: Body = {};
-  console.log("[login] hasBody:", !!req.body, "method:", req.method, "ct:", req.headers.get("content-type"));
+  console.log("[login] hasBody:", !!req.body, "ct:", req.headers.get("content-type"));
   try {
-    if (req.body) {
-      const reader = req.body.getReader();
-      const decoder = new TextDecoder();
-      let text = "";
-      // eslint-disable-next-line no-constant-condition
-      while (true) {
-        const { done, value } = await reader.read();
-        console.log("[login] chunk done:", done, "valueLen:", value?.length ?? 0);
-        if (done) break;
-        if (value) text += decoder.decode(value, { stream: true });
-      }
-      text += decoder.decode();
-      console.log("[login] total text length:", text.length, "first40:", JSON.stringify(text.slice(0, 40)));
-      if (text) body = JSON.parse(text) as Body;
-    }
+    const buf = await req.arrayBuffer();
+    const text = new TextDecoder().decode(buf);
+    console.log("[login] arrayBuffer len:", buf.byteLength, "first40:", JSON.stringify(text.slice(0, 40)));
+    if (text) body = JSON.parse(text) as Body;
   } catch (e) {
     console.log("[login] err:", e instanceof Error ? e.message : String(e));
   }
