@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 
 interface FanpageRow {
@@ -118,6 +118,138 @@ function daysAgoISO(n: number): string {
   return new Date(Date.now() - n * 86_400_000).toISOString().slice(0, 10);
 }
 
+// ── Date helpers for the range picker ────────────────────────────
+function toISO(d: Date): string {
+  // Local-tz YYYY-MM-DD (avoids tz shift from .toISOString()).
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+}
+function parseISO(s: string): Date {
+  const [y, m, d] = s.split("-").map(Number);
+  return new Date(y, (m ?? 1) - 1, d ?? 1);
+}
+function startOfDay(d: Date): Date {
+  return new Date(d.getFullYear(), d.getMonth(), d.getDate());
+}
+function addDays(d: Date, n: number): Date {
+  const x = new Date(d);
+  x.setDate(x.getDate() + n);
+  return x;
+}
+function addMonths(d: Date, n: number): Date {
+  const x = new Date(d);
+  x.setMonth(x.getMonth() + n);
+  return x;
+}
+function startOfWeek(d: Date): Date {
+  // Monday-anchored (matches VN convention even though calendar shows CN/T2-T7).
+  const x = startOfDay(d);
+  const day = x.getDay(); // 0=Sun..6=Sat
+  const offset = day === 0 ? -6 : 1 - day;
+  return addDays(x, offset);
+}
+function startOfMonth(d: Date): Date {
+  return new Date(d.getFullYear(), d.getMonth(), 1);
+}
+function endOfMonth(d: Date): Date {
+  return new Date(d.getFullYear(), d.getMonth() + 1, 0);
+}
+function startOfYear(d: Date): Date {
+  return new Date(d.getFullYear(), 0, 1);
+}
+function fmtVnDay(d: Date): string {
+  return `${d.getDate()} Tháng ${d.getMonth() + 1}, ${d.getFullYear()}`;
+}
+function fmtRange(fromIso: string, toIso: string): string {
+  if (!fromIso || !toIso) return "—";
+  return `${fmtVnDay(parseISO(fromIso))} – ${fmtVnDay(parseISO(toIso))}`;
+}
+
+interface PickerPreset {
+  key: string;
+  label: string;
+  compute(): { from: Date; to: Date };
+}
+const RANGE_PRESETS: readonly PickerPreset[] = [
+  {
+    key: "yesterday",
+    label: "Hôm qua",
+    compute() {
+      const y = addDays(startOfDay(new Date()), -1);
+      return { from: y, to: y };
+    },
+  },
+  {
+    key: "last7",
+    label: "7 ngày qua",
+    compute() {
+      const t = startOfDay(new Date());
+      return { from: addDays(t, -6), to: t };
+    },
+  },
+  {
+    key: "last28",
+    label: "28 ngày qua",
+    compute() {
+      const t = startOfDay(new Date());
+      return { from: addDays(t, -27), to: t };
+    },
+  },
+  {
+    key: "last90",
+    label: "90 ngày qua",
+    compute() {
+      const t = startOfDay(new Date());
+      return { from: addDays(t, -89), to: t };
+    },
+  },
+  {
+    key: "thisWeek",
+    label: "Tuần này",
+    compute() {
+      const t = startOfDay(new Date());
+      return { from: startOfWeek(t), to: t };
+    },
+  },
+  {
+    key: "thisMonth",
+    label: "Tháng này",
+    compute() {
+      const t = startOfDay(new Date());
+      return { from: startOfMonth(t), to: t };
+    },
+  },
+  {
+    key: "thisYear",
+    label: "Năm nay",
+    compute() {
+      const t = startOfDay(new Date());
+      return { from: startOfYear(t), to: t };
+    },
+  },
+  {
+    key: "lastWeek",
+    label: "Tuần trước",
+    compute() {
+      const w = startOfWeek(new Date());
+      return { from: addDays(w, -7), to: addDays(w, -1) };
+    },
+  },
+  {
+    key: "lastMonth",
+    label: "Tháng trước",
+    compute() {
+      const m = startOfMonth(new Date());
+      return { from: addMonths(m, -1), to: addDays(m, -1) };
+    },
+  },
+];
+const PRESETS_BY_KEY: Record<string, PickerPreset> = Object.fromEntries(
+  RANGE_PRESETS.map((p) => [p.key, p]),
+);
+
 export default function ReachDashboard() {
   const [fanpages, setFanpages] = useState<FanpageRow[]>([]);
   const [groups, setGroups] = useState<GroupRow[]>([]);
@@ -127,9 +259,25 @@ export default function ReachDashboard() {
   >("all");
   const [snapshots, setSnapshots] = useState<SnapshotRow[]>([]);
   const [activeMetric, setActiveMetric] = useState<Metric>("pageImpressionsUnique");
-  const [rangeMode, setRangeMode] = useState<RangeMode>(30);
-  const [customFrom, setCustomFrom] = useState(daysAgoISO(30));
+  // Default range = last 28 days (matches FB Insights "monthly" convention).
+  // rangeMode kept as legacy state (used by snapshots query path) but the new
+  // picker always sets rangeMode="custom" + explicit customFrom/customTo.
+  const [rangeMode, setRangeMode] = useState<RangeMode>("custom");
+  const [customFrom, setCustomFrom] = useState(daysAgoISO(27));
   const [customTo, setCustomTo] = useState(todayISO());
+  // Tracks which preset (if any) the current range came from — used as the
+  // dropdown trigger label. Cleared to `null` when user picks dates manually
+  // on the calendar (label falls back to "Tùy chọn").
+  const [presetLabel, setPresetLabel] = useState<string | null>("28 ngày qua");
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const [draftFrom, setDraftFrom] = useState<Date | null>(null);
+  const [draftTo, setDraftTo] = useState<Date | null>(null);
+  const [draftPresetKey, setDraftPresetKey] = useState<string | null>(null);
+  // Anchor month for the LEFT calendar pane (right pane = anchor + 1 month).
+  const [calAnchor, setCalAnchor] = useState<Date>(() =>
+    startOfMonth(addMonths(new Date(), -1)),
+  );
+  const pickerRef = useRef<HTMLDivElement | null>(null);
   const [search, setSearch] = useState("");
   const [loadingSnap, setLoadingSnap] = useState(false);
   const [syncing, setSyncing] = useState(false);
@@ -174,6 +322,71 @@ export default function ReachDashboard() {
     if (rangeBody.from && rangeBody.to) return `from=${rangeBody.from}&to=${rangeBody.to}`;
     return `days=${rangeBody.days ?? 30}`;
   }, [rangeBody]);
+
+  // ── Range-picker controls ──────────────────────────────────────
+  function openPicker() {
+    // Seed draft from current applied state.
+    setDraftFrom(parseISO(customFrom));
+    setDraftTo(parseISO(customTo));
+    setDraftPresetKey(presetLabel ? RANGE_PRESETS.find((p) => p.label === presetLabel)?.key ?? null : null);
+    // Anchor calendar so the LEFT pane shows the month containing draftFrom
+    // (or the previous month if draftFrom is in the same month as today).
+    const anchor = startOfMonth(parseISO(customFrom));
+    setCalAnchor(anchor);
+    setPickerOpen(true);
+  }
+  function closePicker() {
+    setPickerOpen(false);
+  }
+  function applyDraft() {
+    if (!draftFrom || !draftTo) return;
+    const [a, b] =
+      draftFrom.getTime() <= draftTo.getTime()
+        ? [draftFrom, draftTo]
+        : [draftTo, draftFrom];
+    setCustomFrom(toISO(a));
+    setCustomTo(toISO(b));
+    setRangeMode("custom");
+    setPresetLabel(draftPresetKey ? PRESETS_BY_KEY[draftPresetKey]?.label ?? null : null);
+    setPickerOpen(false);
+  }
+  function pickPreset(key: string) {
+    const p = PRESETS_BY_KEY[key];
+    if (!p) return;
+    const { from, to } = p.compute();
+    setDraftFrom(from);
+    setDraftTo(to);
+    setDraftPresetKey(key);
+    // Re-anchor so the LEFT pane contains the start of the picked range.
+    setCalAnchor(startOfMonth(from));
+  }
+  function pickCalDay(d: Date) {
+    if (!draftFrom || (draftFrom && draftTo)) {
+      // Start a new selection.
+      setDraftFrom(d);
+      setDraftTo(null);
+      setDraftPresetKey(null);
+    } else {
+      // Second click — set the other endpoint.
+      setDraftTo(d);
+      setDraftPresetKey(null);
+    }
+  }
+  // Click-outside closes the picker without applying.
+  useEffect(() => {
+    if (!pickerOpen) return;
+    function onDocClick(e: MouseEvent) {
+      if (!pickerRef.current) return;
+      if (!pickerRef.current.contains(e.target as Node)) closePicker();
+    }
+    document.addEventListener("mousedown", onDocClick);
+    return () => document.removeEventListener("mousedown", onDocClick);
+  }, [pickerOpen]);
+
+  const triggerLabel = useMemo(() => {
+    const range = fmtRange(customFrom, customTo);
+    return presetLabel ? `${presetLabel}: ${range}` : range;
+  }, [presetLabel, customFrom, customTo]);
 
   const rangeLabel = useMemo(() => {
     if (rangeMode === "custom") {
@@ -1302,97 +1515,51 @@ export default function ReachDashboard() {
             </div>
           )}
 
-          {/* Range selector */}
+          {/* Range selector — dropdown trigger + popover (FB-style) */}
           <div
+            ref={pickerRef}
             style={{
-              display: "flex",
-              alignItems: "center",
-              gap: 8,
-              flexWrap: "wrap",
+              position: "relative",
               marginBottom: 10,
-              padding: "8px 12px",
-              border: "1px solid var(--line)",
-              borderRadius: 8,
-              background: "var(--bg)",
+              display: "inline-block",
             }}
           >
-            <span
-              className="mono"
-              style={{
-                fontSize: 10,
-                letterSpacing: "0.1em",
-                textTransform: "uppercase",
-                color: "var(--muted)",
-              }}
-            >
-              Thời gian
-            </span>
-            {([7, 30, 90] as const).map((n) => {
-              const on = rangeMode === n;
-              return (
-                <button
-                  key={n}
-                  onClick={() => setRangeMode(n)}
-                  className="pill"
-                  style={{
-                    padding: "4px 12px",
-                    fontSize: 11,
-                    borderRadius: 999,
-                    border: on ? "1px solid var(--ink)" : "1px solid var(--line)",
-                    background: on ? "var(--ink)" : "transparent",
-                    color: on ? "var(--paper)" : "var(--ink)",
-                    cursor: "pointer",
-                  }}
-                >
-                  {n} ngày
-                </button>
-              );
-            })}
             <button
-              onClick={() => setRangeMode("custom")}
-              className="pill"
+              onClick={() => (pickerOpen ? closePicker() : openPicker())}
               style={{
-                padding: "4px 12px",
-                fontSize: 11,
-                borderRadius: 999,
-                border: rangeMode === "custom" ? "1px solid var(--ink)" : "1px solid var(--line)",
-                background: rangeMode === "custom" ? "var(--ink)" : "transparent",
-                color: rangeMode === "custom" ? "var(--paper)" : "var(--ink)",
+                display: "inline-flex",
+                alignItems: "center",
+                gap: 8,
+                padding: "7px 14px",
+                border: "1px solid var(--line)",
+                borderRadius: 8,
+                background: "var(--bg)",
+                color: "var(--ink)",
                 cursor: "pointer",
+                fontFamily: "inherit",
+                fontSize: 12,
+                fontWeight: 500,
               }}
+              aria-haspopup="dialog"
+              aria-expanded={pickerOpen}
             >
-              Tùy chọn
+              <span aria-hidden>📅</span>
+              <span>{triggerLabel}</span>
+              <span style={{ color: "var(--muted)", fontSize: 10 }}>▼</span>
             </button>
-            {rangeMode === "custom" && (
-              <>
-                <input
-                  type="date"
-                  className="input"
-                  value={customFrom}
-                  max={customTo || undefined}
-                  onChange={(e) => setCustomFrom(e.target.value)}
-                  style={{ padding: "3px 8px", fontSize: 11 }}
-                />
-                <span className="mono" style={{ fontSize: 10, color: "var(--muted)" }}>
-                  →
-                </span>
-                <input
-                  type="date"
-                  className="input"
-                  value={customTo}
-                  min={customFrom || undefined}
-                  onChange={(e) => setCustomTo(e.target.value)}
-                  style={{ padding: "3px 8px", fontSize: 11 }}
-                />
-              </>
+            {pickerOpen && (
+              <DateRangePopover
+                draftFrom={draftFrom}
+                draftTo={draftTo}
+                draftPresetKey={draftPresetKey}
+                calAnchor={calAnchor}
+                setCalAnchor={setCalAnchor}
+                onPickPreset={pickPreset}
+                onPickDay={pickCalDay}
+                onCancel={closePicker}
+                onApply={applyDraft}
+              />
             )}
-            <span style={{ flex: 1 }} />
-            <span
-              className="mono"
-              style={{ fontSize: 10, color: "var(--muted)", letterSpacing: "0.06em" }}
-            >
-              {rangeLabel}
-            </span>
           </div>
 
           {/* Chart + breakdown */}
@@ -1595,6 +1762,342 @@ function empty() {
     seriesTotal: [],
     perFpLatest: new Map<number, number>(),
   };
+}
+
+// ────────────────────────────────────────────────────────────────
+// Date range picker (popover with preset list + 2-month calendar)
+// ────────────────────────────────────────────────────────────────
+
+const VN_DOW = ["CN", "T2", "T3", "T4", "T5", "T6", "T7"] as const;
+
+function DateRangePopover({
+  draftFrom,
+  draftTo,
+  draftPresetKey,
+  calAnchor,
+  setCalAnchor,
+  onPickPreset,
+  onPickDay,
+  onCancel,
+  onApply,
+}: {
+  draftFrom: Date | null;
+  draftTo: Date | null;
+  draftPresetKey: string | null;
+  calAnchor: Date;
+  setCalAnchor: (d: Date) => void;
+  onPickPreset: (key: string) => void;
+  onPickDay: (d: Date) => void;
+  onCancel: () => void;
+  onApply: () => void;
+}) {
+  const leftMonth = calAnchor;
+  const rightMonth = addMonths(calAnchor, 1);
+  const canApply = !!(draftFrom && draftTo);
+  const fromIsBeforeTo =
+    draftFrom && draftTo && draftFrom.getTime() <= draftTo.getTime();
+  const [normFrom, normTo] = fromIsBeforeTo
+    ? [draftFrom, draftTo]
+    : draftFrom && draftTo
+      ? [draftTo, draftFrom]
+      : [draftFrom, draftTo];
+
+  return (
+    <div
+      role="dialog"
+      style={{
+        position: "absolute",
+        top: "calc(100% + 6px)",
+        left: 0,
+        zIndex: 50,
+        display: "grid",
+        gridTemplateColumns: "180px 1fr",
+        gap: 0,
+        background: "var(--paper)",
+        border: "1px solid var(--line)",
+        borderRadius: 10,
+        boxShadow: "0 8px 24px rgba(0,0,0,0.16)",
+        minWidth: 640,
+      }}
+    >
+      {/* Preset list (left column) */}
+      <ul
+        style={{
+          margin: 0,
+          padding: "8px 4px",
+          listStyle: "none",
+          borderRight: "1px solid var(--line)",
+        }}
+      >
+        {RANGE_PRESETS.map((p) => {
+          const on = draftPresetKey === p.key;
+          return (
+            <li key={p.key}>
+              <button
+                onClick={() => onPickPreset(p.key)}
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 8,
+                  width: "100%",
+                  padding: "7px 10px",
+                  background: on ? "rgba(94,106,210,0.10)" : "transparent",
+                  border: "none",
+                  borderRadius: 6,
+                  cursor: "pointer",
+                  color: "var(--ink)",
+                  fontFamily: "inherit",
+                  fontSize: 12,
+                  textAlign: "left",
+                }}
+              >
+                <span
+                  aria-hidden
+                  style={{
+                    width: 12,
+                    height: 12,
+                    borderRadius: 999,
+                    border: on ? "4px solid var(--accent, #1877f2)" : "1px solid var(--line)",
+                    background: on ? "var(--paper)" : "transparent",
+                    flexShrink: 0,
+                  }}
+                />
+                {p.label}
+              </button>
+            </li>
+          );
+        })}
+      </ul>
+
+      {/* Calendars (right column) */}
+      <div style={{ padding: 12 }}>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
+          <CalendarPane
+            month={leftMonth}
+            from={normFrom}
+            to={normTo}
+            onPick={onPickDay}
+            onPrev={() => setCalAnchor(addMonths(calAnchor, -1))}
+            onNext={null}
+            showPrev
+            showNext={false}
+          />
+          <CalendarPane
+            month={rightMonth}
+            from={normFrom}
+            to={normTo}
+            onPick={onPickDay}
+            onPrev={null}
+            onNext={() => setCalAnchor(addMonths(calAnchor, 1))}
+            showPrev={false}
+            showNext
+          />
+        </div>
+
+        {/* Footer */}
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 8,
+            marginTop: 14,
+            paddingTop: 10,
+            borderTop: "1px solid var(--line)",
+          }}
+        >
+          <span style={{ fontSize: 12, color: "var(--ink)" }}>
+            {normFrom && normTo
+              ? `${fmtVnDay(normFrom)} - ${fmtVnDay(normTo)}`
+              : normFrom
+                ? `${fmtVnDay(normFrom)} - chọn ngày kết thúc…`
+                : "Chọn ngày bắt đầu…"}
+          </span>
+          <span style={{ flex: 1 }} />
+          <button
+            onClick={onCancel}
+            style={{
+              padding: "6px 14px",
+              border: "1px solid var(--line)",
+              borderRadius: 6,
+              background: "transparent",
+              cursor: "pointer",
+              fontFamily: "inherit",
+              fontSize: 12,
+              color: "var(--ink)",
+            }}
+          >
+            Hủy
+          </button>
+          <button
+            onClick={onApply}
+            disabled={!canApply}
+            style={{
+              padding: "6px 16px",
+              border: "1px solid var(--accent, #1877f2)",
+              borderRadius: 6,
+              background: canApply ? "var(--accent, #1877f2)" : "var(--line)",
+              color: canApply ? "var(--paper, #fff)" : "var(--muted)",
+              cursor: canApply ? "pointer" : "not-allowed",
+              fontFamily: "inherit",
+              fontSize: 12,
+              fontWeight: 600,
+            }}
+          >
+            Cập nhật
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function CalendarPane({
+  month,
+  from,
+  to,
+  onPick,
+  onPrev,
+  onNext,
+  showPrev,
+  showNext,
+}: {
+  month: Date;
+  from: Date | null;
+  to: Date | null;
+  onPick: (d: Date) => void;
+  onPrev: (() => void) | null;
+  onNext: (() => void) | null;
+  showPrev: boolean;
+  showNext: boolean;
+}) {
+  // Build the 6×7 day grid for the given month. Cells before the 1st show
+  // grey-out previous-month days (clickable — the picker re-anchors), same
+  // for trailing next-month days.
+  const first = startOfMonth(month);
+  const lead = first.getDay(); // 0..6 (Sun-first)
+  const last = endOfMonth(month);
+  const cells: Date[] = [];
+  // Lead from prev month
+  for (let i = lead; i > 0; i--) cells.push(addDays(first, -i));
+  for (let d = 1; d <= last.getDate(); d++) cells.push(new Date(month.getFullYear(), month.getMonth(), d));
+  while (cells.length % 7 !== 0 || cells.length < 42) cells.push(addDays(cells[cells.length - 1], 1));
+
+  const fromMs = from ? from.getTime() : null;
+  const toMs = to ? to.getTime() : null;
+
+  return (
+    <div>
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          marginBottom: 6,
+        }}
+      >
+        <button
+          onClick={() => onPrev?.()}
+          disabled={!showPrev || !onPrev}
+          style={{
+            visibility: showPrev ? "visible" : "hidden",
+            border: "none",
+            background: "transparent",
+            cursor: "pointer",
+            fontSize: 16,
+            color: "var(--ink)",
+            padding: 4,
+          }}
+          aria-label="Tháng trước"
+        >
+          ‹
+        </button>
+        <div style={{ fontSize: 13, fontWeight: 600, color: "var(--ink)" }}>
+          Tháng {month.getMonth() + 1} {month.getFullYear()}
+        </div>
+        <button
+          onClick={() => onNext?.()}
+          disabled={!showNext || !onNext}
+          style={{
+            visibility: showNext ? "visible" : "hidden",
+            border: "none",
+            background: "transparent",
+            cursor: "pointer",
+            fontSize: 16,
+            color: "var(--ink)",
+            padding: 4,
+          }}
+          aria-label="Tháng sau"
+        >
+          ›
+        </button>
+      </div>
+
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns: "repeat(7, 1fr)",
+          gap: 2,
+          fontSize: 11,
+        }}
+      >
+        {VN_DOW.map((d) => (
+          <div
+            key={d}
+            style={{
+              textAlign: "center",
+              color: "var(--muted)",
+              padding: "4px 0",
+              fontWeight: 600,
+            }}
+          >
+            {d}
+          </div>
+        ))}
+        {cells.map((c, i) => {
+          const inMonth = c.getMonth() === month.getMonth();
+          const ms = startOfDay(c).getTime();
+          const isStart = fromMs === ms;
+          const isEnd = toMs === ms;
+          const inRange =
+            fromMs !== null && toMs !== null && ms > fromMs && ms < toMs;
+          const isEdge = isStart || isEnd;
+          return (
+            <button
+              key={i}
+              onClick={() => onPick(startOfDay(c))}
+              style={{
+                padding: "6px 0",
+                border: "none",
+                borderRadius: isEdge
+                  ? isStart && isEnd
+                    ? 6
+                    : isStart
+                      ? "6px 0 0 6px"
+                      : "0 6px 6px 0"
+                  : 0,
+                background: isEdge
+                  ? "var(--accent, #1877f2)"
+                  : inRange
+                    ? "rgba(24,119,242,0.16)"
+                    : "transparent",
+                color: isEdge
+                  ? "#fff"
+                  : inMonth
+                    ? "var(--ink)"
+                    : "var(--muted)",
+                cursor: "pointer",
+                fontFamily: "inherit",
+                fontSize: 11,
+                fontWeight: isEdge ? 700 : 400,
+              }}
+            >
+              {c.getDate()}
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
 }
 
 function FilterChip({

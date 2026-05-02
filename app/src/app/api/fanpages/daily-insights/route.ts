@@ -33,18 +33,21 @@ function valueAsNumber(v: number | Record<string, number>): number {
 }
 
 /**
- * GET /api/fanpages/daily-insights?ids=1,2,3&metric=pageImpressionsUnique&days=365
+ * GET /api/fanpages/daily-insights?ids=1,2,3&metric=pageImpressionsUnique
+ *   &days=365                        — last N days (truncates series end-aligned to today)
+ *   &from=<epochSec>&to=<epochSec>   — explicit window (overrides `days` if both set)
  *
  * Reads `insights_json` for the given fanpages, extracts daily values for the
  * requested metric, and aggregates (sums) by day across all fanpages so the
- * reach dashboard can plot a real daily time series. Days param truncates the
- * series to the most recent N days; pass 0 or omit for everything in storage.
+ * reach dashboard can plot a real daily time series.
  */
 export async function GET(req: Request) {
   const url = new URL(req.url);
   const idsParam = url.searchParams.get("ids") ?? "";
   const metric = url.searchParams.get("metric") ?? "pageImpressionsUnique";
   const days = Number(url.searchParams.get("days")) || 0;
+  const fromSec = Number(url.searchParams.get("from")) || 0;
+  const toSec = Number(url.searchParams.get("to")) || 0;
 
   const ids = idsParam
     .split(",")
@@ -100,8 +103,10 @@ export async function GET(req: Request) {
     .filter((p) => Number.isFinite(p.ts) && p.ts > 0)
     .sort((a, b) => a.ts - b.ts);
 
-  // Truncate to last N days if requested.
-  if (days > 0 && series.length > 0) {
+  // Filter by explicit window (preferred) or last-N-days truncation.
+  if (fromSec > 0 && toSec > 0) {
+    series = series.filter((p) => p.ts >= fromSec && p.ts <= toSec);
+  } else if (days > 0 && series.length > 0) {
     const cutoff = Math.floor(Date.now() / 1000) - days * 86_400;
     series = series.filter((p) => p.ts >= cutoff);
   }
