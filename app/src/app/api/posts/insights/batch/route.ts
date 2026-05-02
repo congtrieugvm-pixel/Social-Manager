@@ -114,7 +114,7 @@ export async function POST(req: Request) {
         ? overrideTargetId
         : fpId;
     const enc = fpById.get(sourceId)?.encPageAccessToken;
-    tokenMap.set(fpId, enc ? decrypt(enc) : null);
+    tokenMap.set(fpId, enc ? await decrypt(enc) : null);
   }
 
   const results: Item[] = [];

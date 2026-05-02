@@ -70,7 +70,7 @@ export async function POST(req: Request) {
 
   // Sequential to avoid hammering Graph API / hitting rate limits.
   for (const r of rows) {
-    const token = decrypt(r.encPageAccessToken);
+    const token = await decrypt(r.encPageAccessToken);
     if (!token) {
       results.push({
         id: r.id,

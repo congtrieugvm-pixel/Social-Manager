@@ -29,7 +29,7 @@ export async function GET(req: Request) {
     n: Math.random().toString(36).slice(2, 10),
     e: Math.floor(Date.now() / 1000) + 600, // 10-minute window
   });
-  const state = encrypt(payload);
+  const state = await encrypt(payload);
   if (!state) {
     return NextResponse.json({ error: "Lỗi tạo state" }, { status: 500 });
   }

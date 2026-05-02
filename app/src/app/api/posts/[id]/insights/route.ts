@@ -34,7 +34,7 @@ export async function POST(_req: Request, ctx: { params: Promise<{ id: string }>
     .select({ encPageAccessToken: fanpages.encPageAccessToken })
     .from(fanpages)
     .where(eq(fanpages.id, row.fanpageId));
-  const token = decrypt(fp?.encPageAccessToken ?? null);
+  const token = await decrypt(fp?.encPageAccessToken ?? null);
   if (!token) {
     return NextResponse.json(
       { error: "Fanpage chưa có page token" },

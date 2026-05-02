@@ -30,7 +30,7 @@ export async function POST(_req: Request, ctx: { params: Promise<{ id: string }>
     return NextResponse.json({ error: "Không tìm thấy fanpage" }, { status: 404 });
   }
 
-  const pageToken = decrypt(row.encPageAccessToken);
+  const pageToken = await decrypt(row.encPageAccessToken);
   if (!pageToken) {
     return NextResponse.json(
       { error: "Fanpage chưa có page access token — sync lại từ tài khoản chủ" },

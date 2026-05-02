@@ -150,11 +150,11 @@ export async function POST(req: Request) {
     .insert(facebookAccounts)
     .values({
       username,
-      encPassword: encrypt(body.password ?? ""),
-      encEmail: encrypt(body.email ?? ""),
-      enc2fa: encrypt(body.twofa ?? ""),
-      encEmailPassword: encrypt(body.emailPassword ?? ""),
-      encAccessToken: body.token ? encrypt(body.token) : null,
+      encPassword: await encrypt(body.password ?? ""),
+      encEmail: await encrypt(body.email ?? ""),
+      enc2fa: await encrypt(body.twofa ?? ""),
+      encEmailPassword: await encrypt(body.emailPassword ?? ""),
+      encAccessToken: body.token ? await encrypt(body.token) : null,
       note: body.note ?? null,
       groupId:
         typeof body.groupId === "number" && Number.isFinite(body.groupId)

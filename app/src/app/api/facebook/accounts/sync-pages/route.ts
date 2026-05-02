@@ -23,7 +23,7 @@ async function syncOne(
   username: string,
   encToken: string | null,
 ): Promise<ItemResult> {
-  const token = decrypt(encToken);
+  const token = await decrypt(encToken);
   if (!token) {
     return {
       id: accountId,
@@ -71,7 +71,7 @@ async function syncOne(
           : null,
       verificationStatus: p.verification_status ?? null,
       tasks: p.tasks ? JSON.stringify(p.tasks) : null,
-      encPageAccessToken: p.access_token ? encrypt(p.access_token) : null,
+      encPageAccessToken: p.access_token ? await encrypt(p.access_token) : null,
       lastSyncedAt: now,
       lastSyncError: null,
       updatedAt: now,

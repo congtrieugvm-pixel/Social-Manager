@@ -72,7 +72,7 @@ async function resolveToken(body: SyncBody): Promise<
   if (!row) {
     return { ok: false, status: 404, error: "Không tìm thấy tài khoản Facebook" };
   }
-  const dec = decrypt(row.encAccessToken);
+  const dec = await decrypt(row.encAccessToken);
   if (!dec) {
     return { ok: false, status: 400, error: "Tài khoản Facebook chưa có token" };
   }
@@ -114,7 +114,7 @@ async function savePages(
           : null,
       verificationStatus: p.verification_status ?? null,
       tasks: p.tasks ? JSON.stringify(p.tasks) : null,
-      encPageAccessToken: p.access_token ? encrypt(p.access_token) : null,
+      encPageAccessToken: p.access_token ? await encrypt(p.access_token) : null,
       lastSyncedAt: now,
       lastSyncError: null,
       updatedAt: now,
@@ -190,11 +190,11 @@ async function runJsonFlow(body: SyncBody): Promise<Response> {
       .insert(facebookAccounts)
       .values({
         username: fallbackUsername,
-        encPassword: encrypt(""),
-        encEmail: encrypt(""),
-        enc2fa: encrypt(""),
-        encEmailPassword: encrypt(""),
-        encAccessToken: encrypt(token),
+        encPassword: await encrypt(""),
+        encEmail: await encrypt(""),
+        enc2fa: await encrypt(""),
+        encEmailPassword: await encrypt(""),
+        encAccessToken: await encrypt(token),
         fbUserId: meId,
         fbName: meName,
         fbProfilePic: mePic,
@@ -714,11 +714,11 @@ async function streamBody(
           .insert(facebookAccounts)
           .values({
             username: fallbackUsername,
-            encPassword: encrypt(""),
-            encEmail: encrypt(""),
-            enc2fa: encrypt(""),
-            encEmailPassword: encrypt(""),
-            encAccessToken: encrypt(token),
+            encPassword: await encrypt(""),
+            encEmail: await encrypt(""),
+            enc2fa: await encrypt(""),
+            encEmailPassword: await encrypt(""),
+            encAccessToken: await encrypt(token),
             fbUserId: meId,
             fbName: meName,
             fbProfilePic: mePic,

@@ -84,7 +84,7 @@ export async function GET(req: Request) {
   const now = new Date();
   const tokenExpiresAt =
     expiresIn != null ? Math.floor(Date.now() / 1000) + expiresIn : null;
-  const encToken = encrypt(longToken);
+  const encToken = await encrypt(longToken);
   // Avatar: derive from UID (stable redirector). Don't read me.picture.
   const picUrl = buildFbAvatarUrl(me.id);
 
@@ -126,10 +126,10 @@ export async function GET(req: Request) {
       .insert(facebookAccounts)
       .values({
         username: fallbackUsername,
-        encPassword: encrypt(""),
-        encEmail: encrypt(""),
-        enc2fa: encrypt(""),
-        encEmailPassword: encrypt(""),
+        encPassword: await encrypt(""),
+        encEmail: await encrypt(""),
+        enc2fa: await encrypt(""),
+        encEmailPassword: await encrypt(""),
         encAccessToken: encToken,
         tokenExpiresAt,
         fbUserId: me.id,

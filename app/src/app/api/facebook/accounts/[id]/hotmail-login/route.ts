@@ -31,8 +31,8 @@ export async function POST(_req: Request, ctx: { params: Promise<{ id: string }>
     return NextResponse.json({ error: "Không tìm thấy tài khoản" }, { status: 404 });
   }
 
-  const email = decrypt(row.encEmail) ?? "";
-  const password = decrypt(row.encEmailPassword) ?? "";
+  const email = await decrypt(row.encEmail) ?? "";
+  const password = await decrypt(row.encEmailPassword) ?? "";
 
   if (!email) {
     return NextResponse.json(

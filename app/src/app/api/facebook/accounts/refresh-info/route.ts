@@ -38,7 +38,7 @@ async function processOne(
   username: string,
   encToken: string | null,
 ): Promise<ItemResult> {
-  const token = decrypt(encToken);
+  const token = await decrypt(encToken);
   if (!token) {
     const now = new Date();
     await db

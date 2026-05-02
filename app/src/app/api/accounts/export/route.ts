@@ -59,17 +59,19 @@ export async function POST(req: Request) {
 
   // Preserve caller order
   const byId = new Map(rows.map((r) => [r.id, r]));
-  const items = ids
-    .map((id) => byId.get(id))
-    .filter((r): r is NonNullable<typeof r> => !!r)
-    .map((r) => ({
-      id: r.id,
-      username: r.username,
-      password: decrypt(r.encPassword),
-      email: decrypt(r.encEmail),
-      twofa: decrypt(r.enc2fa),
-      emailPassword: decrypt(r.encEmailPassword),
-    }));
+  const items = await Promise.all(
+    ids
+      .map((id) => byId.get(id))
+      .filter((r): r is NonNullable<typeof r> => !!r)
+      .map(async (r) => ({
+        id: r.id,
+        username: r.username,
+        password: await decrypt(r.encPassword),
+        email: await decrypt(r.encEmail),
+        twofa: await decrypt(r.enc2fa),
+        emailPassword: await decrypt(r.encEmailPassword),
+      })),
+  );
 
   const lines = items.map((it) =>
     fields

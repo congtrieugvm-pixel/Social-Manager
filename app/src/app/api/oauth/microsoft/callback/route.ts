@@ -92,7 +92,7 @@ export async function GET(req: Request) {
   let accountId: number | null = null;
   try {
     const decoded = Buffer.from(stateRaw, "base64url").toString("utf8");
-    const plain = decrypt(decoded);
+    const plain = await decrypt(decoded);
     if (!plain) throw new Error("state decrypt failed");
     const parsed = JSON.parse(plain) as StatePayload;
     if (!parsed.a || typeof parsed.a !== "number") throw new Error("bad state");

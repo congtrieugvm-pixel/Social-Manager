@@ -39,13 +39,15 @@ function pushHistory(current: HistoryEntry[], prevEnc: string | null): HistoryEn
   ].slice(0, 3);
 }
 
-function decodeHistory(
+async function decodeHistory(
   raw: string | null,
-): Array<{ value: string | null; changedAt: number }> {
-  return parseHistory(raw).map((e) => ({
-    value: decrypt(e.enc),
-    changedAt: e.changedAt,
-  }));
+): Promise<Array<{ value: string | null; changedAt: number }>> {
+  return Promise.all(
+    parseHistory(raw).map(async (e) => ({
+      value: await decrypt(e.enc),
+      changedAt: e.changedAt,
+    })),
+  );
 }
 
 export async function GET(_req: Request, ctx: { params: Promise<{ id: string }> }) {
@@ -101,15 +103,15 @@ export async function GET(_req: Request, ctx: { params: Promise<{ id: string }> 
   return NextResponse.json({
     id: row.id,
     username: row.username,
-    password: decrypt(row.encPassword),
-    email: decrypt(row.encEmail),
-    twofa: decrypt(row.enc2fa),
-    emailPassword: decrypt(row.encEmailPassword),
-    token: decrypt(row.encAccessToken),
+    password: await decrypt(row.encPassword),
+    email: await decrypt(row.encEmail),
+    twofa: await decrypt(row.enc2fa),
+    emailPassword: await decrypt(row.encEmailPassword),
+    token: await decrypt(row.encAccessToken),
     hasToken: !!row.encAccessToken,
     tokenExpiresAt: row.tokenExpiresAt,
-    passwordHistory: decodeHistory(row.passwordHistory),
-    emailPasswordHistory: decodeHistory(row.emailPasswordHistory),
+    passwordHistory: await decodeHistory(row.passwordHistory),
+    emailPasswordHistory: await decodeHistory(row.emailPasswordHistory),
     fbUserId: row.fbUserId,
     fbName: row.fbName,
     fbProfilePic: row.fbProfilePic,
@@ -193,26 +195,26 @@ export async function PATCH(req: Request, ctx: { params: Promise<{ id: string }>
 
   if (body.password !== undefined) {
     const newPlain = body.password ?? "";
-    const oldPlain = decrypt(current.encPassword) ?? "";
+    const oldPlain = await decrypt(current.encPassword) ?? "";
     if (newPlain !== oldPlain) {
-      patch.encPassword = encrypt(newPlain);
+      patch.encPassword = await encrypt(newPlain);
       const hist = parseHistory(current.passwordHistory);
       patch.passwordHistory = JSON.stringify(pushHistory(hist, current.encPassword));
     }
   }
   if (body.emailPassword !== undefined) {
     const newPlain = body.emailPassword ?? "";
-    const oldPlain = decrypt(current.encEmailPassword) ?? "";
+    const oldPlain = await decrypt(current.encEmailPassword) ?? "";
     if (newPlain !== oldPlain) {
-      patch.encEmailPassword = encrypt(newPlain);
+      patch.encEmailPassword = await encrypt(newPlain);
       const hist = parseHistory(current.emailPasswordHistory);
       patch.emailPasswordHistory = JSON.stringify(pushHistory(hist, current.encEmailPassword));
     }
   }
-  if (body.email !== undefined) patch.encEmail = encrypt(body.email ?? "");
-  if (body.twofa !== undefined) patch.enc2fa = encrypt(body.twofa ?? "");
+  if (body.email !== undefined) patch.encEmail = await encrypt(body.email ?? "");
+  if (body.twofa !== undefined) patch.enc2fa = await encrypt(body.twofa ?? "");
   if (body.token !== undefined) {
-    patch.encAccessToken = body.token ? encrypt(body.token) : null;
+    patch.encAccessToken = body.token ? await encrypt(body.token) : null;
   }
   if (body.tokenExpiresAt !== undefined) {
     patch.tokenExpiresAt = body.tokenExpiresAt;

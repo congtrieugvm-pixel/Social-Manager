@@ -91,7 +91,7 @@ export async function POST(req: Request) {
 
   for (const r of rows) {
     const now = new Date();
-    let token = decrypt(r.encPageAccessToken);
+    let token = await decrypt(r.encPageAccessToken);
     let tokenSource: "page" | "user" = "page";
 
     // Aggressive backfill: when no page token is stored but a user token is
@@ -100,7 +100,7 @@ export async function POST(req: Request) {
     // when it succeeds, persist the token so future syncs are faster and use
     // page-level permissions which work better for monetization endpoints.
     if (!token && r.encUserToken) {
-      const userTok = decrypt(r.encUserToken);
+      const userTok = await decrypt(r.encUserToken);
       if (userTok) {
         try {
           const detail = await fetchPageDetail(r.pageId, userTok);
@@ -110,7 +110,7 @@ export async function POST(req: Request) {
             await db
               .update(fanpages)
               .set({
-                encPageAccessToken: encrypt(detail.access_token),
+                encPageAccessToken: await encrypt(detail.access_token),
                 updatedAt: now,
               })
               .where(eq(fanpages.id, r.id));
@@ -121,7 +121,7 @@ export async function POST(req: Request) {
       }
     }
     if (!token) {
-      token = decrypt(r.encUserToken);
+      token = await decrypt(r.encUserToken);
       tokenSource = "user";
     }
     if (!token) {

@@ -99,9 +99,9 @@ export async function loadAccountTokens(
     .from(accounts)
     .where(eq(accounts.id, accountId));
   if (!row) return null;
-  const refreshToken = decrypt(row.refresh);
+  const refreshToken = await decrypt(row.refresh);
   if (!refreshToken) return null;
-  const accessToken = decrypt(row.enc) ?? "";
+  const accessToken = await decrypt(row.enc) ?? "";
   return {
     refreshToken,
     accessToken,
@@ -117,12 +117,12 @@ export async function saveAccountTokens(
   const now = Math.floor(Date.now() / 1000);
   const expiresAt = now + Math.max(60, tokens.expires_in - 60);
   const patch: Partial<typeof accounts.$inferInsert> = {
-    encMsAccessToken: encrypt(tokens.access_token),
+    encMsAccessToken: await encrypt(tokens.access_token),
     msTokenExpiresAt: expiresAt,
     updatedAt: new Date(),
   };
   if (tokens.refresh_token) {
-    patch.encMsRefreshToken = encrypt(tokens.refresh_token);
+    patch.encMsRefreshToken = await encrypt(tokens.refresh_token);
   }
   if (msEmail !== undefined && msEmail !== null) {
     patch.msEmail = msEmail;
