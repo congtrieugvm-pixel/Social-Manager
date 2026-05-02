@@ -12,7 +12,7 @@ binding = "ASSETS"
 [[d1_databases]]
 binding = "DB"
 database_name = "social-manager"
-database_id = "REPLACE_ME_WITH_REAL_D1_ID"
+database_id = "750d454e-c01f-4a68-a96e-2faee4fa5d4d"
 migrations_dir = "drizzle/migrations"
 
 # ── Env vars (non-secret). Use `wrangler secret put` for secrets ─
