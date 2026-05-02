@@ -1081,6 +1081,92 @@ export default function ReachDashboard() {
               Bỏ chọn
             </button>
           </div>
+
+          {/* Bulk assign group — applies to all currently-selected fanpages.
+              Fires PATCH /api/fanpages/:id with insightGroupId per row. The
+              fanpages list is reloaded so the inline ● badge updates without
+              a full page refresh. */}
+          {selectedIds.size > 0 && (
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: 6,
+                marginBottom: 10,
+                padding: "6px 8px",
+                border: "1px dashed var(--line)",
+                borderRadius: 6,
+                background: "var(--bg)",
+              }}
+            >
+              <span
+                className="mono"
+                style={{ fontSize: 10, color: "var(--muted)", letterSpacing: "0.06em" }}
+              >
+                Gán {selectedIds.size} →
+              </span>
+              <select
+                value=""
+                onChange={async (e) => {
+                  const v = e.target.value;
+                  if (!v) return;
+                  e.target.value = ""; // reset for next pick
+                  const targetId = v === "none" ? null : Number(v);
+                  const ids = Array.from(selectedIds);
+                  setSyncing(true);
+                  setSyncMsg("");
+                  setSyncErr("");
+                  try {
+                    let okCount = 0;
+                    let errCount = 0;
+                    for (const id of ids) {
+                      const r = await fetch(`/api/fanpages/${id}`, {
+                        method: "PATCH",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({ insightGroupId: targetId }),
+                      });
+                      if (r.ok) okCount++;
+                      else errCount++;
+                    }
+                    setSyncMsg(
+                      `Gán nhóm: ${okCount}/${ids.length} OK${errCount ? ` · ${errCount} lỗi` : ""}`,
+                    );
+                    // Reload fanpages so the ● badge + group filter counts refresh.
+                    const r1 = await fetch("/api/fanpages", { cache: "no-store" });
+                    const d1 = (await r1.json()) as { rows: FanpageRow[] };
+                    setFanpages(d1.rows ?? []);
+                    const r2 = await fetch("/api/insight-groups", { cache: "no-store" });
+                    const d2 = (await r2.json()) as { groups: GroupRow[] };
+                    setGroups(d2.groups ?? []);
+                  } catch (err) {
+                    setSyncErr(err instanceof Error ? err.message : String(err));
+                  } finally {
+                    setSyncing(false);
+                  }
+                }}
+                disabled={syncing}
+                style={{
+                  flex: 1,
+                  padding: "4px 6px",
+                  fontSize: 11,
+                  fontFamily: "inherit",
+                  background: "var(--paper)",
+                  border: "1px solid var(--line)",
+                  borderRadius: 4,
+                  color: "var(--ink)",
+                  cursor: syncing ? "wait" : "pointer",
+                }}
+              >
+                <option value="">— Chọn nhóm —</option>
+                <option value="none">Chưa nhóm (bỏ gán)</option>
+                {groups.map((g) => (
+                  <option key={g.id} value={g.id}>
+                    {g.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
           <div style={{ maxHeight: "calc(100vh - 240px)", minHeight: 320, overflowY: "auto" }}>
             {filteredFanpages.map((f) => {
               const on = selectedIds.has(f.id);
