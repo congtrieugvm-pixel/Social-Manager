@@ -1,6 +1,15 @@
 import path from "node:path";
 import fs from "node:fs/promises";
-import type { BrowserContext, Page } from "playwright";
+
+// Use local `any` aliases instead of `import type { BrowserContext, Page } from "playwright"`
+// — the playwright package is physically removed from node_modules during the
+// Cloudflare build (see scripts/clean-cf-deps.js) and the type import would
+// otherwise break `next build` typechecking on that pass. Loose typing here
+// is OK because Playwright is only invoked behind the IS_EDGE guard, on Node.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+type BrowserContext = any;
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+type Page = any;
 
 // Playwright + persistent profile directories require a writable filesystem
 // and a Chromium binary — neither exists on Cloudflare Workers. When deployed
@@ -54,9 +63,8 @@ export async function startHotmailLogin(opts: {
   // Worker bundle. The dynamic import only fires on Node where playwright
   // resolves normally from node_modules.
   const playwrightSpec = ["play", "wright"].join("");
-  const { chromium } = (await import(
-    /* webpackIgnore: true */ playwrightSpec
-  )) as typeof import("playwright");
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const { chromium } = (await import(/* webpackIgnore: true */ playwrightSpec)) as any;
   const userDataDir = profileDir(opts.profileKey ?? opts.accountId);
   await fs.mkdir(userDataDir, { recursive: true });
 
