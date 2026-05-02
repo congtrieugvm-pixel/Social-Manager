@@ -24,6 +24,9 @@ app/data/
 # TikTok web embed snapshot
 app/probe-state.json
 
+# Migration export (encrypted but still sensitive — local artifact only)
+app/scripts/_data-export.sql
+
 # Environment files
 .env
 .env.*
