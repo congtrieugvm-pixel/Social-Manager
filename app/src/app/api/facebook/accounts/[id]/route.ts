@@ -11,6 +11,7 @@ import {
 import { and, eq, ne } from "drizzle-orm";
 import { decrypt, encrypt } from "@/lib/crypto";
 import { readBody } from "@/lib/req-body";
+import { getOwnerId } from "@/lib/scope";
 
 interface HistoryEntry {
   enc: string;
@@ -51,6 +52,7 @@ async function decodeHistory(
 }
 
 export async function GET(_req: Request, ctx: { params: Promise<{ id: string }> }) {
+  const ownerId = await getOwnerId();
   const { id: idStr } = await ctx.params;
   const id = Number(idStr);
   if (!Number.isFinite(id)) return NextResponse.json({ error: "Invalid id" }, { status: 400 });
@@ -97,7 +99,7 @@ export async function GET(_req: Request, ctx: { params: Promise<{ id: string }> 
     .leftJoin(countries, eq(facebookAccounts.countryId, countries.id))
     .leftJoin(machines, eq(facebookAccounts.machineId, machines.id))
     .leftJoin(employees, eq(facebookAccounts.employeeId, employees.id))
-    .where(eq(facebookAccounts.id, id));
+    .where(and(eq(facebookAccounts.id, id), eq(facebookAccounts.ownerUserId, ownerId)));
   if (!row) return NextResponse.json({ error: "Không tìm thấy" }, { status: 404 });
 
   return NextResponse.json({
@@ -139,6 +141,7 @@ export async function GET(_req: Request, ctx: { params: Promise<{ id: string }> 
 }
 
 export async function PATCH(req: Request, ctx: { params: Promise<{ id: string }> }) {
+  const ownerId = await getOwnerId();
   const { id: idStr } = await ctx.params;
   const id = Number(idStr);
   if (!Number.isFinite(id)) return NextResponse.json({ error: "Invalid id" }, { status: 400 });
@@ -169,7 +172,7 @@ export async function PATCH(req: Request, ctx: { params: Promise<{ id: string }>
       emailPasswordHistory: facebookAccounts.emailPasswordHistory,
     })
     .from(facebookAccounts)
-    .where(eq(facebookAccounts.id, id));
+    .where(and(eq(facebookAccounts.id, id), eq(facebookAccounts.ownerUserId, ownerId)));
   if (!current) return NextResponse.json({ error: "Không tìm thấy" }, { status: 404 });
 
   const patch: Partial<typeof facebookAccounts.$inferInsert> = { updatedAt: new Date() };
@@ -183,7 +186,13 @@ export async function PATCH(req: Request, ctx: { params: Promise<{ id: string }>
       const [clash] = await db
         .select({ id: facebookAccounts.id })
         .from(facebookAccounts)
-        .where(and(eq(facebookAccounts.username, newUsername), ne(facebookAccounts.id, id)));
+        .where(
+          and(
+            eq(facebookAccounts.username, newUsername),
+            eq(facebookAccounts.ownerUserId, ownerId),
+            ne(facebookAccounts.id, id),
+          ),
+        );
       if (clash) {
         return NextResponse.json({ error: "Username đã tồn tại" }, { status: 409 });
       }
@@ -235,14 +244,20 @@ export async function PATCH(req: Request, ctx: { params: Promise<{ id: string }>
     }
   }
 
-  await db.update(facebookAccounts).set(patch).where(eq(facebookAccounts.id, id));
+  await db
+    .update(facebookAccounts)
+    .set(patch)
+    .where(and(eq(facebookAccounts.id, id), eq(facebookAccounts.ownerUserId, ownerId)));
   return NextResponse.json({ ok: true });
 }
 
 export async function DELETE(_req: Request, ctx: { params: Promise<{ id: string }> }) {
+  const ownerId = await getOwnerId();
   const { id: idStr } = await ctx.params;
   const id = Number(idStr);
   if (!Number.isFinite(id)) return NextResponse.json({ error: "Invalid id" }, { status: 400 });
-  await db.delete(facebookAccounts).where(eq(facebookAccounts.id, id));
+  await db
+    .delete(facebookAccounts)
+    .where(and(eq(facebookAccounts.id, id), eq(facebookAccounts.ownerUserId, ownerId)));
   return NextResponse.json({ ok: true });
 }

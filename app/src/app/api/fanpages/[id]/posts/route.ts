@@ -4,15 +4,24 @@ import { fanpages, fanpagePosts } from "@/lib/db/schema";
 import { and, desc, eq } from "drizzle-orm";
 import { decrypt } from "@/lib/crypto";
 import { fetchPagePosts } from "@/lib/facebook";
+import { getOwnerId } from "@/lib/scope";
 
 export const runtime = "nodejs";
 
 export async function GET(_req: Request, ctx: { params: Promise<{ id: string }> }) {
+  const ownerId = await getOwnerId();
   const { id: idStr } = await ctx.params;
   const fanpageId = Number(idStr);
   if (!Number.isFinite(fanpageId)) {
     return NextResponse.json({ error: "Invalid id" }, { status: 400 });
   }
+
+  // Verify ownership of the fanpage before returning any posts.
+  const [owned] = await db
+    .select({ id: fanpages.id })
+    .from(fanpages)
+    .where(and(eq(fanpages.id, fanpageId), eq(fanpages.ownerUserId, ownerId)));
+  if (!owned) return NextResponse.json({ rows: [] });
 
   const rows = await db
     .select()
@@ -25,6 +34,7 @@ export async function GET(_req: Request, ctx: { params: Promise<{ id: string }> 
 }
 
 export async function POST(req: Request, ctx: { params: Promise<{ id: string }> }) {
+  const ownerId = await getOwnerId();
   const { id: idStr } = await ctx.params;
   const fanpageId = Number(idStr);
   if (!Number.isFinite(fanpageId)) {
@@ -46,7 +56,7 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
       encPageAccessToken: fanpages.encPageAccessToken,
     })
     .from(fanpages)
-    .where(eq(fanpages.id, fanpageId));
+    .where(and(eq(fanpages.id, fanpageId), eq(fanpages.ownerUserId, ownerId)));
 
   if (!fp) {
     return NextResponse.json({ error: "Không tìm thấy fanpage" }, { status: 404 });

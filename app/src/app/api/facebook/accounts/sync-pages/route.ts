@@ -5,6 +5,7 @@ import { and, eq, inArray } from "drizzle-orm";
 import { decrypt, encrypt } from "@/lib/crypto";
 import { buildFbAvatarUrl, fetchUserPages } from "@/lib/facebook";
 import { readBody } from "@/lib/req-body";
+import { getOwnerId } from "@/lib/scope";
 
 export const runtime = "nodejs";
 
@@ -20,6 +21,7 @@ interface ItemResult {
 
 async function syncOne(
   accountId: number,
+  ownerUserId: number,
   username: string,
   encToken: string | null,
 ): Promise<ItemResult> {
@@ -49,6 +51,7 @@ async function syncOne(
   let updated = 0;
   for (const p of pages) {
     const values = {
+      ownerUserId,
       fbAccountId: accountId,
       pageId: p.id,
       name: p.name,
@@ -105,6 +108,7 @@ async function syncOne(
 }
 
 export async function POST(req: Request) {
+  const ownerId = await getOwnerId();
   let ids: number[] = [];
   try {
     const body = await readBody<{ ids?: number[] }>(req);
@@ -125,12 +129,17 @@ export async function POST(req: Request) {
       encAccessToken: facebookAccounts.encAccessToken,
     })
     .from(facebookAccounts)
-    .where(inArray(facebookAccounts.id, ids));
+    .where(
+      and(
+        inArray(facebookAccounts.id, ids),
+        eq(facebookAccounts.ownerUserId, ownerId),
+      ),
+    );
 
   const results: ItemResult[] = [];
   // Sequential to be polite to Graph API.
   for (const r of rows) {
-    results.push(await syncOne(r.id, r.username, r.encAccessToken));
+    results.push(await syncOne(r.id, ownerId, r.username, r.encAccessToken));
   }
 
   return NextResponse.json({

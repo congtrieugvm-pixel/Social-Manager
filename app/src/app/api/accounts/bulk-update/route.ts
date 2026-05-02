@@ -1,10 +1,12 @@
 import { NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { accounts } from "@/lib/db/schema";
-import { inArray } from "drizzle-orm";
+import { and, eq, inArray } from "drizzle-orm";
 import { readBody } from "@/lib/req-body";
+import { getOwnerId } from "@/lib/scope";
 
 export async function POST(req: Request) {
+  const ownerId = await getOwnerId();
   const body = await readBody<{
     ids?: number[];
     groupId?: number | null;
@@ -60,6 +62,9 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "Không có trường nào để cập nhật" }, { status: 400 });
   }
 
-  await db.update(accounts).set(patch).where(inArray(accounts.id, ids));
+  await db
+    .update(accounts)
+    .set(patch)
+    .where(and(inArray(accounts.id, ids), eq(accounts.ownerUserId, ownerId)));
   return NextResponse.json({ ok: true, updated: ids.length });
 }

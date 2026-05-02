@@ -1,8 +1,9 @@
 import { NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { fanpages, facebookAccounts } from "@/lib/db/schema";
-import { eq, inArray, or, isNotNull } from "drizzle-orm";
+import { and, eq, inArray, or, isNotNull } from "drizzle-orm";
 import { decrypt, encrypt } from "@/lib/crypto";
+import { getOwnerId } from "@/lib/scope";
 import {
   fetchPageDetail,
   fetchPageEarningsBreakdown,
@@ -35,6 +36,7 @@ interface ItemResult {
 }
 
 export async function POST(req: Request) {
+  const ownerId = await getOwnerId();
   const body = await readBody<SyncEarningsBody>(req);
 
   const ids = Array.isArray(body.ids)
@@ -74,12 +76,15 @@ export async function POST(req: Request) {
     .from(fanpages)
     .leftJoin(facebookAccounts, eq(fanpages.fbAccountId, facebookAccounts.id))
     .where(
-      ids.length > 0
-        ? inArray(fanpages.id, ids)
-        : or(
-            isNotNull(fanpages.encPageAccessToken),
-            isNotNull(facebookAccounts.encAccessToken),
-          ),
+      and(
+        eq(fanpages.ownerUserId, ownerId),
+        ids.length > 0
+          ? inArray(fanpages.id, ids)
+          : or(
+              isNotNull(fanpages.encPageAccessToken),
+              isNotNull(facebookAccounts.encAccessToken),
+            ),
+      ),
     );
 
   const results: ItemResult[] = [];

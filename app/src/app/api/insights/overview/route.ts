@@ -8,6 +8,7 @@ import {
   facebookAccounts,
 } from "@/lib/db/schema";
 import { eq, sql, desc, gte, and, inArray } from "drizzle-orm";
+import { getOwnerId } from "@/lib/scope";
 
 export const runtime = "nodejs";
 
@@ -43,6 +44,7 @@ interface OverviewRow {
 }
 
 export async function GET() {
+  const ownerId = await getOwnerId();
   // 1) Base fanpages + owner + group meta
   const base = await db
     .select({
@@ -67,6 +69,7 @@ export async function GET() {
     .from(fanpages)
     .leftJoin(insightGroups, eq(fanpages.insightGroupId, insightGroups.id))
     .leftJoin(facebookAccounts, eq(fanpages.fbAccountId, facebookAccounts.id))
+    .where(eq(fanpages.ownerUserId, ownerId))
     .orderBy(desc(fanpages.fanCount), desc(fanpages.id));
 
   const ids = base.map((r) => r.id);

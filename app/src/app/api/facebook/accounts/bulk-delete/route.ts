@@ -1,12 +1,14 @@
 import { NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { facebookAccounts } from "@/lib/db/schema";
-import { inArray } from "drizzle-orm";
+import { and, eq, inArray } from "drizzle-orm";
 import { readBody } from "@/lib/req-body";
+import { getOwnerId } from "@/lib/scope";
 
 export const runtime = "nodejs";
 
 export async function POST(req: Request) {
+  const ownerId = await getOwnerId();
   let ids: number[] = [];
   try {
     const body = await readBody<{ ids?: number[] }>(req);
@@ -21,6 +23,13 @@ export async function POST(req: Request) {
     );
   }
   // Cascades to fanpages (and from there to fanpage_posts / fanpage_snapshots).
-  await db.delete(facebookAccounts).where(inArray(facebookAccounts.id, ids));
+  await db
+    .delete(facebookAccounts)
+    .where(
+      and(
+        inArray(facebookAccounts.id, ids),
+        eq(facebookAccounts.ownerUserId, ownerId),
+      ),
+    );
   return NextResponse.json({ ok: true, deleted: ids.length });
 }

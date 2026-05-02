@@ -1,10 +1,12 @@
 import { NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { accounts } from "@/lib/db/schema";
-import { inArray } from "drizzle-orm";
+import { and, eq, inArray } from "drizzle-orm";
 import { readBody } from "@/lib/req-body";
+import { getOwnerId } from "@/lib/scope";
 
 export async function POST(req: Request) {
+  const ownerId = await getOwnerId();
   const body = await readBody<{ ids?: number[]; groupId?: number | null }>(req);
   const ids = (body.ids ?? []).filter((n): n is number => Number.isFinite(n));
   if (ids.length === 0) {
@@ -20,6 +22,6 @@ export async function POST(req: Request) {
   await db
     .update(accounts)
     .set({ groupId, updatedAt: new Date() })
-    .where(inArray(accounts.id, ids));
+    .where(and(inArray(accounts.id, ids), eq(accounts.ownerUserId, ownerId)));
   return NextResponse.json({ ok: true, updated: ids.length, groupId });
 }

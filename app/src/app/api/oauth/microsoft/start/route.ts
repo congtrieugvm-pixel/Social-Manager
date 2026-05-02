@@ -1,9 +1,13 @@
 import { NextResponse } from "next/server";
+import { db } from "@/lib/db";
+import { accounts } from "@/lib/db/schema";
+import { and, eq } from "drizzle-orm";
 import {
   buildAuthorizeUrl,
   isAzureConfigured,
 } from "@/lib/ms-graph";
 import { encrypt } from "@/lib/crypto";
+import { getOwnerId } from "@/lib/scope";
 
 export async function GET(req: Request) {
   if (!isAzureConfigured()) {
@@ -16,11 +20,21 @@ export async function GET(req: Request) {
     );
   }
 
+  const ownerId = await getOwnerId();
   const url = new URL(req.url);
   const accountIdRaw = url.searchParams.get("accountId");
   const accountId = Number(accountIdRaw);
   if (!Number.isFinite(accountId) || accountId <= 0) {
     return NextResponse.json({ error: "Invalid accountId" }, { status: 400 });
+  }
+  // Verify the account belongs to the current user — otherwise user A could
+  // start an OAuth flow against user B's account row by guessing the id.
+  const [owned] = await db
+    .select({ id: accounts.id })
+    .from(accounts)
+    .where(and(eq(accounts.id, accountId), eq(accounts.ownerUserId, ownerId)));
+  if (!owned) {
+    return NextResponse.json({ error: "Không tìm thấy" }, { status: 404 });
   }
 
   // Encrypted state carries accountId + short expiry. No external store needed.

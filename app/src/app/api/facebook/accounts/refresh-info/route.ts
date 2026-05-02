@@ -1,8 +1,9 @@
 import { NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { facebookAccounts } from "@/lib/db/schema";
-import { inArray, eq } from "drizzle-orm";
+import { and, inArray, eq } from "drizzle-orm";
 import { decrypt } from "@/lib/crypto";
+import { getOwnerId } from "@/lib/scope";
 import {
   buildFbAvatarUrl,
   debugUserToken,
@@ -115,6 +116,7 @@ async function processOne(
 }
 
 export async function POST(req: Request) {
+  const ownerId = await getOwnerId();
   let ids: number[] = [];
   try {
     const body = await readBody<{ ids?: number[] }>(req);
@@ -138,7 +140,12 @@ export async function POST(req: Request) {
       encAccessToken: facebookAccounts.encAccessToken,
     })
     .from(facebookAccounts)
-    .where(inArray(facebookAccounts.id, ids));
+    .where(
+      and(
+        inArray(facebookAccounts.id, ids),
+        eq(facebookAccounts.ownerUserId, ownerId),
+      ),
+    );
 
   const results: ItemResult[] = [];
   // Sequential to be polite to Graph + simpler error attribution.

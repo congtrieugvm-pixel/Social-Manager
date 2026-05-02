@@ -1,14 +1,16 @@
 import { NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { fanpages } from "@/lib/db/schema";
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { decrypt } from "@/lib/crypto";
 import { fetchPageInsights } from "@/lib/facebook";
 import { recordFanpageSnapshot } from "@/lib/fanpage-snapshot";
+import { getOwnerId } from "@/lib/scope";
 
 export const runtime = "nodejs";
 
 export async function POST(_req: Request, ctx: { params: Promise<{ id: string }> }) {
+  const ownerId = await getOwnerId();
   const { id: idStr } = await ctx.params;
   const id = Number(idStr);
   if (!Number.isFinite(id)) {
@@ -24,7 +26,7 @@ export async function POST(_req: Request, ctx: { params: Promise<{ id: string }>
       followersCount: fanpages.followersCount,
     })
     .from(fanpages)
-    .where(eq(fanpages.id, id));
+    .where(and(eq(fanpages.id, id), eq(fanpages.ownerUserId, ownerId)));
 
   if (!row) {
     return NextResponse.json({ error: "Không tìm thấy fanpage" }, { status: 404 });
@@ -49,7 +51,7 @@ export async function POST(_req: Request, ctx: { params: Promise<{ id: string }>
         lastSyncError: null,
         updatedAt: now,
       })
-      .where(eq(fanpages.id, id));
+      .where(and(eq(fanpages.id, id), eq(fanpages.ownerUserId, ownerId)));
     await recordFanpageSnapshot(row.id, insights, {
       fanCount: row.fanCount,
       followersCount: row.followersCount,
@@ -64,12 +66,13 @@ export async function POST(_req: Request, ctx: { params: Promise<{ id: string }>
         lastSyncedAt: now,
         updatedAt: now,
       })
-      .where(eq(fanpages.id, id));
+      .where(and(eq(fanpages.id, id), eq(fanpages.ownerUserId, ownerId)));
     return NextResponse.json({ error: msg }, { status: 502 });
   }
 }
 
 export async function GET(_req: Request, ctx: { params: Promise<{ id: string }> }) {
+  const ownerId = await getOwnerId();
   const { id: idStr } = await ctx.params;
   const id = Number(idStr);
   if (!Number.isFinite(id)) {
@@ -83,7 +86,7 @@ export async function GET(_req: Request, ctx: { params: Promise<{ id: string }> 
       lastSyncError: fanpages.lastSyncError,
     })
     .from(fanpages)
-    .where(eq(fanpages.id, id));
+    .where(and(eq(fanpages.id, id), eq(fanpages.ownerUserId, ownerId)));
   if (!row) {
     return NextResponse.json({ error: "Không tìm thấy" }, { status: 404 });
   }

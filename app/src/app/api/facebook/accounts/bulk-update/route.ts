@@ -1,8 +1,9 @@
 import { NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { facebookAccounts } from "@/lib/db/schema";
-import { inArray } from "drizzle-orm";
+import { and, eq, inArray } from "drizzle-orm";
 import { readBody } from "@/lib/req-body";
+import { getOwnerId } from "@/lib/scope";
 
 export const runtime = "nodejs";
 
@@ -16,6 +17,7 @@ interface BulkBody {
 }
 
 export async function POST(req: Request) {
+  const ownerId = await getOwnerId();
   const body = await readBody<BulkBody>(req);
   const ids = (body.ids ?? []).filter((n): n is number => Number.isFinite(n));
   if (ids.length === 0) {
@@ -54,6 +56,11 @@ export async function POST(req: Request) {
   await db
     .update(facebookAccounts)
     .set(patch)
-    .where(inArray(facebookAccounts.id, ids));
+    .where(
+      and(
+        inArray(facebookAccounts.id, ids),
+        eq(facebookAccounts.ownerUserId, ownerId),
+      ),
+    );
   return NextResponse.json({ ok: true, updated: ids.length });
 }

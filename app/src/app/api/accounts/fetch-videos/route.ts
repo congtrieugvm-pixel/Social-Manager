@@ -1,8 +1,9 @@
 import { NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { accounts } from "@/lib/db/schema";
-import { inArray, eq } from "drizzle-orm";
+import { and, inArray, eq } from "drizzle-orm";
 import { fetchRecentVideos } from "@/lib/tiktok";
+import { getOwnerId } from "@/lib/scope";
 
 const CONCURRENCY = 3;
 const DELAY_MS = 300;
@@ -36,6 +37,7 @@ async function processOne(id: number, username: string) {
 }
 
 export async function POST(req: Request) {
+  const ownerId = await getOwnerId();
   const { ids } = (await req.json()) as { ids: number[] };
   if (!Array.isArray(ids) || ids.length === 0) {
     return NextResponse.json({ error: "Thiếu danh sách id" }, { status: 400 });
@@ -44,7 +46,7 @@ export async function POST(req: Request) {
   const rows = await db
     .select({ id: accounts.id, username: accounts.username })
     .from(accounts)
-    .where(inArray(accounts.id, ids));
+    .where(and(inArray(accounts.id, ids), eq(accounts.ownerUserId, ownerId)));
 
   const results: Awaited<ReturnType<typeof processOne>>[] = [];
   for (let i = 0; i < rows.length; i += CONCURRENCY) {

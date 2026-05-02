@@ -8,8 +8,9 @@ import {
   DEFAULT_ORDER,
   type FieldKey,
 } from "@/lib/parser";
-import { inArray } from "drizzle-orm";
+import { and, eq, inArray } from "drizzle-orm";
 import { readBody } from "@/lib/req-body";
+import { getOwnerId } from "@/lib/scope";
 
 interface ImportBody {
   text: string;
@@ -40,6 +41,7 @@ function sanitizeOrder(order: unknown): FieldKey[] {
 }
 
 export async function POST(req: Request) {
+  const ownerId = await getOwnerId();
   const body = await readBody<ImportBody>(req);
   const { text, delimiter = "|", groupId = null } = body;
   const order = sanitizeOrder(body.order);
@@ -60,7 +62,12 @@ export async function POST(req: Request) {
   const existing = await db
     .select({ username: accounts.username })
     .from(accounts)
-    .where(inArray(accounts.username, usernames));
+    .where(
+      and(
+        inArray(accounts.username, usernames),
+        eq(accounts.ownerUserId, ownerId),
+      ),
+    );
   const existingSet = new Set(existing.map((e) => e.username.toLowerCase()));
 
   const toInsert = valid.filter((r) => !existingSet.has(r.username.toLowerCase()));
@@ -73,6 +80,7 @@ export async function POST(req: Request) {
   for (const r of toInsert) {
     try {
       await db.insert(accounts).values({
+        ownerUserId: ownerId,
         username: r.username,
         groupId: resolvedGroupId,
         encPassword: await encrypt(r.password),
@@ -98,6 +106,7 @@ export async function POST(req: Request) {
 }
 
 export async function PUT(req: Request) {
+  const ownerId = await getOwnerId();
   const body = await readBody<ImportBody>(req);
   const { text, delimiter = "|" } = body;
   const order = sanitizeOrder(body.order);
@@ -112,7 +121,12 @@ export async function PUT(req: Request) {
       ? await db
           .select({ username: accounts.username })
           .from(accounts)
-          .where(inArray(accounts.username, usernames))
+          .where(
+            and(
+              inArray(accounts.username, usernames),
+              eq(accounts.ownerUserId, ownerId),
+            ),
+          )
       : [];
   const existingSet = new Set(existing.map((e) => e.username.toLowerCase()));
 

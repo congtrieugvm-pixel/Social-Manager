@@ -237,6 +237,52 @@ export function initNodeDb(): BetterSQLite3Database<typeof schema> {
     "insight_group_id",
     "insight_group_id INTEGER REFERENCES insight_groups(id) ON DELETE SET NULL",
   );
+
+  // Multi-tenant ownership column added in migration 0002. Local dev DBs
+  // bootstrapped before this migration must be ALTERed to match. NULL ok
+  // until backfill — assigns to admin user 1 below.
+  for (const tbl of [
+    "groups",
+    "statuses",
+    "countries",
+    "machines",
+    "employees",
+    "insight_groups",
+    "accounts",
+    "facebook_accounts",
+    "fanpages",
+  ]) {
+    ensureColumn(
+      tbl,
+      "owner_user_id",
+      "owner_user_id INTEGER REFERENCES app_users(id) ON DELETE CASCADE",
+    );
+    sqlite.exec(`CREATE INDEX IF NOT EXISTS idx_${tbl}_owner ON ${tbl}(owner_user_id);`);
+  }
+  // Backfill: any pre-existing rows are assigned to the first admin user. New
+  // installs have no rows yet, so this is a no-op for them.
+  const firstAdmin = sqlite
+    .prepare(
+      `SELECT id FROM app_users WHERE role='admin' ORDER BY id LIMIT 1`,
+    )
+    .get() as { id: number } | undefined;
+  if (firstAdmin) {
+    for (const tbl of [
+      "groups",
+      "statuses",
+      "countries",
+      "machines",
+      "employees",
+      "insight_groups",
+      "accounts",
+      "facebook_accounts",
+      "fanpages",
+    ]) {
+      sqlite
+        .prepare(`UPDATE ${tbl} SET owner_user_id = ? WHERE owner_user_id IS NULL`)
+        .run(firstAdmin.id);
+    }
+  }
   ensureColumn("fanpage_snapshots", "range_start", "range_start INTEGER");
   ensureColumn("fanpage_snapshots", "range_end", "range_end INTEGER");
   sqlite.exec(

@@ -1,23 +1,26 @@
 import { NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { fanpages, fanpagePosts } from "@/lib/db/schema";
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { decrypt } from "@/lib/crypto";
 import {
   extractPostMetric,
   fetchPostInsights,
   fetchPostVideoEarnings,
 } from "@/lib/facebook";
+import { getOwnerId } from "@/lib/scope";
 
 export const runtime = "nodejs";
 
 export async function POST(_req: Request, ctx: { params: Promise<{ id: string }> }) {
+  const ownerId = await getOwnerId();
   const { id: idStr } = await ctx.params;
   const postRowId = Number(idStr);
   if (!Number.isFinite(postRowId)) {
     return NextResponse.json({ error: "Invalid id" }, { status: 400 });
   }
 
+  // Inner-join to fanpages to enforce owner scope on the post.
   const [row] = await db
     .select({
       id: fanpagePosts.id,
@@ -25,7 +28,13 @@ export async function POST(_req: Request, ctx: { params: Promise<{ id: string }>
       fanpageId: fanpagePosts.fanpageId,
     })
     .from(fanpagePosts)
-    .where(eq(fanpagePosts.id, postRowId));
+    .innerJoin(fanpages, eq(fanpagePosts.fanpageId, fanpages.id))
+    .where(
+      and(
+        eq(fanpagePosts.id, postRowId),
+        eq(fanpages.ownerUserId, ownerId),
+      ),
+    );
   if (!row) {
     return NextResponse.json({ error: "Không tìm thấy post" }, { status: 404 });
   }
@@ -33,7 +42,7 @@ export async function POST(_req: Request, ctx: { params: Promise<{ id: string }>
   const [fp] = await db
     .select({ encPageAccessToken: fanpages.encPageAccessToken })
     .from(fanpages)
-    .where(eq(fanpages.id, row.fanpageId));
+    .where(and(eq(fanpages.id, row.fanpageId), eq(fanpages.ownerUserId, ownerId)));
   const token = await decrypt(fp?.encPageAccessToken ?? null);
   if (!token) {
     return NextResponse.json(

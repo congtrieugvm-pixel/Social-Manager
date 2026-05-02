@@ -1,22 +1,27 @@
 import { NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { fanpages } from "@/lib/db/schema";
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { readBody } from "@/lib/req-body";
+import { getOwnerId } from "@/lib/scope";
 
 export const runtime = "nodejs";
 
 export async function DELETE(_req: Request, ctx: { params: Promise<{ id: string }> }) {
+  const ownerId = await getOwnerId();
   const { id: idStr } = await ctx.params;
   const id = Number(idStr);
   if (!Number.isFinite(id)) {
     return NextResponse.json({ error: "Invalid id" }, { status: 400 });
   }
-  await db.delete(fanpages).where(eq(fanpages.id, id));
+  await db
+    .delete(fanpages)
+    .where(and(eq(fanpages.id, id), eq(fanpages.ownerUserId, ownerId)));
   return NextResponse.json({ ok: true });
 }
 
 export async function PATCH(req: Request, ctx: { params: Promise<{ id: string }> }) {
+  const ownerId = await getOwnerId();
   const { id: idStr } = await ctx.params;
   const id = Number(idStr);
   if (!Number.isFinite(id)) {
@@ -41,6 +46,9 @@ export async function PATCH(req: Request, ctx: { params: Promise<{ id: string }>
   if (Object.keys(patch).length === 1) {
     return NextResponse.json({ error: "Không có thay đổi" }, { status: 400 });
   }
-  await db.update(fanpages).set(patch).where(eq(fanpages.id, id));
+  await db
+    .update(fanpages)
+    .set(patch)
+    .where(and(eq(fanpages.id, id), eq(fanpages.ownerUserId, ownerId)));
   return NextResponse.json({ ok: true });
 }

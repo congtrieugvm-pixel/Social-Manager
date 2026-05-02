@@ -4,6 +4,7 @@ import { accounts, groups, statuses, countries, machines, employees } from "@/li
 import { eq, and, ne } from "drizzle-orm";
 import { decrypt, encrypt } from "@/lib/crypto";
 import { readBody } from "@/lib/req-body";
+import { getOwnerId } from "@/lib/scope";
 
 interface HistoryEntry {
   enc: string;
@@ -43,6 +44,7 @@ async function decodeHistory(raw: string | null): Promise<Array<{ value: string 
 }
 
 export async function GET(_req: Request, ctx: { params: Promise<{ id: string }> }) {
+  const ownerId = await getOwnerId();
   const { id: idStr } = await ctx.params;
   const id = Number(idStr);
   if (!Number.isFinite(id)) return NextResponse.json({ error: "Invalid id" }, { status: 400 });
@@ -91,7 +93,7 @@ export async function GET(_req: Request, ctx: { params: Promise<{ id: string }> 
     .leftJoin(countries, eq(accounts.countryId, countries.id))
     .leftJoin(machines, eq(accounts.machineId, machines.id))
     .leftJoin(employees, eq(accounts.employeeId, employees.id))
-    .where(eq(accounts.id, id));
+    .where(and(eq(accounts.id, id), eq(accounts.ownerUserId, ownerId)));
   if (!row) return NextResponse.json({ error: "Không tìm thấy" }, { status: 404 });
 
   return NextResponse.json({
@@ -134,6 +136,7 @@ export async function GET(_req: Request, ctx: { params: Promise<{ id: string }> 
 }
 
 export async function PATCH(req: Request, ctx: { params: Promise<{ id: string }> }) {
+  const ownerId = await getOwnerId();
   const { id: idStr } = await ctx.params;
   const id = Number(idStr);
   if (!Number.isFinite(id)) return NextResponse.json({ error: "Invalid id" }, { status: 400 });
@@ -163,7 +166,7 @@ export async function PATCH(req: Request, ctx: { params: Promise<{ id: string }>
       emailPasswordHistory: accounts.emailPasswordHistory,
     })
     .from(accounts)
-    .where(eq(accounts.id, id));
+    .where(and(eq(accounts.id, id), eq(accounts.ownerUserId, ownerId)));
   if (!current) return NextResponse.json({ error: "Không tìm thấy" }, { status: 404 });
 
   const patch: Partial<typeof accounts.$inferInsert> = { updatedAt: new Date() };
@@ -177,7 +180,13 @@ export async function PATCH(req: Request, ctx: { params: Promise<{ id: string }>
       const [clash] = await db
         .select({ id: accounts.id })
         .from(accounts)
-        .where(and(eq(accounts.username, newUsername), ne(accounts.id, id)));
+        .where(
+          and(
+            eq(accounts.username, newUsername),
+            eq(accounts.ownerUserId, ownerId),
+            ne(accounts.id, id),
+          ),
+        );
       if (clash) {
         return NextResponse.json({ error: "Username đã tồn tại" }, { status: 409 });
       }
@@ -231,15 +240,21 @@ export async function PATCH(req: Request, ctx: { params: Promise<{ id: string }>
     patch.employeeId = body.employeeId;
   }
 
-  await db.update(accounts).set(patch).where(eq(accounts.id, id));
+  await db
+    .update(accounts)
+    .set(patch)
+    .where(and(eq(accounts.id, id), eq(accounts.ownerUserId, ownerId)));
   return NextResponse.json({ ok: true });
 }
 
 export async function DELETE(_req: Request, ctx: { params: Promise<{ id: string }> }) {
+  const ownerId = await getOwnerId();
   const { id: idStr } = await ctx.params;
   const id = Number(idStr);
   if (!Number.isFinite(id)) return NextResponse.json({ error: "Invalid id" }, { status: 400 });
 
-  await db.delete(accounts).where(eq(accounts.id, id));
+  await db
+    .delete(accounts)
+    .where(and(eq(accounts.id, id), eq(accounts.ownerUserId, ownerId)));
   return NextResponse.json({ ok: true });
 }

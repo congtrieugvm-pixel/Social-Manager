@@ -1,9 +1,10 @@
 import { NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { fanpages } from "@/lib/db/schema";
-import { inArray, eq } from "drizzle-orm";
+import { and, inArray, eq } from "drizzle-orm";
 import { buildFbAvatarUrl } from "@/lib/facebook";
 import { readBody } from "@/lib/req-body";
+import { getOwnerId } from "@/lib/scope";
 
 export const runtime = "nodejs";
 
@@ -23,6 +24,7 @@ interface ItemResult {
  * "expires" the way the previously-stored signed CDN URL did.
  */
 export async function POST(req: Request) {
+  const ownerId = await getOwnerId();
   let ids: number[] = [];
   try {
     const body = await readBody<{ ids?: number[] }>(req);
@@ -45,7 +47,7 @@ export async function POST(req: Request) {
       name: fanpages.name,
     })
     .from(fanpages)
-    .where(inArray(fanpages.id, ids));
+    .where(and(inArray(fanpages.id, ids), eq(fanpages.ownerUserId, ownerId)));
 
   const results: ItemResult[] = [];
   let okCount = 0;

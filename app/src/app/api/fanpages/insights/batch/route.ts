@@ -1,11 +1,12 @@
 import { NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { fanpages } from "@/lib/db/schema";
-import { inArray, isNotNull } from "drizzle-orm";
+import { and, eq, inArray, isNotNull } from "drizzle-orm";
 import { decrypt } from "@/lib/crypto";
 import { fetchPageInsights, resolveInsightRange } from "@/lib/facebook";
 import { recordFanpageSnapshot } from "@/lib/fanpage-snapshot";
 import { readBody } from "@/lib/req-body";
+import { getOwnerId } from "@/lib/scope";
 
 export const runtime = "nodejs";
 
@@ -27,6 +28,7 @@ interface ItemResult {
 }
 
 export async function POST(req: Request) {
+  const ownerId = await getOwnerId();
   const body = await readBody<BatchBody>(req);
 
   const ids = Array.isArray(body.ids)
@@ -58,9 +60,12 @@ export async function POST(req: Request) {
     })
     .from(fanpages)
     .where(
-      ids.length > 0
-        ? inArray(fanpages.id, ids)
-        : isNotNull(fanpages.encPageAccessToken),
+      and(
+        eq(fanpages.ownerUserId, ownerId),
+        ids.length > 0
+          ? inArray(fanpages.id, ids)
+          : isNotNull(fanpages.encPageAccessToken),
+      ),
     );
 
   const results: ItemResult[] = [];

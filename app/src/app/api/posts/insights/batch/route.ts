@@ -10,6 +10,7 @@ import {
   isAbuseError,
 } from "@/lib/facebook";
 import { readBody } from "@/lib/req-body";
+import { getOwnerId } from "@/lib/scope";
 
 export const runtime = "nodejs";
 // Inter-post throttle is 400ms; insighting 25+ posts can exceed the default
@@ -49,12 +50,16 @@ interface TokenAlternativesBlock {
 }
 
 export async function POST(req: Request) {
+  const ownerId = await getOwnerId();
   const body = await readBody<BatchBody>(req);
 
   const ids = Array.isArray(body.ids)
     ? body.ids.filter((x): x is number => typeof x === "number" && Number.isFinite(x))
     : [];
 
+  // Posts inherit ownership from their parent fanpage. Inner-join to enforce
+  // owner scope — prevents user A from triggering insight refresh on user B's
+  // posts by guessing post or fanpage ids.
   const rows =
     ids.length > 0
       ? await db
@@ -64,7 +69,13 @@ export async function POST(req: Request) {
             fanpageId: fanpagePosts.fanpageId,
           })
           .from(fanpagePosts)
-          .where(inArray(fanpagePosts.id, ids))
+          .innerJoin(fanpages, eq(fanpagePosts.fanpageId, fanpages.id))
+          .where(
+            and(
+              inArray(fanpagePosts.id, ids),
+              eq(fanpages.ownerUserId, ownerId),
+            ),
+          )
       : typeof body.fanpageId === "number" && Number.isFinite(body.fanpageId)
         ? await db
             .select({
@@ -73,7 +84,13 @@ export async function POST(req: Request) {
               fanpageId: fanpagePosts.fanpageId,
             })
             .from(fanpagePosts)
-            .where(eq(fanpagePosts.fanpageId, body.fanpageId))
+            .innerJoin(fanpages, eq(fanpagePosts.fanpageId, fanpages.id))
+            .where(
+              and(
+                eq(fanpagePosts.fanpageId, body.fanpageId),
+                eq(fanpages.ownerUserId, ownerId),
+              ),
+            )
         : [];
 
   if (rows.length === 0) {
@@ -104,7 +121,12 @@ export async function POST(req: Request) {
       encPageAccessToken: fanpages.encPageAccessToken,
     })
     .from(fanpages)
-    .where(inArray(fanpages.id, allFpIdsToFetch));
+    .where(
+      and(
+        inArray(fanpages.id, allFpIdsToFetch),
+        eq(fanpages.ownerUserId, ownerId),
+      ),
+    );
   const fpById = new Map(fpRows.map((f) => [f.id, f]));
   const tokenMap = new Map<number, string | null>();
   for (const fpId of fpIds) {
@@ -226,6 +248,7 @@ export async function POST(req: Request) {
         )
         .where(
           and(
+            eq(fanpages.ownerUserId, ownerId),
             eq(fanpages.pageId, failedFp.pageId),
             ne(fanpages.id, abuseFanpageId),
             isNotNull(fanpages.encPageAccessToken),
@@ -243,7 +266,12 @@ export async function POST(req: Request) {
       const [failedAccount] = await db
         .select({ username: facebookAccounts.username })
         .from(facebookAccounts)
-        .where(eq(facebookAccounts.id, failedFp.fbAccountId));
+        .where(
+          and(
+            eq(facebookAccounts.id, failedFp.fbAccountId),
+            eq(facebookAccounts.ownerUserId, ownerId),
+          ),
+        );
       if (failedAccount) failedAccountUsername = failedAccount.username;
       tokenAlternatives = {
         failedFanpageId: abuseFanpageId,

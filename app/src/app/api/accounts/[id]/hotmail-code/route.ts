@@ -1,4 +1,7 @@
 import { NextResponse } from "next/server";
+import { db } from "@/lib/db";
+import { accounts } from "@/lib/db/schema";
+import { and, eq } from "drizzle-orm";
 import {
   clearAccountTokens,
   fetchRecentMessages,
@@ -7,22 +10,39 @@ import {
   loadAccountTokens,
 } from "@/lib/ms-graph";
 import { pickLatestOtp } from "@/lib/otp-extract";
+import { getOwnerId } from "@/lib/scope";
+
+async function ownsAccount(id: number, ownerId: number): Promise<boolean> {
+  const [r] = await db
+    .select({ id: accounts.id })
+    .from(accounts)
+    .where(and(eq(accounts.id, id), eq(accounts.ownerUserId, ownerId)));
+  return !!r;
+}
 
 export async function DELETE(_req: Request, ctx: { params: Promise<{ id: string }> }) {
+  const ownerId = await getOwnerId();
   const { id: idStr } = await ctx.params;
   const id = Number(idStr);
   if (!Number.isFinite(id)) {
     return NextResponse.json({ error: "Invalid id" }, { status: 400 });
+  }
+  if (!(await ownsAccount(id, ownerId))) {
+    return NextResponse.json({ error: "Không tìm thấy" }, { status: 404 });
   }
   await clearAccountTokens(id);
   return NextResponse.json({ ok: true });
 }
 
 export async function POST(_req: Request, ctx: { params: Promise<{ id: string }> }) {
+  const ownerId = await getOwnerId();
   const { id: idStr } = await ctx.params;
   const id = Number(idStr);
   if (!Number.isFinite(id)) {
     return NextResponse.json({ error: "Invalid id" }, { status: 400 });
+  }
+  if (!(await ownsAccount(id, ownerId))) {
+    return NextResponse.json({ error: "Không tìm thấy" }, { status: 404 });
   }
 
   if (!isAzureConfigured()) {

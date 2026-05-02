@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { facebookAccounts } from "@/lib/db/schema";
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { encrypt } from "@/lib/crypto";
 import {
   buildFbAvatarUrl,
@@ -9,10 +9,12 @@ import {
   fetchMe,
   isFacebookConfigured,
 } from "@/lib/facebook";
+import { getOwnerId } from "@/lib/scope";
 
 export const runtime = "nodejs";
 
 export async function GET(req: Request) {
+  const ownerId = await getOwnerId();
   if (!isFacebookConfigured()) {
     return htmlResponse(
       "Chưa cấu hình FB_APP_ID/FB_APP_SECRET trong .env",
@@ -94,14 +96,24 @@ export async function GET(req: Request) {
     const [row] = await db
       .select({ id: facebookAccounts.id })
       .from(facebookAccounts)
-      .where(eq(facebookAccounts.id, linkTo));
+      .where(
+        and(
+          eq(facebookAccounts.id, linkTo),
+          eq(facebookAccounts.ownerUserId, ownerId),
+        ),
+      );
     if (row) targetId = row.id;
   }
   if (!targetId) {
     const [row] = await db
       .select({ id: facebookAccounts.id })
       .from(facebookAccounts)
-      .where(eq(facebookAccounts.fbUserId, me.id));
+      .where(
+        and(
+          eq(facebookAccounts.fbUserId, me.id),
+          eq(facebookAccounts.ownerUserId, ownerId),
+        ),
+      );
     if (row) targetId = row.id;
   }
 
@@ -118,13 +130,19 @@ export async function GET(req: Request) {
         lastSyncError: null,
         updatedAt: now,
       })
-      .where(eq(facebookAccounts.id, targetId));
+      .where(
+        and(
+          eq(facebookAccounts.id, targetId),
+          eq(facebookAccounts.ownerUserId, ownerId),
+        ),
+      );
   } else {
     // Insert a new account using fb user id as fallback username (unique constraint safe).
     const fallbackUsername = `fb_${me.id}`;
     const [row] = await db
       .insert(facebookAccounts)
       .values({
+        ownerUserId: ownerId,
         username: fallbackUsername,
         encPassword: await encrypt(""),
         encEmail: await encrypt(""),
