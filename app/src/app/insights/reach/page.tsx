@@ -138,12 +138,24 @@ export default function ReachDashboard() {
   const [refreshKey, setRefreshKey] = useState(0);
   const [earningsExpanded, setEarningsExpanded] = useState(false);
   // Real daily series (from /api/fanpages/daily-insights). Keyed by metric.
+  // Series is filtered to the user-selected window — sums to the period total
+  // shown on each KPI card.
   const [dailySeries, setDailySeries] = useState<Record<Metric, { t: number; v: number }[]>>({
     pageImpressionsUnique: [],
     pageImpressions: [],
     pageEngagements: [],
     pageViews: [],
     pageVideoViews: [],
+  });
+  // Sum of the prior equivalent-length window (e.g. for "30 ngày", days
+  // 60→30 ago). Drives the delta/% on KPI cards. Filled by the same effect
+  // that loads `dailySeries` (single fetch covers 2× window).
+  const [prevTotals, setPrevTotals] = useState<Record<Metric, number>>({
+    pageImpressionsUnique: 0,
+    pageImpressions: 0,
+    pageEngagements: 0,
+    pageViews: 0,
+    pageVideoViews: 0,
   });
   const [loadingDaily, setLoadingDaily] = useState(false);
 
@@ -231,9 +243,7 @@ export default function ReachDashboard() {
       setLoadingDaily(true);
       try {
         // Compute display-window days. Custom range translates to the
-        // explicit span; preset modes pass directly. We re-fetch each metric
-        // separately because the endpoint returns one metric per call (FB
-        // metric keys differ between endpoints).
+        // explicit span; preset modes pass directly.
         let displayDays = 0;
         if (rangeMode === "custom" && customFrom && customTo) {
           const f = Math.floor(new Date(customFrom + "T00:00:00").getTime() / 1000);
@@ -244,6 +254,10 @@ export default function ReachDashboard() {
         } else if (typeof rangeMode === "number") {
           displayDays = rangeMode;
         }
+        // Fetch 2× the window so we can split into [prev, current] and
+        // compute period-over-period delta on the KPI cards.
+        const fetchDays = displayDays > 0 ? displayDays * 2 : 0;
+        const cutoffSec = Math.floor(Date.now() / 1000) - displayDays * 86_400;
         const metrics: Metric[] = [
           "pageImpressionsUnique",
           "pageImpressions",
@@ -252,33 +266,49 @@ export default function ReachDashboard() {
           "pageVideoViews",
         ];
         const results = await Promise.all(
-          metrics.map(async (m): Promise<[Metric, { t: number; v: number }[]]> => {
-            const params = new URLSearchParams({
-              ids: ids.join(","),
-              metric: m,
-              days: String(displayDays),
-            });
-            const res = await fetch(`/api/fanpages/daily-insights?${params}`, {
-              cache: "no-store",
-            });
-            if (!res.ok) return [m, []];
-            const d = (await res.json()) as {
-              series?: Array<{ ts: number; value: number }>;
-            };
-            const series = (d.series ?? []).map((p) => ({ t: p.ts, v: p.value }));
-            return [m, series];
-          }),
+          metrics.map(
+            async (m): Promise<[Metric, { t: number; v: number }[], number]> => {
+              const params = new URLSearchParams({
+                ids: ids.join(","),
+                metric: m,
+                days: String(fetchDays),
+              });
+              const res = await fetch(`/api/fanpages/daily-insights?${params}`, {
+                cache: "no-store",
+              });
+              if (!res.ok) return [m, [], 0];
+              const d = (await res.json()) as {
+                series?: Array<{ ts: number; value: number }>;
+              };
+              const all = (d.series ?? []).map((p) => ({ t: p.ts, v: p.value }));
+              const curr = all.filter((p) => p.t >= cutoffSec);
+              const prev = all.filter((p) => p.t < cutoffSec);
+              const prevSum = prev.reduce((s, p) => s + p.v, 0);
+              return [m, curr, prevSum];
+            },
+          ),
         );
         if (!cancelled) {
-          const next: Record<Metric, { t: number; v: number }[]> = {
+          const nextSeries: Record<Metric, { t: number; v: number }[]> = {
             pageImpressionsUnique: [],
             pageImpressions: [],
             pageEngagements: [],
             pageViews: [],
             pageVideoViews: [],
           };
-          for (const [m, s] of results) next[m] = s;
-          setDailySeries(next);
+          const nextPrev: Record<Metric, number> = {
+            pageImpressionsUnique: 0,
+            pageImpressions: 0,
+            pageEngagements: 0,
+            pageViews: 0,
+            pageVideoViews: 0,
+          };
+          for (const [m, s, prevSum] of results) {
+            nextSeries[m] = s;
+            nextPrev[m] = prevSum;
+          }
+          setDailySeries(nextSeries);
+          setPrevTotals(nextPrev);
         }
       } finally {
         if (!cancelled) setLoadingDaily(false);
@@ -494,6 +524,29 @@ export default function ReachDashboard() {
     }
     return out;
   }, [snapshots, selectedIds]);
+
+  // Period-aware stats for the KPI cards. `total` = sum of daily values
+  // inside the user-selected window; `delta` = change vs the prior
+  // equivalent-length window. Replaces the snapshot-based latest-value
+  // total on the cards (which didn't change when the user picked a
+  // different range).
+  const periodStats = useMemo(() => {
+    const out: Record<Metric, { total: number; delta: number; deltaPct: number | null }> = {
+      pageImpressionsUnique: { total: 0, delta: 0, deltaPct: null },
+      pageImpressions: { total: 0, delta: 0, deltaPct: null },
+      pageEngagements: { total: 0, delta: 0, deltaPct: null },
+      pageViews: { total: 0, delta: 0, deltaPct: null },
+      pageVideoViews: { total: 0, delta: 0, deltaPct: null },
+    };
+    for (const m of Object.keys(out) as Metric[]) {
+      const total = dailySeries[m].reduce((s, p) => s + p.v, 0);
+      const prev = prevTotals[m];
+      const delta = total - prev;
+      const deltaPct = prev > 0 ? (delta / prev) * 100 : null;
+      out[m] = { total, delta, deltaPct };
+    }
+    return out;
+  }, [dailySeries, prevTotals]);
 
   const topFanpages = useMemo(() => {
     const latest = metricStats[activeMetric].perFpLatest;
@@ -877,7 +930,7 @@ export default function ReachDashboard() {
             }}
           >
             {(Object.keys(METRIC_DEFS) as Metric[]).map((m) => {
-              const s = metricStats[m];
+              const s = periodStats[m];
               const on = activeMetric === m;
               const def = METRIC_DEFS[m];
               return (
