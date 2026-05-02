@@ -16,11 +16,15 @@ interface Body {
 }
 
 export async function POST(req: Request) {
+  // Read body via text() + JSON.parse instead of req.json() — the latter
+  // returns empty on opennextjs/Cloudflare Workers because of how the
+  // request body stream is adapted. text() works reliably.
   let body: Body = {};
   try {
-    body = (await req.json()) as Body;
+    const text = await req.text();
+    if (text) body = JSON.parse(text) as Body;
   } catch {
-    // empty body — handled below
+    // empty / invalid body — handled below
   }
   const username = (body.username ?? "").trim();
   const password = body.password ?? "";

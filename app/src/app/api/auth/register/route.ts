@@ -29,9 +29,12 @@ export async function POST(req: Request) {
     );
   }
 
+  // Read body via text() + JSON.parse — req.json() returns empty on
+  // opennextjs/Cloudflare Workers (body stream adapter bug).
   let body: Body = {};
   try {
-    body = (await req.json()) as Body;
+    const text = await req.text();
+    if (text) body = JSON.parse(text) as Body;
   } catch {
     // handled below
   }
