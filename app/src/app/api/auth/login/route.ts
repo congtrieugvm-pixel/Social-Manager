@@ -16,13 +16,8 @@ interface Body {
 }
 
 export async function POST(req: Request) {
-  // Read body via Web Streams API directly. Avoid req.json()/req.text()
-  // and `new Response(req.body).text()` — those route through unenv's
-  // partial Node polyfill on Cloudflare Workers, which throws
-  // "Readable.asyncIterator is not implemented yet" before the body is
-  // delivered. Reading the underlying ReadableStream chunks via TextDecoder
-  // sidesteps the polyfill entirely.
   let body: Body = {};
+  console.log("[login] hasBody:", !!req.body, "method:", req.method, "ct:", req.headers.get("content-type"));
   try {
     if (req.body) {
       const reader = req.body.getReader();
@@ -31,14 +26,16 @@ export async function POST(req: Request) {
       // eslint-disable-next-line no-constant-condition
       while (true) {
         const { done, value } = await reader.read();
+        console.log("[login] chunk done:", done, "valueLen:", value?.length ?? 0);
         if (done) break;
         if (value) text += decoder.decode(value, { stream: true });
       }
       text += decoder.decode();
+      console.log("[login] total text length:", text.length, "first40:", JSON.stringify(text.slice(0, 40)));
       if (text) body = JSON.parse(text) as Body;
     }
-  } catch {
-    // empty / invalid body — handled below
+  } catch (e) {
+    console.log("[login] err:", e instanceof Error ? e.message : String(e));
   }
   const username = (body.username ?? "").trim();
   const password = body.password ?? "";
