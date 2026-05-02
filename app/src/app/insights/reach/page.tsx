@@ -1800,11 +1800,6 @@ function DateRangePopover({
   const leftMonth = calAnchor;
   const rightMonth = addMonths(calAnchor, 1);
   const today = startOfDay(new Date());
-  // Right pane is at the current month → forward nav would show only future
-  // dates, so disable the `›` arrow there.
-  const rightAtCurrent =
-    rightMonth.getFullYear() === today.getFullYear() &&
-    rightMonth.getMonth() === today.getMonth();
   const canApply = !!(draftFrom && draftTo);
   const fromIsBeforeTo =
     draftFrom && draftTo && draftFrom.getTime() <= draftTo.getTime();
@@ -1902,9 +1897,9 @@ function DateRangePopover({
             maxDate={today}
             onPick={onPickDay}
             onPrev={null}
-            onNext={rightAtCurrent ? null : () => setCalAnchor(addMonths(calAnchor, 1))}
+            onNext={() => setCalAnchor(addMonths(calAnchor, 1))}
             showPrev={false}
-            showNext={!rightAtCurrent}
+            showNext
           />
         </div>
 
