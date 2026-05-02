@@ -58,6 +58,32 @@ interface GroupRow {
   count: number;
 }
 
+interface TokenAlternative {
+  fanpageId: number;
+  accountId: number;
+  accountUsername: string;
+  accountFbName: string | null;
+}
+interface TokenAlternativesBlock {
+  failedFanpageId: number;
+  pageId: string;
+  failedAccountUsername: string | null;
+  alternatives: TokenAlternative[];
+}
+interface BatchResponse {
+  ok?: boolean;
+  total?: number;
+  okCount?: number;
+  errCount?: number;
+  skipCount?: number;
+  error?: string;
+  results?: Array<{ ok: boolean; error?: string }>;
+  abused?: boolean;
+  abuseFanpageId?: number | null;
+  tokenAlternatives?: TokenAlternativesBlock;
+  hint?: string;
+}
+
 function fmtNum(n: number | null | undefined): string {
   if (n == null) return "—";
   return n.toLocaleString("vi-VN");
@@ -105,6 +131,16 @@ export default function ContentPage() {
   const headerCheckRef = useRef<HTMLInputElement>(null);
   // Date range filter for the post table. Default = "Tất cả" (5y back → today)
   // so every cached post shows up to the current day, per requirement.
+  // When an insight call hits an FB abuse-block on a fanpage's token AND
+  // sibling fanpages exist (same FB page, different managing account), the
+  // backend returns alternatives. We show a modal letting the user pick one;
+  // confirming retries the failed batch with `tokenOverrides`.
+  const [tokenPrompt, setTokenPrompt] = useState<{
+    block: TokenAlternativesBlock;
+    retry: (overrideFpId: number) => Promise<void>;
+    fanpageName: string;
+  } | null>(null);
+
   const [dateRange, setDateRange] = useState<DateRangeValue>(() => {
     const today = new Date();
     const start = new Date(today.getFullYear() - 5, today.getMonth(), today.getDate());
@@ -367,16 +403,7 @@ export default function ContentPage() {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ fanpageId: id }),
         });
-        const data = (await res.json()) as {
-          total?: number;
-          okCount?: number;
-          errCount?: number;
-          skipCount?: number;
-          error?: string;
-          results?: Array<{ ok: boolean; error?: string }>;
-          abused?: boolean;
-          hint?: string;
-        };
+        const data = (await res.json()) as BatchResponse;
         if (res.ok) {
           okIns += data.okCount ?? 0;
           errIns += data.errCount ?? 0;
@@ -386,6 +413,45 @@ export default function ContentPage() {
             if (!r.ok && r.error) {
               pushSample(errorSamples, `${nameById.get(id) ?? id}: ${r.error}`);
             }
+          }
+          // Abuse + alternative tokens → prompt user. Break the outer loop so
+          // we don't pile on more failed calls for other fanpages while the
+          // user decides which token to retry with.
+          if (
+            data.abused &&
+            data.tokenAlternatives &&
+            data.tokenAlternatives.alternatives.length > 0
+          ) {
+            const block = data.tokenAlternatives;
+            const failedFpName = nameById.get(id) ?? `#${id}`;
+            setTokenPrompt({
+              block,
+              fanpageName: failedFpName,
+              retry: async (overrideFpId: number) => {
+                setTokenPrompt(null);
+                // Retry just this fanpage's batch with the chosen override —
+                // posts of OTHER fanpages already succeeded in this loop.
+                setBusy("insight-all");
+                try {
+                  const r2 = await fetch("/api/posts/insights/batch", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({
+                      fanpageId: id,
+                      tokenOverrides: { [String(id)]: overrideFpId },
+                    }),
+                  });
+                  const d2 = (await r2.json()) as BatchResponse;
+                  setMessage(
+                    `Retry ${failedFpName}: ${d2.okCount ?? 0}/${d2.total ?? 0} OK · ${d2.errCount ?? 0} lỗi`,
+                  );
+                  await loadPostsFor(ids);
+                } finally {
+                  setBusy("");
+                }
+              },
+            });
+            break;
           }
           if (data.abused && data.hint) {
             abuseHint = data.hint;
@@ -417,8 +483,13 @@ export default function ContentPage() {
    * Fetch insights for an explicit list of post-row ids. Single batch call —
    * backend already supports `ids[]`. No pre-sync from FB (user is insighting
    * posts already in the table).
+   *
+   * `tokenOverrides` lets the abuse-retry flow reuse a sibling fanpage's
+   * token when the original got rate-limited.
    */
-  async function getInsightSelectedPosts() {
+  async function getInsightSelectedPosts(
+    tokenOverrides?: Record<string, number>,
+  ) {
     const ids = Array.from(selectedPostIds);
     if (ids.length === 0) return;
     setBusy("insight-selected");
@@ -428,18 +499,9 @@ export default function ContentPage() {
       const res = await fetch("/api/posts/insights/batch", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ids }),
+        body: JSON.stringify({ ids, tokenOverrides }),
       });
-      const data = (await res.json()) as {
-        total?: number;
-        okCount?: number;
-        errCount?: number;
-        skipCount?: number;
-        error?: string;
-        results?: Array<{ ok: boolean; error?: string }>;
-        abused?: boolean;
-        hint?: string;
-      };
+      const data = (await res.json()) as BatchResponse;
       if (!res.ok) {
         setError(data.error ?? `Lỗi ${res.status}`);
         return;
@@ -447,7 +509,27 @@ export default function ContentPage() {
       setMessage(
         `Insights ${data.okCount ?? 0}/${data.total ?? 0} OK · ${data.errCount ?? 0} lỗi · ${data.skipCount ?? 0} bỏ qua`,
       );
-      if (data.abused && data.hint) {
+      // Abuse + sibling-token candidates → prompt user to retry with one.
+      if (
+        data.abused &&
+        data.tokenAlternatives &&
+        data.tokenAlternatives.alternatives.length > 0
+      ) {
+        const block = data.tokenAlternatives;
+        const failedFpName =
+          fanpages.find((f) => f.id === block.failedFanpageId)?.name ?? `#${block.failedFanpageId}`;
+        setTokenPrompt({
+          block,
+          fanpageName: failedFpName,
+          retry: async (overrideFpId: number) => {
+            setTokenPrompt(null);
+            await getInsightSelectedPosts({
+              ...(tokenOverrides ?? {}),
+              [String(block.failedFanpageId)]: overrideFpId,
+            });
+          },
+        });
+      } else if (data.abused && data.hint) {
         setError(data.hint);
       } else {
         const samples: string[] = [];
@@ -488,6 +570,14 @@ export default function ContentPage() {
 
   return (
     <>
+      {tokenPrompt && (
+        <TokenPromptModal
+          fanpageName={tokenPrompt.fanpageName}
+          block={tokenPrompt.block}
+          onPick={tokenPrompt.retry}
+          onCancel={() => setTokenPrompt(null)}
+        />
+      )}
       <header className="page-header">
         <div className="page-header-left">
           <span className="eyebrow">Facebook · Nội dung</span>
@@ -804,7 +894,7 @@ export default function ContentPage() {
                   Bỏ chọn
                 </button>
                 <button
-                  onClick={getInsightSelectedPosts}
+                  onClick={() => getInsightSelectedPosts()}
                   disabled={busy !== "" || selectedPostIds.size === 0}
                   className="btn btn-accent"
                   style={{ padding: "5px 12px", fontSize: 11 }}
@@ -1166,5 +1256,143 @@ function FilterChip({
       )}
       {label}
     </button>
+  );
+}
+
+function TokenPromptModal({
+  fanpageName,
+  block,
+  onPick,
+  onCancel,
+}: {
+  fanpageName: string;
+  block: TokenAlternativesBlock;
+  onPick: (overrideFpId: number) => void | Promise<void>;
+  onCancel: () => void;
+}) {
+  return (
+    <div
+      role="dialog"
+      aria-modal="true"
+      style={{
+        position: "fixed",
+        inset: 0,
+        zIndex: 100,
+        background: "rgba(0,0,0,0.5)",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        padding: 16,
+      }}
+      onClick={onCancel}
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        style={{
+          background: "var(--paper)",
+          border: "1px solid var(--line)",
+          borderRadius: 12,
+          padding: 20,
+          maxWidth: 480,
+          width: "100%",
+          boxShadow: "0 16px 40px rgba(0,0,0,0.32)",
+        }}
+      >
+        <h3
+          style={{
+            margin: 0,
+            fontSize: 16,
+            fontWeight: 700,
+            color: "var(--ink)",
+          }}
+        >
+          Token đang bị FB giới hạn
+        </h3>
+        <p style={{ margin: "10px 0 4px", fontSize: 13, color: "var(--ink)", lineHeight: 1.5 }}>
+          Token của tài khoản{" "}
+          <strong>{block.failedAccountUsername ?? "—"}</strong> dùng cho fanpage{" "}
+          <strong>{fanpageName}</strong> đang bị Facebook chặn (abuse / rate
+          limit).
+        </p>
+        <p style={{ margin: "0 0 12px", fontSize: 12, color: "var(--muted)" }}>
+          Fanpage này còn được quản lý bởi {block.alternatives.length} tài khoản
+          khác. Dùng thử token của tài khoản nào?
+        </p>
+
+        <ul
+          style={{
+            margin: "0 0 16px",
+            padding: 0,
+            listStyle: "none",
+            display: "flex",
+            flexDirection: "column",
+            gap: 6,
+            maxHeight: 280,
+            overflowY: "auto",
+          }}
+        >
+          {block.alternatives.map((alt) => (
+            <li key={alt.fanpageId}>
+              <button
+                onClick={() => onPick(alt.fanpageId)}
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "space-between",
+                  gap: 8,
+                  width: "100%",
+                  padding: "10px 12px",
+                  border: "1px solid var(--line)",
+                  borderRadius: 8,
+                  background: "var(--bg)",
+                  cursor: "pointer",
+                  fontFamily: "inherit",
+                  textAlign: "left",
+                  color: "var(--ink)",
+                }}
+              >
+                <span>
+                  <span style={{ fontSize: 13, fontWeight: 600 }}>
+                    @{alt.accountUsername}
+                  </span>
+                  {alt.accountFbName && (
+                    <span
+                      style={{
+                        marginLeft: 6,
+                        fontSize: 11,
+                        color: "var(--muted)",
+                      }}
+                    >
+                      · {alt.accountFbName}
+                    </span>
+                  )}
+                </span>
+                <span style={{ fontSize: 11, color: "var(--accent, #1877f2)" }}>
+                  Dùng token này →
+                </span>
+              </button>
+            </li>
+          ))}
+        </ul>
+
+        <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
+          <button
+            onClick={onCancel}
+            style={{
+              padding: "7px 16px",
+              border: "1px solid var(--line)",
+              borderRadius: 6,
+              background: "transparent",
+              cursor: "pointer",
+              fontFamily: "inherit",
+              fontSize: 12,
+              color: "var(--ink)",
+            }}
+          >
+            Hủy
+          </button>
+        </div>
+      </div>
+    </div>
   );
 }

@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { db } from "@/lib/db";
-import { fanpages, fanpagePosts } from "@/lib/db/schema";
-import { eq, inArray } from "drizzle-orm";
+import { facebookAccounts, fanpages, fanpagePosts } from "@/lib/db/schema";
+import { and, eq, inArray, isNotNull, ne } from "drizzle-orm";
 import { decrypt } from "@/lib/crypto";
 import {
   extractPostMetric,
@@ -18,6 +18,10 @@ export const maxDuration = 60;
 interface BatchBody {
   ids?: number[]; // post row ids
   fanpageId?: number; // alternative: all posts of a fanpage
+  // Optional token override: when fanpage X's own token is abuse-blocked, the
+  // user can pick another fanpage row that manages the SAME FB page (different
+  // managing FB account) and reuse its page token. Map: failedFpId → useFpId.
+  tokenOverrides?: Record<string, number>;
 }
 
 interface Item {
@@ -26,6 +30,21 @@ interface Item {
   ok: boolean;
   reach?: number | null;
   error?: string;
+}
+
+// Returned alongside `abused: true` so the UI can prompt the user to retry
+// with a sibling account's token.
+interface TokenAlternative {
+  fanpageId: number;
+  accountId: number;
+  accountUsername: string;
+  accountFbName: string | null;
+}
+interface TokenAlternativesBlock {
+  failedFanpageId: number;
+  pageId: string;
+  failedAccountUsername: string | null;
+  alternatives: TokenAlternative[];
 }
 
 export async function POST(req: Request) {
@@ -73,18 +92,33 @@ export async function POST(req: Request) {
     });
   }
 
-  // Cache page tokens by fanpageId (avoid re-decrypting per post).
+  // Cache page tokens by fanpageId (avoid re-decrypting per post). Token
+  // overrides redirect a fanpage's lookup to a sibling fanpage row's token.
   const fpIds = [...new Set(rows.map((r) => r.fanpageId))];
+  const overrides = body.tokenOverrides ?? {};
+  const overrideTargetIds = Object.values(overrides).filter(
+    (v): v is number => typeof v === "number" && Number.isFinite(v),
+  );
+  const allFpIdsToFetch = [...new Set([...fpIds, ...overrideTargetIds])];
   const fpRows = await db
     .select({
       id: fanpages.id,
+      pageId: fanpages.pageId,
+      fbAccountId: fanpages.fbAccountId,
       encPageAccessToken: fanpages.encPageAccessToken,
     })
     .from(fanpages)
-    .where(inArray(fanpages.id, fpIds));
+    .where(inArray(fanpages.id, allFpIdsToFetch));
+  const fpById = new Map(fpRows.map((f) => [f.id, f]));
   const tokenMap = new Map<number, string | null>();
-  for (const fp of fpRows) {
-    tokenMap.set(fp.id, decrypt(fp.encPageAccessToken));
+  for (const fpId of fpIds) {
+    const overrideTargetId = overrides[String(fpId)];
+    const sourceId =
+      typeof overrideTargetId === "number" && fpById.has(overrideTargetId)
+        ? overrideTargetId
+        : fpId;
+    const enc = fpById.get(sourceId)?.encPageAccessToken;
+    tokenMap.set(fpId, enc ? decrypt(enc) : null);
   }
 
   const results: Item[] = [];
@@ -92,6 +126,7 @@ export async function POST(req: Request) {
   let errCount = 0;
   let skipCount = 0;
   let abused = false;
+  let abuseFanpageId: number | null = null;
 
   // Inter-post delay to stay under FB's per-token abuse limiter. 400ms × 25
   // posts ≈ 10s — slow enough that bursty insight fetches don't trip code 368
@@ -113,9 +148,6 @@ export async function POST(req: Request) {
     if (i > 0) await new Promise((res) => setTimeout(res, DELAY_MS));
     const now = new Date();
     try {
-      // Fetch insights + earnings in parallel — earnings is best-effort
-      // (returns available:false for non-video posts / not-monetized pages
-      // and never throws, so it doesn't break the insights write).
       const [insights, earnings] = await Promise.all([
         fetchPostInsights(r.postId, token),
         fetchPostVideoEarnings(r.postId, token),
@@ -154,11 +186,13 @@ export async function POST(req: Request) {
         .where(eq(fanpagePosts.id, r.id));
       results.push({ id: r.id, postId: r.postId, ok: false, error: msg });
       errCount++;
-      // FB abuse cooldown is sticky across the whole token — finishing the
-      // loop just produces N copies of the same error and deepens the
-      // penalty. Mark remaining rows as skipped and return a clear hint.
+      // FB abuse cooldown is sticky across the token — finishing the loop
+      // just produces N copies of the same error and deepens the penalty.
+      // Capture which fanpage tripped it so we can offer the user sibling
+      // account tokens (same FB page, different managing account).
       if (isAbuseError(e)) {
         abused = true;
+        abuseFanpageId = r.fanpageId;
         for (let j = i + 1; j < rows.length; j++) {
           results.push({
             id: rows[j].id,
@@ -173,6 +207,57 @@ export async function POST(req: Request) {
     }
   }
 
+  // Look up alternative-token candidates: sibling fanpage rows for the same
+  // FB page (page_id) but managed by a different FB account, with a usable
+  // page-access-token. Skip any row that the user already overrode (would
+  // suggest the same token a 2nd time).
+  let tokenAlternatives: TokenAlternativesBlock | undefined;
+  if (abused && abuseFanpageId !== null) {
+    const failedFp = fpById.get(abuseFanpageId);
+    if (failedFp) {
+      const overrideTargetForFailed = overrides[String(abuseFanpageId)];
+      const altRows = await db
+        .select({
+          fanpageId: fanpages.id,
+          fbAccountId: fanpages.fbAccountId,
+          accountUsername: facebookAccounts.username,
+          accountFbName: facebookAccounts.fbName,
+        })
+        .from(fanpages)
+        .innerJoin(
+          facebookAccounts,
+          eq(fanpages.fbAccountId, facebookAccounts.id),
+        )
+        .where(
+          and(
+            eq(fanpages.pageId, failedFp.pageId),
+            ne(fanpages.id, abuseFanpageId),
+            isNotNull(fanpages.encPageAccessToken),
+          ),
+        );
+      const alternatives: TokenAlternative[] = altRows
+        .filter((a) => a.fanpageId !== overrideTargetForFailed)
+        .map((a) => ({
+          fanpageId: a.fanpageId,
+          accountId: a.fbAccountId,
+          accountUsername: a.accountUsername,
+          accountFbName: a.accountFbName,
+        }));
+      let failedAccountUsername: string | null = null;
+      const [failedAccount] = await db
+        .select({ username: facebookAccounts.username })
+        .from(facebookAccounts)
+        .where(eq(facebookAccounts.id, failedFp.fbAccountId));
+      if (failedAccount) failedAccountUsername = failedAccount.username;
+      tokenAlternatives = {
+        failedFanpageId: abuseFanpageId,
+        pageId: failedFp.pageId,
+        failedAccountUsername,
+        alternatives,
+      };
+    }
+  }
+
   return NextResponse.json({
     ok: true,
     total: rows.length,
@@ -181,6 +266,8 @@ export async function POST(req: Request) {
     skipCount,
     results,
     abused,
+    abuseFanpageId,
+    tokenAlternatives,
     hint: abused
       ? "FB đang giới hạn token này (abuse). Chờ ~5–60 phút rồi thử lại với ít bài hơn (≤10)."
       : undefined,
