@@ -16,15 +16,22 @@ interface Body {
 }
 
 export async function POST(req: Request) {
-  // Read body via text() + JSON.parse instead of req.json() — the latter
-  // returns empty on opennextjs/Cloudflare Workers because of how the
-  // request body stream is adapted. text() works reliably.
+  // Read body via raw stream wrapped in a fresh Response — Next's request
+  // wrapper on opennextjs/Cloudflare Workers eats the body before
+  // req.json()/req.text() can read it. Constructing a new Response from
+  // the underlying ReadableStream side-steps that wrapper.
   let body: Body = {};
+  let rawText = "";
   try {
-    const text = await req.text();
-    if (text) body = JSON.parse(text) as Body;
-  } catch {
-    // empty / invalid body — handled below
+    if (req.body) {
+      rawText = await new Response(req.body).text();
+    } else {
+      rawText = await req.text();
+    }
+    console.log("[login] body text length:", rawText.length, "first40:", rawText.slice(0, 40));
+    if (rawText) body = JSON.parse(rawText) as Body;
+  } catch (e) {
+    console.log("[login] body parse error:", e instanceof Error ? e.message : String(e));
   }
   const username = (body.username ?? "").trim();
   const password = body.password ?? "";
