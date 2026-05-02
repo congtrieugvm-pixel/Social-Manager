@@ -569,8 +569,7 @@ export default function ReachDashboard() {
     try {
       const res = await fetch("/api/fanpages/sync-earnings", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ids, ...rangeBody }),
+        headers: { "X-Body": JSON.stringify({ ids, ...rangeBody }) },
       });
       const data = (await res.json()) as {
         total?: number;
@@ -648,13 +647,11 @@ export default function ReachDashboard() {
       const [insightsRes, earningsRes] = await Promise.all([
         fetch("/api/fanpages/insights/batch", {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ ids, days: SYNC_DAYS }),
+          headers: { "X-Body": JSON.stringify({ ids, days: SYNC_DAYS }) },
         }),
         fetch("/api/fanpages/sync-earnings", {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ ids, ...rangeBody }),
+          headers: { "X-Body": JSON.stringify({ ids, ...rangeBody }) },
         }),
       ]);
       const data = (await insightsRes.json()) as {
@@ -1122,8 +1119,7 @@ export default function ReachDashboard() {
                     for (const id of ids) {
                       const r = await fetch(`/api/fanpages/${id}`, {
                         method: "PATCH",
-                        headers: { "Content-Type": "application/json" },
-                        body: JSON.stringify({ insightGroupId: targetId }),
+                        headers: { "X-Body": JSON.stringify({ insightGroupId: targetId }) },
                       });
                       if (r.ok) okCount++;
                       else errCount++;

@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { statuses, accounts } from "@/lib/db/schema";
 import { eq, sql, asc } from "drizzle-orm";
+import { readBody } from "@/lib/req-body";
 
 export async function GET() {
   const rows = await db
@@ -21,11 +22,11 @@ export async function GET() {
 }
 
 export async function POST(req: Request) {
-  const body = (await req.json()) as {
+  const body = await readBody<{
     name?: string;
     color?: string;
     sortOrder?: number;
-  };
+  }>(req);
   const name = body.name?.trim();
   if (!name) return NextResponse.json({ error: "Thiếu tên trạng thái" }, { status: 400 });
   const color = body.color?.trim() || "#7a766a";

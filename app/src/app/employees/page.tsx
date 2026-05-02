@@ -80,13 +80,11 @@ export default function EmployeesPage() {
       editingId == null
         ? await fetch("/api/employees", {
             method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(payload),
+            headers: { "X-Body": JSON.stringify(payload) },
           })
         : await fetch(`/api/employees/${editingId}`, {
             method: "PATCH",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(payload),
+            headers: { "X-Body": JSON.stringify(payload) },
           });
     if (!res.ok) {
       const err = await res.json().catch(() => ({ error: "Lỗi" }));

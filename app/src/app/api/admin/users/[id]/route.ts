@@ -12,6 +12,7 @@ import {
   validatePassword,
   validateUsername,
 } from "@/lib/auth";
+import { readBody } from "@/lib/req-body";
 
 export const runtime = "nodejs";
 
@@ -54,13 +55,7 @@ export async function PATCH(
         { status: 404 },
       );
     }
-
-    let body: PatchBody = {};
-    try {
-      body = (await req.json()) as PatchBody;
-    } catch {
-      // empty body
-    }
+  const body = await readBody<PatchBody>(req);
 
     const patch: Record<string, unknown> = { updatedAt: new Date() };
     let invalidatesSessions = false;

@@ -9,6 +9,7 @@ import {
   fetchPostVideoEarnings,
   isAbuseError,
 } from "@/lib/facebook";
+import { readBody } from "@/lib/req-body";
 
 export const runtime = "nodejs";
 // Inter-post throttle is 400ms; insighting 25+ posts can exceed the default
@@ -48,12 +49,7 @@ interface TokenAlternativesBlock {
 }
 
 export async function POST(req: Request) {
-  let body: BatchBody = {};
-  try {
-    body = (await req.json()) as BatchBody;
-  } catch {
-    // empty ok
-  }
+  const body = await readBody<BatchBody>(req);
 
   const ids = Array.isArray(body.ids)
     ? body.ids.filter((x): x is number => typeof x === "number" && Number.isFinite(x))

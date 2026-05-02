@@ -11,6 +11,7 @@ import {
 import { and, asc, desc, eq, like, or, sql } from "drizzle-orm";
 import type { AnyColumn, SQL } from "drizzle-orm";
 import { encrypt } from "@/lib/crypto";
+import { readBody } from "@/lib/req-body";
 
 const PAGE_SIZE = 50;
 
@@ -121,7 +122,7 @@ export async function GET(req: Request) {
 }
 
 export async function POST(req: Request) {
-  const body = (await req.json()) as {
+  const body = await readBody<{
     username: string;
     password?: string;
     email?: string;
@@ -130,7 +131,7 @@ export async function POST(req: Request) {
     token?: string;
     note?: string;
     groupId?: number | null;
-  };
+  }>(req);
 
   const username = body.username?.trim().replace(/^@/, "");
   if (!username) {

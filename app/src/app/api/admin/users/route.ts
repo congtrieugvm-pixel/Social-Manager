@@ -5,6 +5,7 @@ import {
   listUsers,
   requireAdmin,
 } from "@/lib/auth";
+import { readBody } from "@/lib/req-body";
 
 export const runtime = "nodejs";
 
@@ -33,12 +34,7 @@ interface CreateBody {
 export async function POST(req: Request) {
   try {
     await requireAdmin();
-    let body: CreateBody = {};
-    try {
-      body = (await req.json()) as CreateBody;
-    } catch {
-      // empty body
-    }
+  const body = await readBody<CreateBody>(req);
     const username = (body.username ?? "").trim();
     const password = body.password ?? "";
     const role = body.role === "admin" ? "admin" : "user";

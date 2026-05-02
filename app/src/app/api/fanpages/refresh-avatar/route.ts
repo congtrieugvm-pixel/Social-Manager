@@ -3,6 +3,7 @@ import { db } from "@/lib/db";
 import { fanpages } from "@/lib/db/schema";
 import { inArray, eq } from "drizzle-orm";
 import { buildFbAvatarUrl } from "@/lib/facebook";
+import { readBody } from "@/lib/req-body";
 
 export const runtime = "nodejs";
 
@@ -24,7 +25,7 @@ interface ItemResult {
 export async function POST(req: Request) {
   let ids: number[] = [];
   try {
-    const body = (await req.json()) as { ids?: number[] };
+    const body = await readBody<{ ids?: number[] }>(req);
     ids = Array.isArray(body.ids)
       ? body.ids.filter(
           (x): x is number => typeof x === "number" && Number.isFinite(x),

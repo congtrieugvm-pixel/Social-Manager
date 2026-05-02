@@ -2,18 +2,19 @@ import { NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { countries } from "@/lib/db/schema";
 import { eq } from "drizzle-orm";
+import { readBody } from "@/lib/req-body";
 
 export async function PATCH(req: Request, ctx: { params: Promise<{ id: string }> }) {
   const { id: idStr } = await ctx.params;
   const id = Number(idStr);
   if (!Number.isFinite(id)) return NextResponse.json({ error: "Invalid id" }, { status: 400 });
 
-  const body = (await req.json()) as {
+  const body = await readBody<{
     name?: string;
     code?: string | null;
     color?: string;
     sortOrder?: number;
-  };
+  }>(req);
   const patch: Partial<typeof countries.$inferInsert> = {};
   if (typeof body.name === "string" && body.name.trim()) patch.name = body.name.trim();
   if (body.code === null) patch.code = null;

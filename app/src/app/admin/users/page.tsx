@@ -76,12 +76,13 @@ export default function AdminUsersPage() {
     try {
       const res = await fetch("/api/admin/users", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          username: newUsername.trim(),
-          password: newPassword,
-          role: newRole,
-        }),
+        headers: {
+          "X-Body": JSON.stringify({
+            username: newUsername.trim(),
+            password: newPassword,
+            role: newRole,
+          }),
+        },
       });
       const data = (await res.json()) as { ok?: boolean; error?: string };
       if (!res.ok || !data.ok) {
@@ -105,8 +106,7 @@ export default function AdminUsersPage() {
     try {
       const res = await fetch(`/api/admin/users/${id}`, {
         method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(patch),
+        headers: { "X-Body": JSON.stringify(patch) },
       });
       const data = (await res.json()) as { ok?: boolean; error?: string };
       if (!res.ok || !data.ok) {

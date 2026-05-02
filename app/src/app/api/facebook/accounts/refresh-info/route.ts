@@ -10,6 +10,7 @@ import {
   isFacebookConfigured,
   type FbDebugTokenInfo,
 } from "@/lib/facebook";
+import { readBody } from "@/lib/req-body";
 
 export const runtime = "nodejs";
 
@@ -116,7 +117,7 @@ async function processOne(
 export async function POST(req: Request) {
   let ids: number[] = [];
   try {
-    const body = (await req.json()) as { ids?: number[] };
+    const body = await readBody<{ ids?: number[] }>(req);
     ids = (body.ids ?? []).filter(
       (n): n is number => typeof n === "number" && Number.isFinite(n),
     );

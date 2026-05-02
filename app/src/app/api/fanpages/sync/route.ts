@@ -21,6 +21,7 @@ import {
   type FbDebugTokenInfo,
   type FbPage,
 } from "@/lib/facebook";
+import { readBody } from "@/lib/req-body";
 
 export const runtime = "nodejs";
 
@@ -840,12 +841,7 @@ async function streamBody(
 }
 
 export async function POST(req: Request) {
-  let body: SyncBody = {};
-  try {
-    body = (await req.json()) as SyncBody;
-  } catch {
-    // empty body ok
-  }
+  const body = await readBody<SyncBody>(req);
 
   const accept = req.headers.get("accept") ?? "";
   if (accept.includes("application/x-ndjson")) {

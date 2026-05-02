@@ -71,13 +71,11 @@ export default function StatusesPage() {
       editingId == null
         ? await fetch("/api/statuses", {
             method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(payload),
+            headers: { "X-Body": JSON.stringify(payload) },
           })
         : await fetch(`/api/statuses/${editingId}`, {
             method: "PATCH",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(payload),
+            headers: { "X-Body": JSON.stringify(payload) },
           });
     if (!res.ok) {
       const err = await res.json().catch(() => ({ error: "Lỗi" }));

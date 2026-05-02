@@ -274,8 +274,7 @@ export default function FacebookPage() {
     try {
       const res = await fetch("/api/facebook/accounts/bulk-delete", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ids }),
+        headers: { "X-Body": JSON.stringify({ ids }) },
       });
       const data = (await res.json()) as { deleted?: number; error?: string };
       if (!res.ok || data.error) {
@@ -300,8 +299,7 @@ export default function FacebookPage() {
     try {
       const res = await fetch("/api/facebook/accounts/bulk-update", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ids, [field]: value }),
+        headers: { "X-Body": JSON.stringify({ ids, [field]: value }) },
       });
       const data = (await res.json()) as { updated?: number; error?: string };
       if (!res.ok || data.error) {
@@ -325,8 +323,7 @@ export default function FacebookPage() {
     try {
       const res = await fetch("/api/facebook/accounts/sync-pages", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ids }),
+        headers: { "X-Body": JSON.stringify({ ids }) },
       });
       const data = (await res.json()) as {
         total?: number;
@@ -357,8 +354,7 @@ export default function FacebookPage() {
     try {
       const res = await fetch("/api/facebook/accounts/refresh-avatar", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ids }),
+        headers: { "X-Body": JSON.stringify({ ids }) },
       });
       const data = (await res.json()) as {
         total?: number;
@@ -424,8 +420,7 @@ export default function FacebookPage() {
     setEdit({ ...edit, saving: true, error: null });
     const res = await fetch(`/api/facebook/accounts/${edit.id}`, {
       method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
+      headers: { "X-Body": JSON.stringify({
         username: edit.username,
         password: edit.password,
         email: edit.email,
@@ -433,7 +428,7 @@ export default function FacebookPage() {
         emailPassword: edit.emailPassword,
         token: edit.token,
         note: edit.note,
-      }),
+      }) },
     });
     if (!res.ok) {
       const err = await res.json().catch(() => ({ error: "Lỗi" }));

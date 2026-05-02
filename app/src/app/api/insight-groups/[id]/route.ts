@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { insightGroups } from "@/lib/db/schema";
 import { eq } from "drizzle-orm";
+import { readBody } from "@/lib/req-body";
 
 export const runtime = "nodejs";
 
@@ -10,12 +11,12 @@ export async function PATCH(req: Request, ctx: { params: Promise<{ id: string }>
   const id = Number(idStr);
   if (!Number.isFinite(id)) return NextResponse.json({ error: "Invalid id" }, { status: 400 });
 
-  const body = (await req.json()) as {
+  const body = await readBody<{
     name?: string;
     color?: string;
     description?: string;
     sortOrder?: number;
-  };
+  }>(req);
   const patch: Partial<typeof insightGroups.$inferInsert> = {};
   if (typeof body.name === "string" && body.name.trim()) patch.name = body.name.trim();
   if (typeof body.color === "string" && body.color.trim()) patch.color = body.color.trim();

@@ -180,8 +180,7 @@ export default function InsightsOverviewPage() {
     try {
       const res = await fetch("/api/fanpages/insights/batch", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ids }),
+        headers: { "X-Body": JSON.stringify({ ids }) },
       });
       const data = (await res.json()) as {
         okCount?: number;
@@ -217,8 +216,7 @@ export default function InsightsOverviewPage() {
       for (const id of ids) {
         const res = await fetch("/api/posts/insights/batch", {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ fanpageId: id }),
+          headers: { "X-Body": JSON.stringify({ fanpageId: id }) },
         });
         const data = (await res.json()) as {
           total?: number;

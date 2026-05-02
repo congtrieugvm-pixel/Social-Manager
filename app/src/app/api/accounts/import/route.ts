@@ -9,6 +9,7 @@ import {
   type FieldKey,
 } from "@/lib/parser";
 import { inArray } from "drizzle-orm";
+import { readBody } from "@/lib/req-body";
 
 interface ImportBody {
   text: string;
@@ -39,7 +40,7 @@ function sanitizeOrder(order: unknown): FieldKey[] {
 }
 
 export async function POST(req: Request) {
-  const body = (await req.json()) as ImportBody;
+  const body = await readBody<ImportBody>(req);
   const { text, delimiter = "|", groupId = null } = body;
   const order = sanitizeOrder(body.order);
 
@@ -97,7 +98,7 @@ export async function POST(req: Request) {
 }
 
 export async function PUT(req: Request) {
-  const body = (await req.json()) as ImportBody;
+  const body = await readBody<ImportBody>(req);
   const { text, delimiter = "|" } = body;
   const order = sanitizeOrder(body.order);
 

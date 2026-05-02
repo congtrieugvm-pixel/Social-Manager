@@ -3,6 +3,7 @@ import { db } from "@/lib/db";
 import { accounts } from "@/lib/db/schema";
 import { inArray } from "drizzle-orm";
 import { decrypt } from "@/lib/crypto";
+import { readBody } from "@/lib/req-body";
 
 interface ExportBody {
   ids: number[];
@@ -31,7 +32,7 @@ function sanitizeFields(raw: unknown): ExportField[] {
 }
 
 export async function POST(req: Request) {
-  const body = (await req.json()) as ExportBody;
+  const body = await readBody<ExportBody>(req);
   const ids = Array.isArray(body.ids)
     ? body.ids.filter((n) => Number.isFinite(n))
     : [];

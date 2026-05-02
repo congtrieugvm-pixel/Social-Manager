@@ -8,6 +8,7 @@ import {
   fetchPageEarningsBreakdown,
   resolveInsightRange,
 } from "@/lib/facebook";
+import { readBody } from "@/lib/req-body";
 
 export const runtime = "nodejs";
 
@@ -34,12 +35,7 @@ interface ItemResult {
 }
 
 export async function POST(req: Request) {
-  let body: SyncEarningsBody = {};
-  try {
-    body = (await req.json()) as SyncEarningsBody;
-  } catch {
-    // empty ok
-  }
+  const body = await readBody<SyncEarningsBody>(req);
 
   const ids = Array.isArray(body.ids)
     ? body.ids.filter((x): x is number => typeof x === "number" && Number.isFinite(x))

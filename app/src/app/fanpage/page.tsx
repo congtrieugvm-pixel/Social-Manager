@@ -312,13 +312,11 @@ export default function FanpagePage() {
         groupEditingId == null
           ? await fetch("/api/insight-groups", {
               method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify(payload),
+              headers: { "X-Body": JSON.stringify(payload) },
             })
           : await fetch(`/api/insight-groups/${groupEditingId}`, {
               method: "PATCH",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify(payload),
+              headers: { "X-Body": JSON.stringify(payload) },
             });
       if (!res.ok) {
         const err = await res.json().catch(() => ({ error: "Lỗi" }));
@@ -339,8 +337,7 @@ export default function FanpagePage() {
             Array.from(createAssignSelected).map((pageRowId) =>
               fetch(`/api/fanpages/${pageRowId}`, {
                 method: "PATCH",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ insightGroupId: newId }),
+                headers: { "X-Body": JSON.stringify({ insightGroupId: newId }) },
               }),
             ),
           );
@@ -430,8 +427,7 @@ export default function FanpagePage() {
         tasks.push(
           fetch(`/api/fanpages/${id}`, {
             method: "PATCH",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ insightGroupId: targetGroupId }),
+            headers: { "X-Body": JSON.stringify({ insightGroupId: targetGroupId }) },
           }),
         );
       }
@@ -439,8 +435,7 @@ export default function FanpagePage() {
         tasks.push(
           fetch(`/api/fanpages/${id}`, {
             method: "PATCH",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ insightGroupId: null }),
+            headers: { "X-Body": JSON.stringify({ insightGroupId: null }) },
           }),
         );
       }
@@ -468,8 +463,7 @@ export default function FanpagePage() {
       try {
         const res = await fetch("/api/fanpages/sync", {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ fbAccountId }),
+          headers: { "X-Body": JSON.stringify({ fbAccountId }) },
         });
         const data = (await res.json()) as {
           ok?: boolean;
@@ -515,11 +509,7 @@ export default function FanpagePage() {
       if (typeof selectedAccountId === "number") body.fbAccountId = selectedAccountId;
       const res = await fetch("/api/fanpages/sync", {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Accept: "application/x-ndjson",
-        },
-        body: JSON.stringify(body),
+        headers: { "X-Body": JSON.stringify(body), Accept: "application/x-ndjson" },
       });
       if (!res.ok || !res.body) {
         let msg = `Lỗi ${res.status}`;
@@ -709,8 +699,7 @@ export default function FanpagePage() {
           : rows.filter((r) => r.hasPageToken).map((r) => r.id);
       const res = await fetch("/api/fanpages/insights/batch", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ids, days: 365 }),
+        headers: { "X-Body": JSON.stringify({ ids, days: 365 }) },
       });
       const data = (await res.json()) as {
         total: number;
@@ -745,8 +734,7 @@ export default function FanpagePage() {
           : rows.filter((r) => r.hasPageToken).map((r) => r.id);
       const res = await fetch("/api/fanpages/sync-earnings", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ids, days: 365 }),
+        headers: { "X-Body": JSON.stringify({ ids, days: 365 }) },
       });
       const data = (await res.json()) as {
         total: number;
@@ -780,8 +768,7 @@ export default function FanpagePage() {
     async (fanpageId: number, groupId: number | null) => {
       const res = await fetch(`/api/fanpages/${fanpageId}`, {
         method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ insightGroupId: groupId }),
+        headers: { "X-Body": JSON.stringify({ insightGroupId: groupId }) },
       });
       if (!res.ok) {
         const d = await res.json().catch(() => ({ error: "Lỗi" }));
@@ -805,8 +792,7 @@ export default function FanpagePage() {
           Array.from(selected).map((id) =>
             fetch(`/api/fanpages/${id}`, {
               method: "PATCH",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ insightGroupId: groupId }),
+              headers: { "X-Body": JSON.stringify({ insightGroupId: groupId }) },
             }),
           ),
         );
@@ -835,8 +821,7 @@ export default function FanpagePage() {
           Array.from(selected).map((id) =>
             fetch(`/api/fanpages/${id}`, {
               method: "PATCH",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ fbAccountId }),
+              headers: { "X-Body": JSON.stringify({ fbAccountId }) },
             }),
           ),
         );
@@ -860,8 +845,7 @@ export default function FanpagePage() {
     try {
       const res = await fetch("/api/fanpages/refresh-avatar", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ids: Array.from(selected) }),
+        headers: { "X-Body": JSON.stringify({ ids: Array.from(selected) }) },
       });
       const data = (await res.json()) as {
         total?: number;
@@ -900,8 +884,7 @@ export default function FanpagePage() {
     try {
       const res = await fetch("/api/fanpages/bulk-delete", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ids: Array.from(selected) }),
+        headers: { "X-Body": JSON.stringify({ ids: Array.from(selected) }) },
       });
       const data = (await res.json()) as { deleted?: number; error?: string };
       if (!res.ok || data.error) {

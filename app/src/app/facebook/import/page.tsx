@@ -200,8 +200,7 @@ ${SHORT_EXAMPLE}`;
     try {
       const res = await fetch("/api/facebook/accounts/import", {
         method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text, delimiter, order }),
+        headers: { "X-Body": JSON.stringify({ text, delimiter, order }) },
       });
       const data = (await res.json()) as PreviewResponse;
       setPreview(data);
@@ -215,8 +214,7 @@ ${SHORT_EXAMPLE}`;
     try {
       const res = await fetch("/api/facebook/accounts/import", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text, delimiter, order, groupId }),
+        headers: { "X-Body": JSON.stringify({ text, delimiter, order, groupId }) },
       });
       const data = (await res.json()) as ImportResponse;
       setResult(data);

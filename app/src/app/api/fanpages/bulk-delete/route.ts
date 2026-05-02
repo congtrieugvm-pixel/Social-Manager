@@ -2,13 +2,14 @@ import { NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { fanpages } from "@/lib/db/schema";
 import { inArray } from "drizzle-orm";
+import { readBody } from "@/lib/req-body";
 
 export const runtime = "nodejs";
 
 export async function POST(req: Request) {
   let ids: number[] = [];
   try {
-    const body = (await req.json()) as { ids?: number[] };
+    const body = await readBody<{ ids?: number[] }>(req);
     ids = (body.ids ?? []).filter((n): n is number => Number.isFinite(n));
   } catch {
     // empty body → 400 below

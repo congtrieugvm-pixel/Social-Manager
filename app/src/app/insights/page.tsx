@@ -370,8 +370,7 @@ export default function ContentPage() {
       for (const id of ids) {
         const res = await fetch(`/api/fanpages/${id}/posts`, {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ max: syncMax }),
+          headers: { "X-Body": JSON.stringify({ max: syncMax }) },
         });
         const data = (await res.json()) as {
           ok?: boolean;
@@ -400,8 +399,7 @@ export default function ContentPage() {
         if (failedSyncIds.has(id)) continue;
         const res = await fetch("/api/posts/insights/batch", {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ fanpageId: id }),
+          headers: { "X-Body": JSON.stringify({ fanpageId: id }) },
         });
         const data = (await res.json()) as BatchResponse;
         if (res.ok) {
@@ -435,11 +433,10 @@ export default function ContentPage() {
                 try {
                   const r2 = await fetch("/api/posts/insights/batch", {
                     method: "POST",
-                    headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({
+                    headers: { "X-Body": JSON.stringify({
                       fanpageId: id,
                       tokenOverrides: { [String(id)]: overrideFpId },
-                    }),
+                    }) },
                   });
                   const d2 = (await r2.json()) as BatchResponse;
                   setMessage(
@@ -498,8 +495,7 @@ export default function ContentPage() {
     try {
       const res = await fetch("/api/posts/insights/batch", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ids, tokenOverrides }),
+        headers: { "X-Body": JSON.stringify({ ids, tokenOverrides }) },
       });
       const data = (await res.json()) as BatchResponse;
       if (!res.ok) {

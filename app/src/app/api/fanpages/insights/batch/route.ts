@@ -5,6 +5,7 @@ import { inArray, isNotNull } from "drizzle-orm";
 import { decrypt } from "@/lib/crypto";
 import { fetchPageInsights, resolveInsightRange } from "@/lib/facebook";
 import { recordFanpageSnapshot } from "@/lib/fanpage-snapshot";
+import { readBody } from "@/lib/req-body";
 
 export const runtime = "nodejs";
 
@@ -26,12 +27,7 @@ interface ItemResult {
 }
 
 export async function POST(req: Request) {
-  let body: BatchBody = {};
-  try {
-    body = (await req.json()) as BatchBody;
-  } catch {
-    // empty ok
-  }
+  const body = await readBody<BatchBody>(req);
 
   const ids = Array.isArray(body.ids)
     ? body.ids.filter((x): x is number => typeof x === "number" && Number.isFinite(x))

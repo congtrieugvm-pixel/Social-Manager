@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { fanpages } from "@/lib/db/schema";
 import { eq } from "drizzle-orm";
+import { readBody } from "@/lib/req-body";
 
 export const runtime = "nodejs";
 
@@ -21,10 +22,10 @@ export async function PATCH(req: Request, ctx: { params: Promise<{ id: string }>
   if (!Number.isFinite(id)) {
     return NextResponse.json({ error: "Invalid id" }, { status: 400 });
   }
-  const body = (await req.json()) as {
+  const body = await readBody<{
     fbAccountId?: number | null;
     insightGroupId?: number | null;
-  };
+  }>(req);
   const patch: Record<string, unknown> = { updatedAt: new Date() };
   if (typeof body.fbAccountId === "number" && Number.isFinite(body.fbAccountId)) {
     patch.fbAccountId = body.fbAccountId;

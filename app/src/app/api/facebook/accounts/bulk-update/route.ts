@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { facebookAccounts } from "@/lib/db/schema";
 import { inArray } from "drizzle-orm";
+import { readBody } from "@/lib/req-body";
 
 export const runtime = "nodejs";
 
@@ -15,12 +16,7 @@ interface BulkBody {
 }
 
 export async function POST(req: Request) {
-  let body: BulkBody = {};
-  try {
-    body = (await req.json()) as BulkBody;
-  } catch {
-    // empty body
-  }
+  const body = await readBody<BulkBody>(req);
   const ids = (body.ids ?? []).filter((n): n is number => Number.isFinite(n));
   if (ids.length === 0) {
     return NextResponse.json(

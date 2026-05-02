@@ -3,6 +3,7 @@ import { db } from "@/lib/db";
 import { accounts, groups, statuses, countries, machines, employees } from "@/lib/db/schema";
 import { eq, and, ne } from "drizzle-orm";
 import { decrypt, encrypt } from "@/lib/crypto";
+import { readBody } from "@/lib/req-body";
 
 interface HistoryEntry {
   enc: string;
@@ -135,7 +136,7 @@ export async function PATCH(req: Request, ctx: { params: Promise<{ id: string }>
   const id = Number(idStr);
   if (!Number.isFinite(id)) return NextResponse.json({ error: "Invalid id" }, { status: 400 });
 
-  const body = (await req.json()) as {
+  const body = await readBody<{
     username?: string;
     password?: string | null;
     email?: string | null;
@@ -147,7 +148,7 @@ export async function PATCH(req: Request, ctx: { params: Promise<{ id: string }>
     countryId?: number | null;
     machineId?: number | null;
     employeeId?: number | null;
-  };
+  }>(req);
 
   // Load current record for history diffing + uniqueness check baseline.
   const [current] = await db

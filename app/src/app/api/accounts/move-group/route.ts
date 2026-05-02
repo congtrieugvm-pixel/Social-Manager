@@ -2,9 +2,10 @@ import { NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { accounts } from "@/lib/db/schema";
 import { inArray } from "drizzle-orm";
+import { readBody } from "@/lib/req-body";
 
 export async function POST(req: Request) {
-  const body = (await req.json()) as { ids?: number[]; groupId?: number | null };
+  const body = await readBody<{ ids?: number[]; groupId?: number | null }>(req);
   const ids = (body.ids ?? []).filter((n): n is number => Number.isFinite(n));
   if (ids.length === 0) {
     return NextResponse.json({ error: "Thiếu danh sách tài khoản" }, { status: 400 });

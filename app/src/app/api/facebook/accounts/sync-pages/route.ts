@@ -4,6 +4,7 @@ import { facebookAccounts, fanpages } from "@/lib/db/schema";
 import { and, eq, inArray } from "drizzle-orm";
 import { decrypt, encrypt } from "@/lib/crypto";
 import { buildFbAvatarUrl, fetchUserPages } from "@/lib/facebook";
+import { readBody } from "@/lib/req-body";
 
 export const runtime = "nodejs";
 
@@ -106,7 +107,7 @@ async function syncOne(
 export async function POST(req: Request) {
   let ids: number[] = [];
   try {
-    const body = (await req.json()) as { ids?: number[] };
+    const body = await readBody<{ ids?: number[] }>(req);
     ids = (body.ids ?? []).filter((n): n is number => Number.isFinite(n));
   } catch {
     // empty body

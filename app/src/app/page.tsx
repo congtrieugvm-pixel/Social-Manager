@@ -410,8 +410,7 @@ export default function Dashboard() {
     try {
       const res = await fetch(`/api/accounts/${endpoint}`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ids }),
+        headers: { "X-Body": JSON.stringify({ ids }) },
       });
       const data = await res.json();
       alert(`Hoàn tất: ${data.success}/${data.total} thành công · ${data.failed} lỗi`);
@@ -431,8 +430,7 @@ export default function Dashboard() {
     }
     await fetch(`/api/accounts/move-group`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ ids, groupId: newGroupId }),
+      headers: { "X-Body": JSON.stringify({ ids, groupId: newGroupId }) },
     });
     setSelected(new Set());
     await load();
@@ -446,8 +444,7 @@ export default function Dashboard() {
     }
     await fetch(`/api/accounts/bulk-update`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ ids, statusId }),
+      headers: { "X-Body": JSON.stringify({ ids, statusId }) },
     });
     setSelected(new Set());
     await load();
@@ -461,8 +458,7 @@ export default function Dashboard() {
     }
     await fetch(`/api/accounts/bulk-update`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ ids, countryId }),
+      headers: { "X-Body": JSON.stringify({ ids, countryId }) },
     });
     setSelected(new Set());
     await load();
@@ -476,8 +472,7 @@ export default function Dashboard() {
     }
     await fetch(`/api/accounts/bulk-update`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ ids, machineId }),
+      headers: { "X-Body": JSON.stringify({ ids, machineId }) },
     });
     setSelected(new Set());
     await load();
@@ -491,8 +486,7 @@ export default function Dashboard() {
     }
     await fetch(`/api/accounts/bulk-update`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ ids, employeeId }),
+      headers: { "X-Body": JSON.stringify({ ids, employeeId }) },
     });
     setSelected(new Set());
     await load();
@@ -524,8 +518,7 @@ export default function Dashboard() {
     try {
       const res = await fetch(`/api/accounts/bulk-delete`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ids }),
+        headers: { "X-Body": JSON.stringify({ ids }) },
       });
       if (!res.ok) {
         const err = await res.json().catch(() => ({ error: "Lỗi" }));
@@ -552,8 +545,7 @@ export default function Dashboard() {
     try {
       const res = await fetch(`/api/accounts/export`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ids, delimiter: exportDelimiter, fields: exportFields }),
+        headers: { "X-Body": JSON.stringify({ ids, delimiter: exportDelimiter, fields: exportFields }) },
       });
       if (!res.ok) {
         const err = await res.json().catch(() => ({ error: "Lỗi" }));
@@ -579,8 +571,7 @@ export default function Dashboard() {
     try {
       const res = await fetch(`/api/accounts/export`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ids, delimiter: nextDelimiter, fields: nextFields }),
+        headers: { "X-Body": JSON.stringify({ ids, delimiter: nextDelimiter, fields: nextFields }) },
       });
       if (!res.ok) return;
       const data = (await res.json()) as { text: string; count: number };
@@ -690,15 +681,16 @@ export default function Dashboard() {
     try {
       const res = await fetch(`/api/accounts/${edit.id}`, {
         method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          username: edit.username.trim(),
-          password: edit.password,
-          email: edit.email,
-          twofa: edit.twofa,
-          emailPassword: edit.emailPassword,
-          note: edit.note,
-        }),
+        headers: {
+          "X-Body": JSON.stringify({
+            username: edit.username.trim(),
+            password: edit.password,
+            email: edit.email,
+            twofa: edit.twofa,
+            emailPassword: edit.emailPassword,
+            note: edit.note,
+          }),
+        },
       });
       if (!res.ok) {
         const err = await res.json().catch(() => ({ error: "Lỗi" }));
@@ -937,8 +929,7 @@ export default function Dashboard() {
     );
     await fetch(`/api/accounts/${id}`, {
       method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ statusId }),
+      headers: { "X-Body": JSON.stringify({ statusId }) },
     });
   }
 
@@ -959,8 +950,7 @@ export default function Dashboard() {
     );
     await fetch(`/api/accounts/${id}`, {
       method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ countryId }),
+      headers: { "X-Body": JSON.stringify({ countryId }) },
     });
   }
 
@@ -980,8 +970,7 @@ export default function Dashboard() {
     );
     await fetch(`/api/accounts/${id}`, {
       method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ machineId }),
+      headers: { "X-Body": JSON.stringify({ machineId }) },
     });
   }
 
@@ -1001,8 +990,7 @@ export default function Dashboard() {
     );
     await fetch(`/api/accounts/${id}`, {
       method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ employeeId }),
+      headers: { "X-Body": JSON.stringify({ employeeId }) },
     });
   }
 
@@ -1025,8 +1013,7 @@ export default function Dashboard() {
   async function moveOneToGroup(id: number, newGroupId: number | null) {
     await fetch(`/api/accounts/${id}`, {
       method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ groupId: newGroupId }),
+      headers: { "X-Body": JSON.stringify({ groupId: newGroupId }) },
     });
     if (detail && detail.id === id) {
       const g = newGroupId ? groups.find((gr) => gr.id === newGroupId) : null;
@@ -1053,8 +1040,7 @@ export default function Dashboard() {
     try {
       const res = await fetch("/api/groups", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name, color: "#2d5a3d", description: "" }),
+        headers: { "X-Body": JSON.stringify({ name, color: "#2d5a3d", description: "" }) },
       });
       if (!res.ok) {
         const err = await res.json().catch(() => ({ error: "Lỗi" }));
@@ -1136,8 +1122,7 @@ export default function Dashboard() {
     try {
       const res = await fetch(`/api/accounts/${endpoint}`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ids: [id] }),
+        headers: { "X-Body": JSON.stringify({ ids: [id] }) },
       });
       const data = await res.json();
       const result = data.results?.[0];
@@ -1187,8 +1172,7 @@ export default function Dashboard() {
   async function saveNote(id: number, note: string) {
     await fetch(`/api/accounts/${id}`, {
       method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ note }),
+      headers: { "X-Body": JSON.stringify({ note }) },
     });
     await load();
   }
