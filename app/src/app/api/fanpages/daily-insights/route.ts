@@ -73,9 +73,12 @@ export async function GET(req: Request) {
     .from(fanpages)
     .where(inArray(fanpages.id, ids));
 
-  // Aggregate per-day across fanpages. Key by `end_time` (FB returns ISO date,
-  // 00:00 UTC of the day the metric covers).
+  // Aggregate per-day across fanpages PLUS a per-fanpage day map. The
+  // per-fp breakdown lets the reach dashboard's Top widget rank fanpages
+  // using the SAME data path (and therefore SAME numbers) as the KPI cards
+  // — fixes a long-standing mismatch between header total and Top sum.
   const dayTotals = new Map<string, number>();
+  const perFpDayMap = new Map<number, Map<string, number>>();
   for (const r of rows) {
     if (!r.insightsJson) continue;
     let parsed: FbInsights;
@@ -87,14 +90,17 @@ export async function GET(req: Request) {
     const series = parsed[fbMetric];
     if (!Array.isArray(series) || series.length === 0) continue;
     const values = series[0]?.values ?? [];
+    const fpDayMap = new Map<string, number>();
     for (const v of values) {
       if (!v?.end_time) continue;
       const num = valueAsNumber(v.value);
       dayTotals.set(v.end_time, (dayTotals.get(v.end_time) ?? 0) + num);
+      fpDayMap.set(v.end_time, num);
     }
+    perFpDayMap.set(r.id, fpDayMap);
   }
 
-  // Build sorted series of {ts (epoch sec), value}.
+  // Build sorted aggregate series of {ts (epoch sec), value}.
   let series = Array.from(dayTotals.entries())
     .map(([endTime, value]) => ({
       ts: Math.floor(new Date(endTime).getTime() / 1000),
@@ -103,16 +109,35 @@ export async function GET(req: Request) {
     .filter((p) => Number.isFinite(p.ts) && p.ts > 0)
     .sort((a, b) => a.ts - b.ts);
 
-  // Filter by explicit window (preferred) or last-N-days truncation.
-  if (fromSec > 0 && toSec > 0) {
-    series = series.filter((p) => p.ts >= fromSec && p.ts <= toSec);
-  } else if (days > 0 && series.length > 0) {
-    const cutoff = Math.floor(Date.now() / 1000) - days * 86_400;
-    series = series.filter((p) => p.ts >= cutoff);
+  // Same shape per fanpage.
+  const perFp: Record<number, Array<{ ts: number; value: number }>> = {};
+  for (const [fpId, dayMap] of perFpDayMap) {
+    perFp[fpId] = Array.from(dayMap.entries())
+      .map(([endTime, value]) => ({
+        ts: Math.floor(new Date(endTime).getTime() / 1000),
+        value,
+      }))
+      .filter((p) => Number.isFinite(p.ts) && p.ts > 0)
+      .sort((a, b) => a.ts - b.ts);
+  }
+
+  // Filter aggregate AND per-fp series by the same window.
+  function applyFilter<T extends { ts: number }>(arr: T[]): T[] {
+    if (fromSec > 0 && toSec > 0) {
+      return arr.filter((p) => p.ts >= fromSec && p.ts <= toSec);
+    } else if (days > 0 && arr.length > 0) {
+      const cutoff = Math.floor(Date.now() / 1000) - days * 86_400;
+      return arr.filter((p) => p.ts >= cutoff);
+    }
+    return arr;
+  }
+  series = applyFilter(series);
+  for (const fpId of Object.keys(perFp)) {
+    perFp[Number(fpId)] = applyFilter(perFp[Number(fpId)]);
   }
 
   const rangeStart = series.length > 0 ? series[0].ts : 0;
   const rangeEnd = series.length > 0 ? series[series.length - 1].ts : 0;
 
-  return NextResponse.json({ series, rangeStart, rangeEnd, metric });
+  return NextResponse.json({ series, perFp, rangeStart, rangeEnd, metric });
 }

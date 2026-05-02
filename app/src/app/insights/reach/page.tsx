@@ -306,6 +306,9 @@ export default function ReachDashboard() {
     pageVideoViews: 0,
   });
   const [loadingDaily, setLoadingDaily] = useState(false);
+  // Per-fanpage daily breakdown for REACH only. Lets the Top fanpage widget
+  // rank fanpages using the same data path as the KPI cards (sum equals).
+  const [reachPerFp, setReachPerFp] = useState<Record<number, { t: number; v: number }[]>>({});
 
   const rangeBody = useMemo<{ days?: number; from?: number; to?: number }>(() => {
     if (rangeMode === "custom") {
@@ -484,9 +487,17 @@ export default function ReachDashboard() {
           "pageViews",
           "pageVideoViews",
         ];
+        let reachPerFpCurr: Record<number, { t: number; v: number }[]> = {};
         const results = await Promise.all(
           metrics.map(
-            async (m): Promise<[Metric, { t: number; v: number }[], number]> => {
+            async (
+              m,
+            ): Promise<[
+              Metric,
+              { t: number; v: number }[],
+              number,
+              Record<number, { t: number; v: number }[]>,
+            ]> => {
               const params = new URLSearchParams({
                 ids: ids.join(","),
                 metric: m,
@@ -495,15 +506,23 @@ export default function ReachDashboard() {
               const res = await fetch(`/api/fanpages/daily-insights?${params}`, {
                 cache: "no-store",
               });
-              if (!res.ok) return [m, [], 0];
+              if (!res.ok) return [m, [], 0, {}];
               const d = (await res.json()) as {
                 series?: Array<{ ts: number; value: number }>;
+                perFp?: Record<number, Array<{ ts: number; value: number }>>;
               };
               const all = (d.series ?? []).map((p) => ({ t: p.ts, v: p.value }));
               const curr = all.filter((p) => p.t >= cutoffSec);
               const prev = all.filter((p) => p.t < cutoffSec);
               const prevSum = prev.reduce((s, p) => s + p.v, 0);
-              return [m, curr, prevSum];
+              const perFpCurr: Record<number, { t: number; v: number }[]> = {};
+              for (const [fpIdStr, arr] of Object.entries(d.perFp ?? {})) {
+                const fpId = Number(fpIdStr);
+                perFpCurr[fpId] = arr
+                  .map((p) => ({ t: p.ts, v: p.value }))
+                  .filter((p) => p.t >= cutoffSec);
+              }
+              return [m, curr, prevSum, perFpCurr];
             },
           ),
         );
@@ -522,12 +541,14 @@ export default function ReachDashboard() {
             pageViews: 0,
             pageVideoViews: 0,
           };
-          for (const [m, s, prevSum] of results) {
+          for (const [m, s, prevSum, perFpCurr] of results) {
             nextSeries[m] = s;
             nextPrev[m] = prevSum;
+            if (m === "pageImpressionsUnique") reachPerFpCurr = perFpCurr;
           }
           setDailySeries(nextSeries);
           setPrevTotals(nextPrev);
+          setReachPerFp(reachPerFpCurr);
         }
       } finally {
         if (!cancelled) setLoadingDaily(false);
@@ -783,14 +804,23 @@ export default function ReachDashboard() {
     return out;
   }, [dailySeries, prevTotals]);
 
-  // "Top page reach · Tháng này" — locked to reach metric (not the user's
-  // activeMetric tab), and to the latest snapshot which now represents the
-  // last 30 days of sync. Each value = the single most recent snapshot per
-  // fanpage so it reflects whatever was last pulled from FB Insights.
+  // "Top page reach · Tháng này" — values are SUM of the per-day reach for
+  // each fanpage in the picker window. Same data path as KPI cards
+  // (`dailySeries[pageImpressionsUnique]`), so sum(top.value) === KPI Reach
+  // total exactly. Locked to reach metric regardless of activeMetric tab.
   const topFanpages = useMemo(() => {
-    const latest = metricStats.pageImpressionsUnique.perFpLatest;
-    const rows: { id: number; name: string; value: number; pictureUrl: string | null; link: string }[] = [];
-    for (const [fpId, v] of latest) {
+    const rows: {
+      id: number;
+      name: string;
+      value: number;
+      pictureUrl: string | null;
+      link: string;
+    }[] = [];
+    for (const [fpIdStr, daily] of Object.entries(reachPerFp)) {
+      const fpId = Number(fpIdStr);
+      if (!selectedIds.has(fpId)) continue;
+      const sum = daily.reduce((s, p) => s + p.v, 0);
+      if (sum <= 0) continue;
       const fp = fanpages.find((f) => f.id === fpId);
       if (!fp) continue;
       const link =
@@ -798,11 +828,17 @@ export default function ReachDashboard() {
         (fp.username
           ? `https://facebook.com/${fp.username}`
           : `https://facebook.com/${fp.pageId}`);
-      rows.push({ id: fpId, name: fp.name, value: v, pictureUrl: fp.pictureUrl, link });
+      rows.push({
+        id: fpId,
+        name: fp.name,
+        value: sum,
+        pictureUrl: fp.pictureUrl,
+        link,
+      });
     }
     rows.sort((a, b) => b.value - a.value);
     return rows;
-  }, [metricStats, fanpages]);
+  }, [reachPerFp, selectedIds, fanpages]);
 
   const active = metricStats[activeMetric];
 
