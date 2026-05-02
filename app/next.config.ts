@@ -30,6 +30,22 @@ const nextConfig: NextConfig = {
       "node_modules/next/dist/compiled/next-server/**",
     ],
   },
+  // Webpack 5 doesn't natively resolve `node:` prefixed imports — mark them
+  // as runtime externals (CF Workers' nodejs_compat flag provides the real
+  // modules at runtime). Without this, `import { createRequire } from
+  // "node:module"` (used in the DB proxy) fails the build.
+  webpack: (config, { isServer }) => {
+    if (isServer) {
+      const externals = config.externals as unknown[];
+      externals.push(({ request }: { request?: string }, callback: (err?: unknown, result?: string) => void) => {
+        if (request && request.startsWith("node:")) {
+          return callback(undefined, "commonjs " + request);
+        }
+        callback();
+      });
+    }
+    return config;
+  },
 };
 
 export default nextConfig;
