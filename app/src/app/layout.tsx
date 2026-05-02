@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import { Fraunces, JetBrains_Mono, Manrope } from "next/font/google";
 import "./globals.css";
-import { Sidebar } from "./_components/sidebar";
+import { AppShell } from "./_components/app-shell";
 import { getCurrentUser } from "@/lib/auth";
 
 const fraunces = Fraunces({
@@ -52,12 +52,9 @@ export default async function RootLayout({
     >
       <body>
         {user ? (
-          <div className="shell">
-            <Sidebar
-              user={{ username: user.username, role: user.role }}
-            />
-            <main className="main">{children}</main>
-          </div>
+          <AppShell user={{ username: user.username, role: user.role }}>
+            {children}
+          </AppShell>
         ) : (
           <main className="auth-shell">{children}</main>
         )}

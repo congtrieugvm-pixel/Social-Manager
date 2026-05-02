@@ -67,6 +67,7 @@ export function Sidebar({ user }: SidebarProps) {
             <div key={item.href}>
               <Link
                 href={item.href}
+                prefetch
                 className={`nav-item ${groupActive ? "active" : ""}`}
               >
                 <span>{item.label}</span>
@@ -79,6 +80,7 @@ export function Sidebar({ user }: SidebarProps) {
                       <Link
                         key={sub.href}
                         href={sub.href}
+                        prefetch
                         className={`nav-sub-item ${active ? "active" : ""}`}
                       >
                         <span>{sub.label}</span>
@@ -98,6 +100,7 @@ export function Sidebar({ user }: SidebarProps) {
           <nav className="nav-list">
             <Link
               href="/admin/users"
+              prefetch
               className={`nav-item ${pathname.startsWith("/admin/users") ? "active" : ""}`}
             >
               <span>Quản lý User</span>
