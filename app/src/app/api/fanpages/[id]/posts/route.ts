@@ -4,6 +4,7 @@ import { fanpages, fanpagePosts } from "@/lib/db/schema";
 import { and, desc, eq } from "drizzle-orm";
 import { decrypt } from "@/lib/crypto";
 import { fetchPagePosts } from "@/lib/facebook";
+import { readBody } from "@/lib/req-body";
 import { getOwnerId } from "@/lib/scope";
 
 export const runtime = "nodejs";
@@ -41,12 +42,7 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
     return NextResponse.json({ error: "Invalid id" }, { status: 400 });
   }
 
-  let body: { max?: number } = {};
-  try {
-    body = (await req.json()) as { max?: number };
-  } catch {
-    // empty ok
-  }
+  const body = await readBody<{ max?: number }>(req);
   const max = typeof body.max === "number" && body.max > 0 ? Math.min(body.max, 200) : 50;
 
   const [fp] = await db

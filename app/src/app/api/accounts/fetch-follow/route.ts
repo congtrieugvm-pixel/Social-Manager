@@ -3,7 +3,10 @@ import { db } from "@/lib/db";
 import { accounts } from "@/lib/db/schema";
 import { and, inArray, eq } from "drizzle-orm";
 import { fetchProfile } from "@/lib/tiktok";
+import { readBody } from "@/lib/req-body";
 import { getOwnerId } from "@/lib/scope";
+
+export const runtime = "nodejs";
 
 const CONCURRENCY = 3;
 const DELAY_MS = 300;
@@ -59,8 +62,11 @@ async function processOne(
 
 export async function POST(req: Request) {
   const ownerId = await getOwnerId();
-  const { ids } = (await req.json()) as { ids: number[] };
-  if (!Array.isArray(ids) || ids.length === 0) {
+  const body = await readBody<{ ids?: number[] }>(req);
+  const ids = Array.isArray(body.ids)
+    ? body.ids.filter((n): n is number => typeof n === "number" && Number.isFinite(n))
+    : [];
+  if (ids.length === 0) {
     return NextResponse.json({ error: "Thiếu danh sách id" }, { status: 400 });
   }
 
