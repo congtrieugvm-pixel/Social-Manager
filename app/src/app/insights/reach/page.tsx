@@ -538,10 +538,27 @@ export default function ReachDashboard() {
     };
   }, [selectedIds, rangeMode, customFrom, customTo, refreshKey]);
 
+  // Auto-resync earnings when the picker range changes — earnings are
+  // stored as a single total per fanpage (no daily breakdown), so the
+  // number must be re-fetched from FB to reflect the user's selection.
+  // Debounced 1s so rapid range clicks don't pile up FB calls.
+  useEffect(() => {
+    if (selectedIds.size === 0) return;
+    const t = setTimeout(() => {
+      // Don't stomp an in-flight manual sync — the user will see the
+      // result of theirs and the next range change can re-trigger.
+      if (syncing) return;
+      void syncEarningsOnly();
+    }, 1000);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rangeBody, selectedIds, refreshKey]);
+
   /**
    * Lighter button: only fetches earnings (no reach insights). Useful when
    * the user only cares about doanh thu and doesn't want to wait for the
-   * full reach sync (which can be slow with many pages).
+   * full reach sync. Uses the picker's current range so the displayed
+   * earnings number reflects the dates the user chose.
    */
   async function syncEarningsOnly() {
     const ids = Array.from(selectedIds);
@@ -553,7 +570,7 @@ export default function ReachDashboard() {
       const res = await fetch("/api/fanpages/sync-earnings", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ids, days: 365 }),
+        body: JSON.stringify({ ids, ...rangeBody }),
       });
       const data = (await res.json()) as {
         total?: number;
@@ -621,9 +638,12 @@ export default function ReachDashboard() {
     setSyncMsg("");
     setSyncErr("");
     try {
-      // Sync always pulls the last 365 days (library chunks >93d windows).
-      // The display range selector (7/30/90/custom) only filters what the
-      // chart shows — the underlying snapshot covers a full year.
+      // Snapshot insights always pull the last 365 days (library chunks >93d
+      // windows). The display range selector only filters what the chart
+      // shows — the underlying snapshot covers a full year.
+      // Earnings, by contrast, are stored as a SINGLE total per fanpage (no
+      // daily breakdown), so we sync them for the user's currently-selected
+      // window so the displayed number matches the picker.
       const SYNC_DAYS = 365;
       const [insightsRes, earningsRes] = await Promise.all([
         fetch("/api/fanpages/insights/batch", {
@@ -634,7 +654,7 @@ export default function ReachDashboard() {
         fetch("/api/fanpages/sync-earnings", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ ids, days: SYNC_DAYS }),
+          body: JSON.stringify({ ids, ...rangeBody }),
         }),
       ]);
       const data = (await insightsRes.json()) as {
@@ -1247,9 +1267,25 @@ export default function ReachDashboard() {
                   lineHeight: 1.05,
                   fontVariantNumeric: "tabular-nums",
                   letterSpacing: "-0.01em",
+                  opacity: syncing ? 0.55 : 1,
+                  transition: "opacity 0.18s ease",
                 }}
+                title={syncing ? "Đang đồng bộ doanh thu cho range đã chọn…" : undefined}
               >
                 {fmtUsd(earningsStats.totalMicros)}
+                {syncing && (
+                  <span
+                    className="mono"
+                    style={{
+                      marginLeft: 6,
+                      fontSize: 10,
+                      color: "var(--muted)",
+                      fontWeight: 400,
+                    }}
+                  >
+                    ↻
+                  </span>
+                )}
               </div>
               <span
                 className="mono"
