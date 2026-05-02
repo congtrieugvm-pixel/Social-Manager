@@ -19,10 +19,14 @@ export default function LoginPage() {
     setSubmitting(true);
     setError(null);
     try {
+      // Pass credentials via headers — see api/auth/login/route.ts for why
+      // (opennextjs/Cloudflare Workers body parsing is broken).
       const res = await fetch("/api/auth/login", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ username: username.trim(), password }),
+        headers: {
+          "X-Auth-Username": username.trim(),
+          "X-Auth-Password": password,
+        },
       });
       const data = (await res.json()) as { ok?: boolean; error?: string };
       if (!res.ok || !data.ok) {

@@ -16,41 +16,17 @@ interface Body {
 }
 
 export async function POST(req: Request) {
-  let body: Body = {};
-  console.log("[login] start, ct:", req.headers.get("content-type"));
-  // Try every body method until one works. unenv polyfill blocks some.
-  const methods = ["formData", "blob", "json", "text", "arrayBuffer"] as const;
-  for (const m of methods) {
-    try {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const cloned = (req as any).clone() as Request;
-      let result: unknown = null;
-      if (m === "formData") {
-        const fd = await cloned.formData();
-        result = Object.fromEntries(fd.entries());
-      } else if (m === "blob") {
-        const blob = await cloned.blob();
-        result = await blob.text();
-      } else if (m === "json") {
-        result = await cloned.json();
-      } else if (m === "text") {
-        result = await cloned.text();
-      } else {
-        const buf = await cloned.arrayBuffer();
-        result = new TextDecoder().decode(buf);
-      }
-      const repr = typeof result === "string" ? result.slice(0, 60) : JSON.stringify(result).slice(0, 60);
-      console.log(`[login] ${m} OK:`, repr);
-      if (typeof result === "string" && result.length > 0) {
-        body = JSON.parse(result) as Body;
-      } else if (typeof result === "object" && result !== null) {
-        body = result as Body;
-      }
-      break;
-    } catch (e) {
-      console.log(`[login] ${m} err:`, e instanceof Error ? e.message : String(e));
-    }
-  }
+  // Credentials arrive via HEADERS (X-Auth-Username, X-Auth-Password), not
+  // body. Reason: opennextjs/Cloudflare Workers wraps Request body methods
+  // with unenv's incomplete Node polyfill, which throws "Readable.asyncIterator
+  // is not implemented yet" on every body-read call (req.json/text/blob/...).
+  // Headers are unaffected. Over HTTPS the security profile is equivalent
+  // to body (not visible in URL or browser history); it's a pragmatic
+  // unblock until opennextjs ships a polyfill fix.
+  const body: Body = {
+    username: req.headers.get("x-auth-username") ?? undefined,
+    password: req.headers.get("x-auth-password") ?? undefined,
+  };
   const username = (body.username ?? "").trim();
   const password = body.password ?? "";
   if (!username || !password) {
