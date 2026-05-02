@@ -22,6 +22,7 @@ import {
   type FbPage,
 } from "@/lib/facebook";
 import { readBody } from "@/lib/req-body";
+import { getOwnerId } from "@/lib/scope";
 
 export const runtime = "nodejs";
 
@@ -84,6 +85,7 @@ async function resolveToken(body: SyncBody): Promise<
 
 async function savePages(
   ownerAccountId: number,
+  ownerUserId: number,
   pages: FbPage[],
   now: Date,
 ): Promise<{ inserted: number; updated: number }> {
@@ -91,6 +93,7 @@ async function savePages(
   let updated = 0;
   for (const p of pages) {
     const values = {
+      ownerUserId,
       fbAccountId: ownerAccountId,
       pageId: p.id,
       name: p.name,
@@ -140,7 +143,7 @@ async function savePages(
 // JSON (legacy) flow — kept for callers that don't accept NDJSON. The streaming
 // flow below is preferred for the manual-token UI.
 // ---------------------------------------------------------------------------
-async function runJsonFlow(body: SyncBody): Promise<Response> {
+async function runJsonFlow(body: SyncBody, ownerUserId: number): Promise<Response> {
   const r = await resolveToken(body);
   if (!r.ok) {
     return NextResponse.json({ error: r.error }, { status: r.status });
@@ -189,6 +192,7 @@ async function runJsonFlow(body: SyncBody): Promise<Response> {
     const [created] = await db
       .insert(facebookAccounts)
       .values({
+        ownerUserId,
         username: fallbackUsername,
         encPassword: await encrypt(""),
         encEmail: await encrypt(""),
@@ -232,7 +236,7 @@ async function runJsonFlow(body: SyncBody): Promise<Response> {
       );
   }
 
-  const { inserted, updated } = await savePages(ownerAccountId, managedPages, now);
+  const { inserted, updated } = await savePages(ownerAccountId, ownerUserId, managedPages, now);
   await db
     .update(facebookAccounts)
     .set({ lastSyncedAt: now, lastSyncError: null })
@@ -292,7 +296,7 @@ function makeEmitter(controller: ReadableStreamDefaultController<Uint8Array>) {
   };
 }
 
-async function runStreamFlow(body: SyncBody): Promise<Response> {
+async function runStreamFlow(body: SyncBody, ownerUserId: number): Promise<Response> {
   const stream = new ReadableStream<Uint8Array>({
     async start(controller) {
       let closed = false;
@@ -304,7 +308,7 @@ async function runStreamFlow(body: SyncBody): Promise<Response> {
         }
       };
       try {
-        await streamBody(body, emit);
+        await streamBody(body, ownerUserId, emit);
       } catch (e) {
         if (!closed) {
           try {
@@ -335,6 +339,7 @@ async function runStreamFlow(body: SyncBody): Promise<Response> {
 
 async function streamBody(
   body: SyncBody,
+  ownerUserId: number,
   emit: (e: StreamEvent) => void,
 ): Promise<void> {
   const r = await resolveToken(body);
@@ -713,6 +718,7 @@ async function streamBody(
         const inserted = await db
           .insert(facebookAccounts)
           .values({
+            ownerUserId,
             username: fallbackUsername,
             encPassword: await encrypt(""),
             encEmail: await encrypt(""),
@@ -810,7 +816,7 @@ async function streamBody(
     "save_pages",
     `Lưu ${managed.length} fanpage vào database`,
     async () => {
-      const out = await savePages(finalOwnerId, managed, now);
+      const out = await savePages(finalOwnerId, ownerUserId, managed, now);
       await db
         .update(facebookAccounts)
         .set({ lastSyncedAt: now, lastSyncError: null })
@@ -841,11 +847,12 @@ async function streamBody(
 }
 
 export async function POST(req: Request) {
+  const ownerUserId = await getOwnerId();
   const body = await readBody<SyncBody>(req);
 
   const accept = req.headers.get("accept") ?? "";
   if (accept.includes("application/x-ndjson")) {
-    return runStreamFlow(body);
+    return runStreamFlow(body, ownerUserId);
   }
-  return runJsonFlow(body);
+  return runJsonFlow(body, ownerUserId);
 }

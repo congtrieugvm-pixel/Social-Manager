@@ -1,10 +1,12 @@
 import { NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { statuses, accounts } from "@/lib/db/schema";
-import { eq, sql, asc } from "drizzle-orm";
+import { and, eq, sql, asc  } from "drizzle-orm";
 import { readBody } from "@/lib/req-body";
+import { getOwnerId } from "@/lib/scope";
 
 export async function GET() {
+  const ownerId = await getOwnerId();
   const rows = await db
     .select({
       id: statuses.id,
@@ -17,11 +19,12 @@ export async function GET() {
     .from(statuses)
     .leftJoin(accounts, eq(accounts.statusId, statuses.id))
     .groupBy(statuses.id)
-    .orderBy(asc(statuses.sortOrder), asc(statuses.name));
+    .where(eq(statuses.ownerUserId, ownerId)).orderBy(asc(statuses.sortOrder), asc(statuses.name));
   return NextResponse.json({ statuses: rows });
 }
 
 export async function POST(req: Request) {
+  const ownerId = await getOwnerId();
   const body = await readBody<{
     name?: string;
     color?: string;
@@ -37,7 +40,7 @@ export async function POST(req: Request) {
   try {
     const [inserted] = await db
       .insert(statuses)
-      .values({ name, color, sortOrder })
+      .values({ ownerUserId: ownerId, name, color, sortOrder })
       .returning();
     return NextResponse.json({ status: inserted });
   } catch (e) {

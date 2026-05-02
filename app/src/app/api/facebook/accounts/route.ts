@@ -12,6 +12,7 @@ import { and, asc, desc, eq, like, or, sql } from "drizzle-orm";
 import type { AnyColumn, SQL } from "drizzle-orm";
 import { encrypt } from "@/lib/crypto";
 import { readBody } from "@/lib/req-body";
+import { getOwnerId } from "@/lib/scope";
 
 const PAGE_SIZE = 50;
 
@@ -37,6 +38,7 @@ const SORT_COLUMNS: Record<SortKey, AnyColumn> = {
 };
 
 export async function GET(req: Request) {
+  const ownerId = await getOwnerId();
   const url = new URL(req.url);
   const page = Math.max(1, Number(url.searchParams.get("page") || "1"));
   const search = (url.searchParams.get("q") || "").trim();
@@ -49,6 +51,8 @@ export async function GET(req: Request) {
   const orderBy: SQL[] = [primaryOrder, desc(facebookAccounts.id) as unknown as SQL];
 
   const filters: SQL[] = [];
+  // Owner-scope: only this user's FB accounts.
+  filters.push(eq(facebookAccounts.ownerUserId, ownerId) as SQL);
   if (search) {
     filters.push(
       or(

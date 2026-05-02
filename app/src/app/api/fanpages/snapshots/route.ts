@@ -1,13 +1,15 @@
 import { NextResponse } from "next/server";
 import { db } from "@/lib/db";
-import { fanpageSnapshots } from "@/lib/db/schema";
-import { asc, inArray, gte, lte, and, type SQL } from "drizzle-orm";
+import { fanpages, fanpageSnapshots } from "@/lib/db/schema";
+import { asc, eq, inArray, gte, lte, and, type SQL } from "drizzle-orm";
+import { getOwnerId } from "@/lib/scope";
 
 export const runtime = "nodejs";
 
 // GET /api/fanpages/snapshots?ids=1,2,3[&days=30][&from=<epoch>&to=<epoch>]
 // `from`/`to` are epoch seconds and override `days` when provided.
 export async function GET(req: Request) {
+  const ownerId = await getOwnerId();
   const url = new URL(req.url);
   const idsParam = url.searchParams.get("ids") ?? "";
   const daysParam = url.searchParams.get("days");
@@ -19,6 +21,17 @@ export async function GET(req: Request) {
     .filter((n) => Number.isFinite(n) && n > 0);
 
   if (ids.length === 0) {
+    return NextResponse.json({ rows: [] });
+  }
+
+  // Filter ids to only those the current user owns. Defends against
+  // logged-in user A querying user B's fanpage snapshots by guessing IDs.
+  const ownedFp = await db
+    .select({ id: fanpages.id })
+    .from(fanpages)
+    .where(and(eq(fanpages.ownerUserId, ownerId), inArray(fanpages.id, ids)));
+  const ownedIds = ownedFp.map((r) => r.id);
+  if (ownedIds.length === 0) {
     return NextResponse.json({ rows: [] });
   }
 
@@ -37,7 +50,7 @@ export async function GET(req: Request) {
     sinceDate = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
   }
 
-  const conds: SQL[] = [inArray(fanpageSnapshots.fanpageId, ids)];
+  const conds: SQL[] = [inArray(fanpageSnapshots.fanpageId, ownedIds)];
   if (sinceDate) conds.push(gte(fanpageSnapshots.takenAt, sinceDate));
   if (untilDate) conds.push(lte(fanpageSnapshots.takenAt, untilDate));
   const whereExpr = conds.length === 1 ? conds[0] : and(...conds);

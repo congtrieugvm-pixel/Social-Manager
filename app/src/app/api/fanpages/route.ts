@@ -1,9 +1,11 @@
 import { NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { fanpages, facebookAccounts, insightGroups } from "@/lib/db/schema";
-import { desc, eq } from "drizzle-orm";
+import { and, desc, eq } from "drizzle-orm";
+import { getOwnerId } from "@/lib/scope";
 
 export async function GET(req: Request) {
+  const ownerId = await getOwnerId();
   const url = new URL(req.url);
   const accountIdStr = url.searchParams.get("accountId");
   const accountId = accountIdStr ? Number(accountIdStr) : null;
@@ -55,8 +57,8 @@ export async function GET(req: Request) {
     .leftJoin(insightGroups, eq(fanpages.insightGroupId, insightGroups.id))
     .where(
       accountId && Number.isFinite(accountId)
-        ? eq(fanpages.fbAccountId, accountId)
-        : undefined,
+        ? and(eq(fanpages.ownerUserId, ownerId), eq(fanpages.fbAccountId, accountId))
+        : eq(fanpages.ownerUserId, ownerId),
     )
     .orderBy(desc(fanpages.fanCount), desc(fanpages.id));
 

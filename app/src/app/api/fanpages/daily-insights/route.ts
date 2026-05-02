@@ -1,7 +1,8 @@
 import { NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { fanpages } from "@/lib/db/schema";
-import { inArray } from "drizzle-orm";
+import { and, eq, inArray } from "drizzle-orm";
+import { getOwnerId } from "@/lib/scope";
 
 export const runtime = "nodejs";
 
@@ -42,6 +43,7 @@ function valueAsNumber(v: number | Record<string, number>): number {
  * reach dashboard can plot a real daily time series.
  */
 export async function GET(req: Request) {
+  const ownerId = await getOwnerId();
   const url = new URL(req.url);
   const idsParam = url.searchParams.get("ids") ?? "";
   const metric = url.searchParams.get("metric") ?? "pageImpressionsUnique";
@@ -71,7 +73,7 @@ export async function GET(req: Request) {
       insightsJson: fanpages.insightsJson,
     })
     .from(fanpages)
-    .where(inArray(fanpages.id, ids));
+    .where(and(eq(fanpages.ownerUserId, ownerId), inArray(fanpages.id, ids)));
 
   // Aggregate per-day across fanpages PLUS a per-fanpage day map. The
   // per-fp breakdown lets the reach dashboard's Top widget rank fanpages

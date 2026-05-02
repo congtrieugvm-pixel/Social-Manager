@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { accounts, groups, statuses, countries, machines, employees } from "@/lib/db/schema";
 import { asc, desc, eq, isNull, sql, type SQL, type AnyColumn } from "drizzle-orm";
+import { getOwnerId } from "@/lib/scope";
 
 const DEFAULT_LIMIT = 50;
 const MAX_LIMIT = 200;
@@ -35,6 +36,7 @@ function parseSort(raw: string | null): SortKey {
 }
 
 export async function GET(req: Request) {
+  const ownerId = await getOwnerId();
   const url = new URL(req.url);
   const groupParam = url.searchParams.get("group");
   const statusParam = url.searchParams.get("status");
@@ -50,6 +52,8 @@ export async function GET(req: Request) {
   const offset = (page - 1) * limit;
 
   const filters = [] as ReturnType<typeof eq>[];
+  // Owner-scope: every read must be limited to current user's rows.
+  filters.push(eq(accounts.ownerUserId, ownerId));
   if (groupParam === "none") filters.push(isNull(accounts.groupId) as unknown as ReturnType<typeof eq>);
   else if (groupParam && Number.isFinite(Number(groupParam))) {
     filters.push(eq(accounts.groupId, Number(groupParam)));

@@ -1,9 +1,13 @@
 import { sqliteTable, integer, text } from "drizzle-orm/sqlite-core";
 import { sql } from "drizzle-orm";
 
+// Multi-tenant: every data row is scoped to an owning app_user. New users
+// register → empty workspace; their inserts auto-set owner_user_id from
+// the active session. Old rows backfilled to first admin in migration 0002.
 export const groups = sqliteTable("groups", {
   id: integer("id").primaryKey({ autoIncrement: true }),
-  name: text("name").notNull().unique(),
+  ownerUserId: integer("owner_user_id"),
+  name: text("name").notNull(),
   color: text("color").notNull().default("#d94a1f"),
   description: text("description"),
   createdAt: integer("created_at", { mode: "timestamp" })
@@ -13,7 +17,8 @@ export const groups = sqliteTable("groups", {
 
 export const statuses = sqliteTable("statuses", {
   id: integer("id").primaryKey({ autoIncrement: true }),
-  name: text("name").notNull().unique(),
+  ownerUserId: integer("owner_user_id"),
+  name: text("name").notNull(),
   color: text("color").notNull().default("#7a766a"),
   sortOrder: integer("sort_order").notNull().default(0),
   createdAt: integer("created_at", { mode: "timestamp" })
@@ -23,7 +28,8 @@ export const statuses = sqliteTable("statuses", {
 
 export const countries = sqliteTable("countries", {
   id: integer("id").primaryKey({ autoIncrement: true }),
-  name: text("name").notNull().unique(),
+  ownerUserId: integer("owner_user_id"),
+  name: text("name").notNull(),
   code: text("code"),
   color: text("color").notNull().default("#5e6ad2"),
   sortOrder: integer("sort_order").notNull().default(0),
@@ -34,7 +40,8 @@ export const countries = sqliteTable("countries", {
 
 export const machines = sqliteTable("machines", {
   id: integer("id").primaryKey({ autoIncrement: true }),
-  name: text("name").notNull().unique(),
+  ownerUserId: integer("owner_user_id"),
+  name: text("name").notNull(),
   color: text("color").notNull().default("#3f8fb0"),
   note: text("note"),
   sortOrder: integer("sort_order").notNull().default(0),
@@ -45,7 +52,8 @@ export const machines = sqliteTable("machines", {
 
 export const employees = sqliteTable("employees", {
   id: integer("id").primaryKey({ autoIncrement: true }),
-  name: text("name").notNull().unique(),
+  ownerUserId: integer("owner_user_id"),
+  name: text("name").notNull(),
   color: text("color").notNull().default("#b86a3f"),
   note: text("note"),
   sortOrder: integer("sort_order").notNull().default(0),
@@ -56,7 +64,8 @@ export const employees = sqliteTable("employees", {
 
 export const accounts = sqliteTable("accounts", {
   id: integer("id").primaryKey({ autoIncrement: true }),
-  username: text("username").notNull().unique(),
+  ownerUserId: integer("owner_user_id"),
+  username: text("username").notNull(),
 
   groupId: integer("group_id").references(() => groups.id, { onDelete: "set null" }),
   statusId: integer("status_id").references(() => statuses.id, { onDelete: "set null" }),
@@ -103,7 +112,8 @@ export const accounts = sqliteTable("accounts", {
 
 export const facebookAccounts = sqliteTable("facebook_accounts", {
   id: integer("id").primaryKey({ autoIncrement: true }),
-  username: text("username").notNull().unique(),
+  ownerUserId: integer("owner_user_id"),
+  username: text("username").notNull(),
 
   groupId: integer("group_id").references(() => groups.id, { onDelete: "set null" }),
   statusId: integer("status_id").references(() => statuses.id, { onDelete: "set null" }),
@@ -140,7 +150,8 @@ export const facebookAccounts = sqliteTable("facebook_accounts", {
 
 export const insightGroups = sqliteTable("insight_groups", {
   id: integer("id").primaryKey({ autoIncrement: true }),
-  name: text("name").notNull().unique(),
+  ownerUserId: integer("owner_user_id"),
+  name: text("name").notNull(),
   color: text("color").notNull().default("#5e6ad2"),
   description: text("description"),
   sortOrder: integer("sort_order").notNull().default(0),
@@ -151,6 +162,7 @@ export const insightGroups = sqliteTable("insight_groups", {
 
 export const fanpages = sqliteTable("fanpages", {
   id: integer("id").primaryKey({ autoIncrement: true }),
+  ownerUserId: integer("owner_user_id"),
   fbAccountId: integer("fb_account_id")
     .notNull()
     .references(() => facebookAccounts.id, { onDelete: "cascade" }),

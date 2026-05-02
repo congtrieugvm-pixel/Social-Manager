@@ -1,12 +1,14 @@
 import { NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { insightGroups, fanpages } from "@/lib/db/schema";
-import { eq, sql, asc } from "drizzle-orm";
+import { and, eq, sql, asc  } from "drizzle-orm";
 import { readBody } from "@/lib/req-body";
+import { getOwnerId } from "@/lib/scope";
 
 export const runtime = "nodejs";
 
 export async function GET() {
+  const ownerId = await getOwnerId();
   const rows = await db
     .select({
       id: insightGroups.id,
@@ -20,11 +22,12 @@ export async function GET() {
     .from(insightGroups)
     .leftJoin(fanpages, eq(fanpages.insightGroupId, insightGroups.id))
     .groupBy(insightGroups.id)
-    .orderBy(asc(insightGroups.sortOrder), asc(insightGroups.name));
+    .where(eq(insightGroups.ownerUserId, ownerId)).orderBy(asc(insightGroups.sortOrder), asc(insightGroups.name));
   return NextResponse.json({ groups: rows });
 }
 
 export async function POST(req: Request) {
+  const ownerId = await getOwnerId();
   const body = await readBody<{
     name?: string;
     color?: string;
@@ -37,7 +40,7 @@ export async function POST(req: Request) {
   try {
     const [inserted] = await db
       .insert(insightGroups)
-      .values({
+      .values({ ownerUserId: ownerId,
         name,
         color,
         description: body.description?.trim() || null,
