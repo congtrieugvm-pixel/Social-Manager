@@ -16,22 +16,29 @@ interface Body {
 }
 
 export async function POST(req: Request) {
-  // Read body via raw stream wrapped in a fresh Response — Next's request
-  // wrapper on opennextjs/Cloudflare Workers eats the body before
-  // req.json()/req.text() can read it. Constructing a new Response from
-  // the underlying ReadableStream side-steps that wrapper.
+  // Read body via Web Streams API directly. Avoid req.json()/req.text()
+  // and `new Response(req.body).text()` — those route through unenv's
+  // partial Node polyfill on Cloudflare Workers, which throws
+  // "Readable.asyncIterator is not implemented yet" before the body is
+  // delivered. Reading the underlying ReadableStream chunks via TextDecoder
+  // sidesteps the polyfill entirely.
   let body: Body = {};
-  let rawText = "";
   try {
     if (req.body) {
-      rawText = await new Response(req.body).text();
-    } else {
-      rawText = await req.text();
+      const reader = req.body.getReader();
+      const decoder = new TextDecoder();
+      let text = "";
+      // eslint-disable-next-line no-constant-condition
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        if (value) text += decoder.decode(value, { stream: true });
+      }
+      text += decoder.decode();
+      if (text) body = JSON.parse(text) as Body;
     }
-    console.log("[login] body text length:", rawText.length, "first40:", rawText.slice(0, 40));
-    if (rawText) body = JSON.parse(rawText) as Body;
-  } catch (e) {
-    console.log("[login] body parse error:", e instanceof Error ? e.message : String(e));
+  } catch {
+    // empty / invalid body — handled below
   }
   const username = (body.username ?? "").trim();
   const password = body.password ?? "";

@@ -29,12 +29,23 @@ export async function POST(req: Request) {
     );
   }
 
-  // Read body via text() + JSON.parse — req.json() returns empty on
-  // opennextjs/Cloudflare Workers (body stream adapter bug).
+  // Read body via Web Streams (see /api/auth/login for full rationale —
+  // unenv's partial polyfill on CF Workers breaks req.json()/req.text()).
   let body: Body = {};
   try {
-    const text = await req.text();
-    if (text) body = JSON.parse(text) as Body;
+    if (req.body) {
+      const reader = req.body.getReader();
+      const decoder = new TextDecoder();
+      let text = "";
+      // eslint-disable-next-line no-constant-condition
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        if (value) text += decoder.decode(value, { stream: true });
+      }
+      text += decoder.decode();
+      if (text) body = JSON.parse(text) as Body;
+    }
   } catch {
     // handled below
   }
