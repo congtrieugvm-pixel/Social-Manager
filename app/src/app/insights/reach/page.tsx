@@ -1987,17 +1987,17 @@ function CalendarPane({
   showPrev: boolean;
   showNext: boolean;
 }) {
-  // Build the 6×7 day grid for the given month. Cells before the 1st show
-  // grey-out previous-month days (clickable — the picker re-anchors), same
-  // for trailing next-month days.
+  // Build the day grid for the given month. Leading days (before the 1st)
+  // and trailing days (after month-end, padding to a full week row) render
+  // as empty placeholders — caller asked NOT to bleed adjacent months.
   const first = startOfMonth(month);
   const lead = first.getDay(); // 0..6 (Sun-first)
   const last = endOfMonth(month);
-  const cells: Date[] = [];
-  // Lead from prev month
-  for (let i = lead; i > 0; i--) cells.push(addDays(first, -i));
-  for (let d = 1; d <= last.getDate(); d++) cells.push(new Date(month.getFullYear(), month.getMonth(), d));
-  while (cells.length % 7 !== 0 || cells.length < 42) cells.push(addDays(cells[cells.length - 1], 1));
+  const cells: (Date | null)[] = [];
+  for (let i = 0; i < lead; i++) cells.push(null);
+  for (let d = 1; d <= last.getDate(); d++)
+    cells.push(new Date(month.getFullYear(), month.getMonth(), d));
+  while (cells.length % 7 !== 0) cells.push(null);
 
   const fromMs = from ? from.getTime() : null;
   const toMs = to ? to.getTime() : null;
@@ -2071,7 +2071,7 @@ function CalendarPane({
           </div>
         ))}
         {cells.map((c, i) => {
-          const inMonth = c.getMonth() === month.getMonth();
+          if (!c) return <div key={i} />;
           const ms = startOfDay(c).getTime();
           const isFuture = ms > maxDate.getTime();
           const isStart = fromMs === ms;
@@ -2105,9 +2105,7 @@ function CalendarPane({
                   ? "var(--line)"
                   : isEdge
                     ? "#fff"
-                    : inMonth
-                      ? "var(--ink)"
-                      : "var(--muted)",
+                    : "var(--ink)",
                 cursor: isFuture ? "not-allowed" : "pointer",
                 fontFamily: "inherit",
                 fontSize: 11,

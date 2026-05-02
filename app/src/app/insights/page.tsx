@@ -2,6 +2,12 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
+import {
+  ALL_PRESET,
+  DateRangePicker,
+  DEFAULT_PRESETS,
+  type DateRangeValue,
+} from "@/app/_components/date-range-picker";
 
 interface FanpageRow {
   id: number;
@@ -97,6 +103,16 @@ export default function ContentPage() {
   const [selectedPostIds, setSelectedPostIds] = useState<Set<number>>(new Set());
   const [pickN, setPickN] = useState<number>(10);
   const headerCheckRef = useRef<HTMLInputElement>(null);
+  // Date range filter for the post table. Default = "Tất cả" (5y back → today)
+  // so every cached post shows up to the current day, per requirement.
+  const [dateRange, setDateRange] = useState<DateRangeValue>(() => {
+    const today = new Date();
+    const start = new Date(today.getFullYear() - 5, today.getMonth(), today.getDate());
+    const toISO = (d: Date) =>
+      `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+    return { from: toISO(start), to: toISO(today), presetLabel: "Tất cả" };
+  });
+  const datePresets = useMemo(() => [ALL_PRESET, ...DEFAULT_PRESETS], []);
 
   const loadFanpages = useCallback(async () => {
     const res = await fetch("/api/fanpages", { cache: "no-store" });
@@ -193,12 +209,30 @@ export default function ContentPage() {
     return out;
   }, [selected, postsByFp]);
 
+  // Apply the date-range filter to allPosts. createdTime is epoch seconds;
+  // dateRange.from/.to are local YYYY-MM-DD ISO strings — anchor at start of
+  // day for `from` and end of day for `to` so the boundary days are inclusive.
+  const dateFilteredPosts = useMemo(() => {
+    if (!dateRange.from || !dateRange.to) return allPosts;
+    const fromSec = Math.floor(
+      new Date(dateRange.from + "T00:00:00").getTime() / 1000,
+    );
+    const toSec = Math.floor(
+      new Date(dateRange.to + "T23:59:59").getTime() / 1000,
+    );
+    if (!Number.isFinite(fromSec) || !Number.isFinite(toSec)) return allPosts;
+    return allPosts.filter((p) => {
+      if (p.createdTime == null) return false;
+      return p.createdTime >= fromSec && p.createdTime <= toSec;
+    });
+  }, [allPosts, dateRange]);
+
   const sortedPosts = useMemo(
     () =>
-      [...allPosts].sort(
+      [...dateFilteredPosts].sort(
         (a, b) => (b.createdTime ?? 0) - (a.createdTime ?? 0),
       ),
-    [allPosts],
+    [dateFilteredPosts],
   );
 
   // Drop selected post ids that disappeared from the visible list (e.g. user
@@ -663,10 +697,17 @@ export default function ContentPage() {
                     ? loadingPosts
                       ? "Đang tải…"
                       : "Chưa có bài — bấm Tải N bài để lấy từ Facebook"
-                    : `${allPosts.length} bài từ ${selected.length} fanpage`}
+                    : sortedPosts.length === allPosts.length
+                      ? `${allPosts.length} bài từ ${selected.length} fanpage`
+                      : `${sortedPosts.length}/${allPosts.length} bài (đã lọc theo ngày) · ${selected.length} fanpage`}
                 </div>
               </div>
               <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
+                <DateRangePicker
+                  value={dateRange}
+                  onChange={setDateRange}
+                  presets={datePresets}
+                />
                 <label
                   className="mono"
                   style={{
