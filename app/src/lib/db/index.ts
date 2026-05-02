@@ -35,11 +35,13 @@ const dynRequire = createRequire(import.meta.url);
 let nodeDbInstance: Db | null = null;
 function getNodeDb(): Db {
   if (nodeDbInstance) return nodeDbInstance;
-  // String-built specifier defeats nft (Next's file-trace) — this branch is
-  // only reached on Node, where the file resolves at runtime against
-  // `./src/lib/db/node.ts`.
-  const segments = ["./", "node"];
-  const mod: { initNodeDb: () => Db } = dynRequire(segments.join(""));
+  // Env-fallback to "./node": Turbopack (dev) can resolve the literal at
+  // runtime via createRequire, but the OR expression prevents constant
+  // folding so the file-tracer used by `opennextjs-cloudflare build` won't
+  // statically follow into `node.ts` (which pulls in better-sqlite3 — a
+  // native binding incompatible with Cloudflare Workers).
+  const spec = process.env.NODE_DB_MODULE || "./node";
+  const mod: { initNodeDb: () => Db } = dynRequire(spec);
   nodeDbInstance = mod.initNodeDb();
   return nodeDbInstance;
 }
