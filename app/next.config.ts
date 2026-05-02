@@ -20,6 +20,16 @@ const nextConfig: NextConfig = {
       "node_modules/@tobyg74/**",
     ],
   },
+  // Force-include Next's compiled runtime files in the trace. Without this,
+  // opennextjs's CF Worker bundle treats `next/dist/compiled/next-server/
+  // app-page-turbo.runtime.prod.js` as external and the Worker fails at
+  // runtime with "Cannot read properties of undefined (reading 'require')"
+  // because Workers can't load externals via require().
+  outputFileTracingIncludes: {
+    "*": [
+      "node_modules/next/dist/compiled/next-server/**",
+    ],
+  },
 };
 
 export default nextConfig;
