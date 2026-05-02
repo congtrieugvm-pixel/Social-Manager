@@ -1,0 +1,42 @@
+name: Deploy to Cloudflare Workers
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: app/package-lock.json
+
+      - name: Install dependencies
+        working-directory: app
+        run: npm install
+
+      - name: Build (opennextjs)
+        working-directory: app
+        run: npm run cf:build
+
+      - name: Deploy Worker
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          workingDirectory: app
+          command: deploy
+          # `secrets:` declares which Worker secrets to upload via
+          # `wrangler secret bulk` after deploy. Each must also exist as a
+          # GitHub Actions repo secret with the same name (set in repo
+          # Settings → Secrets and variables → Actions).
+          secrets: |
+            ENC_KEY
+        env:
+          ENC_KEY: ${{ secrets.ENC_KEY }}

@@ -2,22 +2,20 @@ name = "social-manager"
 compatibility_date = "2026-04-01"
 compatibility_flags = ["nodejs_compat"]
 main = ".open-next/worker.js"
+workers_dev = true
 
 [assets]
 directory = ".open-next/assets"
 binding = "ASSETS"
 
 # ── D1 binding ────────────────────────────────────────────────────
-# Replace `database_id` with the ID printed by `wrangler d1 create social-manager`.
 [[d1_databases]]
 binding = "DB"
 database_name = "social-manager"
 database_id = "750d454e-c01f-4a68-a96e-2faee4fa5d4d"
 migrations_dir = "drizzle/migrations"
 
-# ── Env vars (non-secret). Use `wrangler secret put` for secrets ─
+# ── Env vars (non-secret). Secrets via `wrangler secret put` or GH Actions.
 [vars]
 APP_RUNTIME = "cloudflare"
-
-# Local dev (`wrangler pages dev`) reads .dev.vars
-# Prod secrets: `wrangler pages secret put SESSION_SECRET`, etc.
+INITIAL_ADMIN_USERNAME = "admin"
