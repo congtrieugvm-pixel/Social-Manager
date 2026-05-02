@@ -1,4 +1,14 @@
 import crypto from "node:crypto";
+import { promisify } from "node:util";
+
+// Async scrypt — `crypto.scryptSync` blocks the event loop and trips
+// Cloudflare Workers' CPU limit on large inputs. Promisified callback form
+// runs scrypt off the main thread (Node) or on a fiber (CF nodejs_compat).
+const scryptAsync = promisify(crypto.scrypt) as (
+  password: string | Buffer,
+  salt: string | Buffer,
+  keylen: number,
+) => Promise<Buffer>;
 import { cookies } from "next/headers";
 import { eq } from "drizzle-orm";
 import { db } from "@/lib/db";
@@ -14,14 +24,17 @@ const SESSION_TTL_SECONDS = 60 * 60 * 24 * 30; // 30 days
 const SCRYPT_KEYLEN = 64;
 const SCRYPT_SALT_BYTES = 16;
 
-export function hashPassword(plain: string): string {
+export async function hashPassword(plain: string): Promise<string> {
   if (!plain) throw new Error("Mật khẩu không được trống");
   const salt = crypto.randomBytes(SCRYPT_SALT_BYTES);
-  const hash = crypto.scryptSync(plain, salt, SCRYPT_KEYLEN);
+  const hash = await scryptAsync(plain, salt, SCRYPT_KEYLEN);
   return `${salt.toString("base64")}$${hash.toString("base64")}`;
 }
 
-export function verifyPassword(plain: string, stored: string): boolean {
+export async function verifyPassword(
+  plain: string,
+  stored: string,
+): Promise<boolean> {
   if (!plain || !stored) return false;
   const [saltB64, hashB64] = stored.split("$");
   if (!saltB64 || !hashB64) return false;
@@ -34,7 +47,7 @@ export function verifyPassword(plain: string, stored: string): boolean {
     return false;
   }
   if (salt.length === 0 || hash.length !== SCRYPT_KEYLEN) return false;
-  const candidate = crypto.scryptSync(plain, salt, SCRYPT_KEYLEN);
+  const candidate = await scryptAsync(plain, salt, SCRYPT_KEYLEN);
   // Constant-time compare to thwart timing attacks.
   return crypto.timingSafeEqual(candidate, hash);
 }
@@ -216,7 +229,7 @@ export async function createUser(input: {
   if (pErr) throw new AuthError(pErr, 400);
   const existing = await findUserByUsername(username);
   if (existing) throw new AuthError("Username đã tồn tại", 409);
-  const passwordHash = hashPassword(password);
+  const passwordHash = await hashPassword(password);
   const now = new Date();
   const [created] = await db
     .insert(appUsers)

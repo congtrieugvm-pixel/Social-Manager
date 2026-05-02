@@ -34,7 +34,7 @@ export async function POST(req: Request) {
   const user = await findUserByUsername(username);
   // Run scrypt even when the user doesn't exist to keep response time roughly
   // constant across hits — partial mitigation against username enumeration.
-  const ok = user ? verifyPassword(password, user.passwordHash) : false;
+  const ok = user ? await verifyPassword(password, user.passwordHash) : false;
   if (!user || !ok) {
     return NextResponse.json(
       { error: "Sai username hoặc password" },

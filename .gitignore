@@ -8,6 +8,12 @@ app/next-env.d.ts
 app/.turbo/
 app/.vercel/
 
+# ── Cloudflare / OpenNext ─────────────────────────────────────────
+app/.open-next/
+app/.wrangler/
+app/.dev.vars
+app/cloudflare-env.d.ts
+
 # ── Sensitive runtime data — NEVER commit ─────────────────────────
 # SQLite databases (contain encrypted page tokens, accounts, fanpages)
 app/data/

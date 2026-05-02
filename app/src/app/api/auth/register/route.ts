@@ -1,5 +1,8 @@
 import { NextResponse } from "next/server";
 import { cookies } from "next/headers";
+import { sql } from "drizzle-orm";
+import { db } from "@/lib/db";
+import { appUsers } from "@/lib/db/schema";
 import {
   AuthError,
   COOKIE_OPTIONS,
@@ -42,7 +45,14 @@ export async function POST(req: Request) {
   }
 
   try {
-    const user = await createUser({ username, password, role: "user" });
+    // First user to register gets admin (one-time bootstrap). Subsequent
+    // registrations are plain users. Admin role for later users must be
+    // granted via /admin/users by an existing admin.
+    const [{ count }] = (await db
+      .select({ count: sql<number>`count(*)` })
+      .from(appUsers)) as Array<{ count: number }>;
+    const role: "admin" | "user" = count === 0 ? "admin" : "user";
+    const user = await createUser({ username, password, role });
     const { token } = await createSession(user.id);
     const jar = await cookies();
     jar.set(SESSION_COOKIE, token, COOKIE_OPTIONS);

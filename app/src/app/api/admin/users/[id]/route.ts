@@ -87,7 +87,7 @@ export async function PATCH(
     if (typeof body.password === "string" && body.password.length > 0) {
       const err = validatePassword(body.password);
       if (err) return NextResponse.json({ error: err }, { status: 400 });
-      patch.passwordHash = hashPassword(body.password);
+      patch.passwordHash = await hashPassword(body.password);
       invalidatesSessions = true;
     }
 

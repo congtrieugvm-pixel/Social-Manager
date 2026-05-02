@@ -1,0 +1,22 @@
+# Copy to `.dev.vars` (gitignored) for `wrangler pages dev` local runs.
+# These are equivalents of the env vars used in `npm run dev` (Node).
+
+INITIAL_ADMIN_USERNAME=admin
+INITIAL_ADMIN_PASSWORD=changeme
+
+# Crypto key for encrypting access tokens at rest. MUST be 32 bytes hex (64 chars).
+# Generate: `node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"`
+ENC_KEY=
+
+# Facebook Graph API
+FB_APP_ID=
+FB_APP_SECRET=
+FB_OAUTH_REDIRECT_URI=
+
+# Microsoft OAuth
+MS_CLIENT_ID=
+MS_CLIENT_SECRET=
+MS_REDIRECT_URI=
+
+# Cron worker shared secret (Worker → Pages function auth)
+CRON_SECRET=

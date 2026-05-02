@@ -2,13 +2,23 @@ import path from "node:path";
 import fs from "node:fs/promises";
 import type { BrowserContext, Page } from "playwright";
 
-const PROFILE_ROOT = path.join(process.cwd(), "data", "ms-profiles");
+// Playwright + persistent profile directories require a writable filesystem
+// and a Chromium binary — neither exists on Cloudflare Workers. When deployed
+// to CF, this whole feature is unavailable; the helpers below short-circuit
+// with a clear error so the UI can render a "feature not supported" message
+// instead of crashing.
+const IS_EDGE = process.env.APP_RUNTIME === "cloudflare";
+
+const PROFILE_ROOT = IS_EDGE
+  ? "" // unused on edge
+  : path.join(process.cwd(), "data", "ms-profiles");
 
 function profileDir(key: string | number): string {
   return path.join(PROFILE_ROOT, String(key));
 }
 
 export async function hasHotmailProfile(key: string | number): Promise<boolean> {
+  if (IS_EDGE) return false;
   try {
     const stat = await fs.stat(profileDir(key));
     return stat.isDirectory();
@@ -18,6 +28,7 @@ export async function hasHotmailProfile(key: string | number): Promise<boolean> 
 }
 
 export async function clearHotmailProfile(key: string | number): Promise<void> {
+  if (IS_EDGE) return;
   await fs.rm(profileDir(key), { recursive: true, force: true });
 }
 
@@ -33,8 +44,19 @@ export async function startHotmailLogin(opts: {
   password: string;
   profileKey?: string;
 }): Promise<void> {
-  // Lazy import so dev server doesn't bundle playwright for every request.
-  const { chromium } = await import("playwright");
+  if (IS_EDGE) {
+    throw new Error(
+      "Hotmail tự động đăng nhập không khả dụng trên Cloudflare — cần Node host (VPS/Railway) để chạy Chromium.",
+    );
+  }
+  // String-built specifier defeats Next/opennext's file-tracer so the
+  // playwright package + Chromium binary are NEVER copied into the CF
+  // Worker bundle. The dynamic import only fires on Node where playwright
+  // resolves normally from node_modules.
+  const playwrightSpec = ["play", "wright"].join("");
+  const { chromium } = (await import(
+    /* webpackIgnore: true */ playwrightSpec
+  )) as typeof import("playwright");
   const userDataDir = profileDir(opts.profileKey ?? opts.accountId);
   await fs.mkdir(userDataDir, { recursive: true });
 

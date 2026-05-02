@@ -79,6 +79,10 @@ export async function runAutoFetchAll(): Promise<{
 }
 
 export function startAutoFetchScheduler() {
+  // No-op on Cloudflare — Workers don't have persistent processes for
+  // setInterval. The cron Worker (see `cron-worker/`) calls runAutoFetchAll
+  // via HTTP on a schedule instead.
+  if (process.env.APP_RUNTIME === "cloudflare") return;
   if (g.__ttSchedulerStarted) return;
   g.__ttSchedulerStarted = true;
 
