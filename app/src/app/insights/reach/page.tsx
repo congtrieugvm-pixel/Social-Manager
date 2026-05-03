@@ -475,6 +475,9 @@ export default function ReachDashboard() {
             pageViews: [],
             pageVideoViews: [],
           });
+          // Also reset the per-fanpage reach map; otherwise the Top widget
+          // shows stale rows from the previous selection after Bỏ chọn.
+          setReachPerFp({});
         }
         return;
       }
@@ -575,25 +578,13 @@ export default function ReachDashboard() {
     };
   }, [selectedIds, rangeMode, customFrom, customTo, refreshKey]);
 
-  // Auto-resync earnings only — earnings has no daily breakdown so the
-  // displayed total must be re-fetched from FB whenever the picker range
-  // or selection changes. Reach is NOT auto-synced: it has daily values
-  // already in DB (the daily-insights effect just re-reads), and 365d
-  // sync is too heavy to fire automatically (would hit CF Workers
-  // subrequest limit on every selection change).
-  //
-  // `syncingRef` is checked instead of the `syncing` state because the
-  // setTimeout closure captures state stale-ly — a second timer fired
-  // after a manual click would otherwise see the old false value.
-  useEffect(() => {
-    if (selectedIds.size === 0) return;
-    const t = setTimeout(() => {
-      if (syncingRef.current) return;
-      void syncEarningsOnly();
-    }, 1000);
-    return () => clearTimeout(t);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [rangeBody, selectedIds]);
+  // No auto-fired FB syncs on this page. Earlier revisions auto-fetched
+  // earnings (and briefly reach) when selection or range changed; the user
+  // explicitly disabled that — heavy FB calls must be opt-in via the manual
+  // buttons "⟳ Cập nhật reach" and "$ Check doanh thu". The chart and KPI
+  // cards still update from existing DB data when selection changes, via
+  // the daily-insights and snapshots effects above (those are pure DB
+  // reads — no FB API, no subrequest cost).
 
   /**
    * Lighter button: only fetches earnings (no reach insights). Useful when
