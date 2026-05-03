@@ -19,6 +19,15 @@ const BULK_FP_CHUNK = 2;
 // issue: those pages reuse cached insights_json instead of an FB call.
 const SKIP_FRESH_WINDOW_SEC = 30 * 60; // 30 minutes
 
+// Chunk size for the daily-insights GET. The endpoint reads
+// `insights_json` for every requested fanpage and JSON.parses each.
+// Each row is ~50–200KB; 100 rows in one call ≈ 10MB of parsing, which
+// can blow past the CF Workers free-plan 10ms CPU per invocation cap and
+// return empty (the symptom: "Tất cả tab shows 0, groups show data" —
+// groups stay under the threshold). 20 ids/chunk keeps each invocation
+// at ≤4MB of parse work, well within the limit.
+const DAILY_INSIGHTS_CHUNK = 20;
+
 interface FanpageRow {
   id: number;
   insightGroupId: number | null;
@@ -533,44 +542,78 @@ export default function ReachDashboard() {
           "pageVideoViews",
         ];
         let reachPerFpCurr: Record<number, { t: number; v: number }[]> = {};
-        const results = await Promise.all(
-          metrics.map(
-            async (
-              m,
-            ): Promise<[
-              Metric,
-              { t: number; v: number }[],
-              number,
-              Record<number, { t: number; v: number }[]>,
-            ]> => {
-              const params = new URLSearchParams({
-                ids: ids.join(","),
-                metric: m,
-                days: String(fetchDays),
-              });
-              const res = await fetch(`/api/fanpages/daily-insights?${params}`, {
-                cache: "no-store",
-              });
-              if (!res.ok) return [m, [], 0, {}];
-              const d = await safeJson<{
-                series?: Array<{ ts: number; value: number }>;
-                perFp?: Record<number, Array<{ ts: number; value: number }>>;
-              }>(res);
-              const all = (d.series ?? []).map((p) => ({ t: p.ts, v: p.value }));
-              const curr = all.filter((p) => p.t >= cutoffSec);
-              const prev = all.filter((p) => p.t < cutoffSec);
-              const prevSum = prev.reduce((s, p) => s + p.v, 0);
-              const perFpCurr: Record<number, { t: number; v: number }[]> = {};
-              for (const [fpIdStr, arr] of Object.entries(d.perFp ?? {})) {
-                const fpId = Number(fpIdStr);
-                perFpCurr[fpId] = arr
-                  .map((p) => ({ t: p.ts, v: p.value }))
-                  .filter((p) => p.t >= cutoffSec);
+
+        // Chunk the daily-insights call to keep each Worker's JSON-parse
+        // work bounded (see DAILY_INSIGHTS_CHUNK comment). For each metric
+        // we fire chunks SEQUENTIALLY (not Promise.all) — the 5 metrics
+        // already run in parallel via the outer Promise.all, so we get
+        // ≤5 concurrent fetches at any moment. Going parallel within a
+        // metric would multiply that to 5×N concurrent and risk pushing
+        // CF infrastructure into 1102 territory like fd7a3d7 did.
+        const fetchOneMetric = async (
+          m: Metric,
+        ): Promise<
+          [
+            Metric,
+            { t: number; v: number }[],
+            number,
+            Record<number, { t: number; v: number }[]>,
+          ]
+        > => {
+          const dayTotalsAll = new Map<number, number>();
+          const allFpDay: Record<number, Map<number, number>> = {};
+          for (let i = 0; i < ids.length; i += DAILY_INSIGHTS_CHUNK) {
+            const chunkIds = ids.slice(i, i + DAILY_INSIGHTS_CHUNK);
+            const params = new URLSearchParams({
+              ids: chunkIds.join(","),
+              metric: m,
+              days: String(fetchDays),
+            });
+            const res = await fetch(`/api/fanpages/daily-insights?${params}`, {
+              cache: "no-store",
+            });
+            if (!res.ok) continue;
+            const d = await safeJson<{
+              series?: Array<{ ts: number; value: number }>;
+              perFp?: Record<number, Array<{ ts: number; value: number }>>;
+            }>(res);
+            // Aggregate aggregate-series across chunks: sum by ts.
+            for (const p of d.series ?? []) {
+              dayTotalsAll.set(
+                p.ts,
+                (dayTotalsAll.get(p.ts) ?? 0) + p.value,
+              );
+            }
+            // Aggregate per-fanpage series. Each chunk only returns
+            // perFp for ITS fanpages, so we build up a per-fp Map.
+            for (const [fpIdStr, arr] of Object.entries(d.perFp ?? {})) {
+              const fpId = Number(fpIdStr);
+              let fpMap = allFpDay[fpId];
+              if (!fpMap) {
+                fpMap = new Map<number, number>();
+                allFpDay[fpId] = fpMap;
               }
-              return [m, curr, prevSum, perFpCurr];
-            },
-          ),
-        );
+              for (const p of arr) {
+                fpMap.set(p.ts, (fpMap.get(p.ts) ?? 0) + p.value);
+              }
+            }
+          }
+          const all = Array.from(dayTotalsAll, ([t, v]) => ({ t, v })).sort(
+            (a, b) => a.t - b.t,
+          );
+          const curr = all.filter((p) => p.t >= cutoffSec);
+          const prev = all.filter((p) => p.t < cutoffSec);
+          const prevSum = prev.reduce((s, p) => s + p.v, 0);
+          const perFpCurr: Record<number, { t: number; v: number }[]> = {};
+          for (const [fpIdStr, fpMap] of Object.entries(allFpDay)) {
+            const fpId = Number(fpIdStr);
+            perFpCurr[fpId] = Array.from(fpMap, ([t, v]) => ({ t, v }))
+              .filter((p) => p.t >= cutoffSec)
+              .sort((a, b) => a.t - b.t);
+          }
+          return [m, curr, prevSum, perFpCurr];
+        };
+        const results = await Promise.all(metrics.map(fetchOneMetric));
         if (!cancelled) {
           const nextSeries: Record<Metric, { t: number; v: number }[]> = {
             pageImpressionsUnique: [],
