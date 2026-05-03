@@ -2,6 +2,12 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
+import { safeJson } from "@/lib/req-body";
+
+// Chunk size for bulk fanpage POSTs. CF Workers ~30s wall-clock can't iterate
+// 30+ pages × FB Graph API calls in one request. Chunking sequentially keeps
+// each request well under the timeout.
+const BULK_FP_CHUNK = 5;
 
 interface FbAccountOption {
   id: number;
@@ -675,7 +681,7 @@ export default function FanpagePage() {
         const res = await fetch(`/api/fanpages/${fanpageId}/insights`, {
           method: "POST",
         });
-        const data = (await res.json()) as { error?: string };
+        const data = await safeJson<{ error?: string }>(res);
         if (!res.ok || data.error) {
           setError(data.error ?? `Lỗi insights ${res.status}`);
           return;
@@ -692,30 +698,55 @@ export default function FanpagePage() {
     setSyncing(true);
     setMessage("");
     setError("");
+    const ids =
+      selected.size > 0
+        ? Array.from(selected)
+        : rows.filter((r) => r.hasPageToken).map((r) => r.id);
+    if (ids.length === 0) {
+      setSyncing(false);
+      return;
+    }
+    // Chunked sequential — single request over all ids exceeds CF Workers
+    // ~30s wall-clock when N is large (FB Graph API call per page). Empty
+    // response body would crash `await res.json()` with "Unexpected end of
+    // JSON input".
+    let total = 0;
+    let okCount = 0;
+    let errCount = 0;
+    let skipCount = 0;
+    let firstError: string | null = null;
     try {
-      const ids =
-        selected.size > 0
-          ? Array.from(selected)
-          : rows.filter((r) => r.hasPageToken).map((r) => r.id);
-      const res = await fetch("/api/fanpages/insights/batch", {
-        method: "POST",
-        headers: { "X-Body": JSON.stringify({ ids, days: 365 }) },
-      });
-      const data = (await res.json()) as {
-        total: number;
-        okCount: number;
-        errCount: number;
-        skipCount: number;
-        error?: string;
-      };
-      if (!res.ok || data.error) {
-        setError(data.error ?? `Lỗi ${res.status}`);
-      } else {
+      for (let i = 0; i < ids.length; i += BULK_FP_CHUNK) {
+        const chunk = ids.slice(i, i + BULK_FP_CHUNK);
+        const res = await fetch("/api/fanpages/insights/batch", {
+          method: "POST",
+          headers: { "X-Body": JSON.stringify({ ids: chunk, days: 365 }) },
+        });
+        const data = await safeJson<{
+          total?: number;
+          okCount?: number;
+          errCount?: number;
+          skipCount?: number;
+          error?: string;
+        }>(res);
+        if (!res.ok || data.error) {
+          if (!firstError) firstError = data.error ?? `Lỗi ${res.status}`;
+          errCount += chunk.length;
+          continue;
+        }
+        total += data.total ?? 0;
+        okCount += data.okCount ?? 0;
+        errCount += data.errCount ?? 0;
+        skipCount += data.skipCount ?? 0;
         setMessage(
-          `Reach 365d: ${data.okCount}/${data.total} OK · ${data.errCount} lỗi · ${data.skipCount} bỏ qua`,
+          `Reach 365d: ${Math.min(i + chunk.length, ids.length)}/${ids.length} page · ${okCount} OK · ${errCount} lỗi`,
         );
-        await loadFanpages();
       }
+      if (firstError) setError(firstError);
+      setMessage(
+        `Reach 365d: ${okCount}/${total} OK · ${errCount} lỗi · ${skipCount} bỏ qua`,
+      );
+      await loadFanpages();
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -727,36 +758,61 @@ export default function FanpagePage() {
     setSyncing(true);
     setMessage("");
     setError("");
+    const ids =
+      selected.size > 0
+        ? Array.from(selected)
+        : rows.filter((r) => r.hasPageToken).map((r) => r.id);
+    if (ids.length === 0) {
+      setSyncing(false);
+      return;
+    }
+    let total = 0;
+    let okCount = 0;
+    let errCount = 0;
+    let skipCount = 0;
+    let monetizedCount = 0;
+    let totalMicros = 0;
+    let firstError: string | null = null;
     try {
-      const ids =
-        selected.size > 0
-          ? Array.from(selected)
-          : rows.filter((r) => r.hasPageToken).map((r) => r.id);
-      const res = await fetch("/api/fanpages/sync-earnings", {
-        method: "POST",
-        headers: { "X-Body": JSON.stringify({ ids, days: 365 }) },
-      });
-      const data = (await res.json()) as {
-        total: number;
-        okCount: number;
-        errCount: number;
-        skipCount: number;
-        monetizedCount: number;
-        totalMicros: number;
-        error?: string;
-      };
-      if (!res.ok || data.error) {
-        setError(data.error ?? `Lỗi ${res.status}`);
-      } else {
-        const totalUsd = (data.totalMicros / 1_000_000).toLocaleString("en-US", {
-          minimumFractionDigits: 2,
-          maximumFractionDigits: 2,
+      for (let i = 0; i < ids.length; i += BULK_FP_CHUNK) {
+        const chunk = ids.slice(i, i + BULK_FP_CHUNK);
+        const res = await fetch("/api/fanpages/sync-earnings", {
+          method: "POST",
+          headers: { "X-Body": JSON.stringify({ ids: chunk, days: 365 }) },
         });
+        const data = await safeJson<{
+          total?: number;
+          okCount?: number;
+          errCount?: number;
+          skipCount?: number;
+          monetizedCount?: number;
+          totalMicros?: number;
+          error?: string;
+        }>(res);
+        if (!res.ok || data.error) {
+          if (!firstError) firstError = data.error ?? `Lỗi ${res.status}`;
+          errCount += chunk.length;
+          continue;
+        }
+        total += data.total ?? 0;
+        okCount += data.okCount ?? 0;
+        errCount += data.errCount ?? 0;
+        skipCount += data.skipCount ?? 0;
+        monetizedCount += data.monetizedCount ?? 0;
+        totalMicros += data.totalMicros ?? 0;
         setMessage(
-          `Doanh thu 365d: ${data.monetizedCount}/${data.okCount} monetized · $${totalUsd} · ${data.errCount} lỗi · ${data.skipCount} bỏ qua`,
+          `Doanh thu: ${Math.min(i + chunk.length, ids.length)}/${ids.length} page · ${okCount} OK · ${errCount} lỗi`,
         );
-        await loadFanpages();
       }
+      if (firstError) setError(firstError);
+      const totalUsd = (totalMicros / 1_000_000).toLocaleString("en-US", {
+        minimumFractionDigits: 2,
+        maximumFractionDigits: 2,
+      });
+      setMessage(
+        `Doanh thu 365d: ${monetizedCount}/${okCount} monetized · $${totalUsd} · ${errCount} lỗi · ${skipCount} bỏ qua`,
+      );
+      await loadFanpages();
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
