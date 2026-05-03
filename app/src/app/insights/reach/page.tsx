@@ -29,15 +29,7 @@ interface FanpageRow {
   username: string | null;
   fanCount: number | null;
   followersCount: number | null;
-  // /api/fanpages serializes the drizzle Date as ISO string; older callers
-  // expected epoch seconds. The `lastSyncedSec()` helper handles both forms.
-  lastSyncedAt: number | string | null;
-  lastSyncError: string | null;
-  // Stringified FbPageInsights map. The skip-fresh filter checks this is
-  // non-empty so a previous sync that errored (lastSyncError set, but the
-  // route still bumps lastSyncedAt to "now") doesn't get permanently
-  // skipped on subsequent clicks.
-  insightsJson: string | null;
+  lastSyncedAt: number | null;
   // Monetization
   monetizationStatus: string | null;
   earningsValue: number | null;     // micro-units
@@ -723,22 +715,20 @@ export default function ReachDashboard() {
     setSyncing(true);
     setSyncMsg("");
     setSyncErr("");
-    // Pulls the last 365 days of page insights. The FB lib chunks the date
-    // span into 90-day windows internally; client chunks ids by
-    // BULK_FP_CHUNK and fires CHUNK_CONCURRENCY chunks in parallel — each
-    // chunk is its OWN Worker invocation so per-Worker CPU/subrequests stay
-    // bounded (Promise.all *inside* a single Worker triggered Error 1102
-    // last time, do NOT do that). Earnings sync follows the picker range
-    // (no daily breakdown).
+    // Pulls the last 365 days of page insights. The library chunks the FB
+    // call into 90-day windows internally so the date span is FB-safe;
+    // chunking on the CLIENT (BULK_FP_CHUNK) keeps each CF Worker
+    // invocation under the ~30s wall-clock. Earnings sync follows the
+    // user-selected picker range (no daily breakdown).
+    //
+    // Chunked sequential, not parallel: running insights/batch + sync-earnings
+    // simultaneously over many pages doubles CF Workers subrequest pressure,
+    // and parallel-on-all-ids was the trigger for empty-body crashes.
     const SYNC_DAYS = 365;
-    const CHUNK_CONCURRENCY = 3;
-    // Skip-fresh: skip pages with a SUCCESSFUL recent sync. The route's
-    // error path also bumps `lastSyncedAt` (so users see the failure
-    // timestamp), which means the recency check alone would lock failed
-    // pages out of retry for 30 min. Also require lastSyncError == null
-    // and a non-empty insightsJson — i.e. the previous sync actually
-    // produced data. Pages that errored or have empty data fall through
-    // and get re-fetched.
+    // Skip-fresh filter: pages already synced within SKIP_FRESH_WINDOW_SEC
+    // (30 min) are excluded — their existing insights_json is reused. So
+    // pages already synced via a prior group sync don't get re-fetched
+    // when the user clicks "Cập nhật reach" on the "Tất cả" tab.
     const nowSec = Math.floor(Date.now() / 1000);
     const fpById = new Map(fanpages.map((f) => [f.id, f]));
     const ids: number[] = [];
@@ -746,15 +736,7 @@ export default function ReachDashboard() {
     for (const id of allIds) {
       const fp = fpById.get(id);
       const lastSec = lastSyncedSec(fp?.lastSyncedAt ?? null);
-      const recent = lastSec != null && nowSec - lastSec < SKIP_FRESH_WINDOW_SEC;
-      // Explicit `== null` (not `!fp?.lastSyncError`) so an unexpected
-      // empty-string value doesn't get treated as "last sync succeeded"
-      // and lock a stale page out of retry. Route's success path sets
-      // this to NULL; error path sets it to a non-empty message.
-      const lastSucceeded = fp?.lastSyncError == null;
-      const hasData =
-        !!fp?.insightsJson && fp.insightsJson !== "{}" && fp.insightsJson !== "";
-      if (recent && lastSucceeded && hasData) {
+      if (lastSec != null && nowSec - lastSec < SKIP_FRESH_WINDOW_SEC) {
         freshSkippedCount++;
         continue;
       }
@@ -762,83 +744,59 @@ export default function ReachDashboard() {
     }
     if (ids.length === 0) {
       setSyncMsg(
-        `Tất cả ${allIds.length} page đã sync gần đây (≤30 phút) — dùng dữ liệu hiện có`,
+        `Tất cả ${allIds.length} page đã sync gần đây (≤30 phút) — bỏ qua, dùng dữ liệu hiện có`,
       );
-      // Force chart re-read in case UI is showing stale state.
-      setRefreshKey((k) => k + 1);
       syncingRef.current = false;
       setSyncing(false);
       return;
     }
-
-    // Build chunk list once.
-    const chunks: number[][] = [];
-    for (let i = 0; i < ids.length; i += BULK_FP_CHUNK) {
-      chunks.push(ids.slice(i, i + BULK_FP_CHUNK));
-    }
-
     let okCount = 0;
     let errCount = 0;
     let skipCount = 0;
     let monetizedCount = 0;
     let totalMicros = 0;
-    let processedPages = 0;
     let firstError: string | null = null;
     const errs: string[] = [];
-
-    const renderProgress = (label: string) => {
-      const freshNote =
-        freshSkippedCount > 0
-          ? ` (bỏ qua ${freshSkippedCount} đã sync gần đây)`
-          : "";
-      setSyncMsg(
-        `${label}: ${processedPages}/${ids.length} page · ${okCount} OK · ${errCount} lỗi${freshNote}`,
-      );
-    };
-
-    async function processInsightChunk(chunk: number[]) {
-      const res = await fetch("/api/fanpages/insights/batch", {
-        method: "POST",
-        headers: { "X-Body": JSON.stringify({ ids: chunk, days: SYNC_DAYS }) },
-      });
-      const data = await safeJson<{
-        okCount?: number;
-        errCount?: number;
-        skipCount?: number;
-        error?: string;
-        results?: Array<{ ok: boolean; error?: string; name?: string }>;
-      }>(res);
-      if (!res.ok || data.error) {
-        if (!firstError) firstError = data.error ?? `Lỗi ${res.status}`;
-        errCount += chunk.length;
-        processedPages += chunk.length;
-        renderProgress("Insight");
-        return;
-      }
-      okCount += data.okCount ?? 0;
-      errCount += data.errCount ?? 0;
-      skipCount += data.skipCount ?? 0;
-      for (const r of data.results ?? []) {
-        if (!r.ok && r.error && errs.length < 2 && !errs.includes(r.error)) {
-          errs.push(r.error);
-        }
-      }
-      processedPages += chunk.length;
-      renderProgress("Insight");
-    }
-
     try {
-      // Step 1: insights — fire CHUNK_CONCURRENCY chunks in parallel,
-      // wait, then next batch. Each chunk is a separate Worker invocation
-      // so CPU/subrequest budget per Worker is unchanged (still ≤2 pages).
-      for (let i = 0; i < chunks.length; i += CHUNK_CONCURRENCY) {
-        const batch = chunks.slice(i, i + CHUNK_CONCURRENCY);
-        await Promise.all(batch.map((c) => processInsightChunk(c)));
+      // Step 1: page insights, chunked.
+      for (let i = 0; i < ids.length; i += BULK_FP_CHUNK) {
+        const chunk = ids.slice(i, i + BULK_FP_CHUNK);
+        const res = await fetch("/api/fanpages/insights/batch", {
+          method: "POST",
+          headers: { "X-Body": JSON.stringify({ ids: chunk, days: SYNC_DAYS }) },
+        });
+        const data = await safeJson<{
+          okCount?: number;
+          errCount?: number;
+          skipCount?: number;
+          error?: string;
+          results?: Array<{ ok: boolean; error?: string; name?: string }>;
+        }>(res);
+        if (!res.ok || data.error) {
+          if (!firstError) firstError = data.error ?? `Lỗi ${res.status}`;
+          errCount += chunk.length;
+          continue;
+        }
+        okCount += data.okCount ?? 0;
+        errCount += data.errCount ?? 0;
+        skipCount += data.skipCount ?? 0;
+        for (const r of data.results ?? []) {
+          if (!r.ok && r.error && errs.length < 2 && !errs.includes(r.error)) {
+            errs.push(r.error);
+          }
+        }
+        const freshNote =
+          freshSkippedCount > 0
+            ? ` (bỏ qua ${freshSkippedCount} đã sync gần đây)`
+            : "";
+        setSyncMsg(
+          `Insight: ${Math.min(i + chunk.length, ids.length)}/${ids.length} page · ${okCount} OK · ${errCount} lỗi${freshNote}`,
+        );
       }
-
-      // Step 2: earnings — also parallelized. Earnings is lighter
-      // (~5 subrequests/page) so concurrent chunks are well under cap.
-      async function processEarningsChunk(chunk: number[]) {
+      // Step 2: earnings, chunked. Failures here don't block the insights
+      // success message — earnings often has missing-scope errors per page.
+      for (let i = 0; i < ids.length; i += BULK_FP_CHUNK) {
+        const chunk = ids.slice(i, i + BULK_FP_CHUNK);
         const res = await fetch("/api/fanpages/sync-earnings", {
           method: "POST",
           headers: { "X-Body": JSON.stringify({ ids: chunk, ...rangeBody }) },
@@ -848,15 +806,10 @@ export default function ReachDashboard() {
           totalMicros?: number;
           error?: string;
         }>(res);
-        if (data.error) return;
+        if (data.error) continue;
         monetizedCount += data.monetizedCount ?? 0;
         totalMicros += data.totalMicros ?? 0;
       }
-      for (let i = 0; i < chunks.length; i += CHUNK_CONCURRENCY) {
-        const batch = chunks.slice(i, i + CHUNK_CONCURRENCY);
-        await Promise.all(batch.map((c) => processEarningsChunk(c)));
-      }
-
       if (firstError) setSyncErr(firstError);
       const monetSummary =
         monetizedCount > 0
@@ -872,13 +825,7 @@ export default function ReachDashboard() {
       if (errCount > 0 && errs.length > 0 && !firstError) {
         setSyncErr(`Graph: ${errs.join(" | ")}`);
       }
-      // Brief delay before re-reading. CF D1 has eventual consistency for
-      // read replicas — without this, the immediate GET /api/fanpages can
-      // hit a replica that hasn't yet seen the writes from /insights/batch,
-      // returning stale (empty) insightsJson and rendering the KPI cards
-      // as 0 even though the sync succeeded. 800ms is the typical D1
-      // cross-region propagation window.
-      await new Promise((r) => setTimeout(r, 800));
+      // Reload fanpage rows so fresh earnings show in the KPI card.
       const r1 = await fetch("/api/fanpages", { cache: "no-store" });
       const d1 = await safeJson<{ rows?: FanpageRow[] }>(r1);
       setFanpages(d1.rows ?? []);
