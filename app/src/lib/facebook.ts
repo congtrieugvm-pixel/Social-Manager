@@ -703,20 +703,35 @@ async function fetchPageInsightsWindow(
     }
   }
 
-  // Legacy metrics — best-effort, failures ignored so deprecated metrics don't
-  // block the response. If Facebook later removes them completely we lose data
-  // silently but nothing breaks.
-  const legacy = await Promise.allSettled(
-    PAGE_METRICS_LEGACY.map(async (m) => {
-      const r = await graphFetch<{ data: FbPageInsightRaw[] }>(
-        `/${pageId}/insights?metric=${m}&${qs}`,
-        pageAccessToken,
-      );
-      return r.data;
-    }),
-  );
-  for (const r of legacy) {
-    if (r.status === "fulfilled") all.push(...r.value);
+  // Legacy metrics — try ONE batched call first to save CF Worker subrequests.
+  // 365-day sync splits into ~5 windows; per-metric × 5 legacy metrics × 5
+  // windows = 25 subrequests, which (combined with SAFE + DB ops) blew past
+  // CF's per-invocation subrequest cap (~50 free / ~1000 paid). One batch =
+  // 1 subrequest covers all metrics that haven't been removed.
+  //
+  // On batch failure (e.g. one metric was deprecated and 400s the whole
+  // call), fall back to per-metric `allSettled` so individual deprecations
+  // don't black-hole the rest. Both paths swallow errors silently — legacy
+  // metrics are best-effort by design.
+  try {
+    const res = await graphFetch<{ data: FbPageInsightRaw[] }>(
+      `/${pageId}/insights?metric=${PAGE_METRICS_LEGACY.join(",")}&${qs}`,
+      pageAccessToken,
+    );
+    all.push(...res.data);
+  } catch {
+    const legacy = await Promise.allSettled(
+      PAGE_METRICS_LEGACY.map(async (m) => {
+        const r = await graphFetch<{ data: FbPageInsightRaw[] }>(
+          `/${pageId}/insights?metric=${m}&${qs}`,
+          pageAccessToken,
+        );
+        return r.data;
+      }),
+    );
+    for (const r of legacy) {
+      if (r.status === "fulfilled") all.push(...r.value);
+    }
   }
 
   return all;

@@ -4,12 +4,14 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { safeJson } from "@/lib/req-body";
 
-// Chunk size for bulk fanpage POSTs. CF Workers have a ~30s wall-clock limit;
-// `syncPageInsights` now pulls 365 days, which the FB lib splits into 4× 90-day
-// windows per page → ~4 sequential FB calls × ~1s each ≈ 4–5s per page. At 3
-// pages/chunk that's ~15s per CF invocation, leaving headroom against the 30s
-// limit even when a page hits rate-limit backoff.
-const BULK_FP_CHUNK = 3;
+// Chunk size for bulk fanpage POSTs. CF Workers limit BOTH wall-clock (~30s)
+// AND subrequest count (~50 free / ~1000 paid) per invocation. With the
+// 365-day reach sync, the FB lib splits each page into ~5 windows × 2 batched
+// metric calls = ~10 subrequests per page (best case), plus DB select/update
+// per page. Two pages per chunk fits comfortably under 50; one page is the
+// safest setting against rate-limit retries inflating the subrequest count
+// (a 429 retry doubles the subrequest cost).
+const BULK_FP_CHUNK = 1;
 
 interface FanpageRow {
   id: number;
@@ -573,34 +575,16 @@ export default function ReachDashboard() {
     };
   }, [selectedIds, rangeMode, customFrom, customTo, refreshKey]);
 
-  // Auto-fire full reach + earnings sync when the user changes selection
-  // (incl. "Chọn tất cả"). Reach data has daily breakdown so changing the
-  // picker range alone never needs a re-sync — daily-insights effect just
-  // re-reads the DB. Earnings has no daily breakdown though, so a separate
-  // lighter auto-fire below handles range changes.
+  // Auto-resync earnings only — earnings has no daily breakdown so the
+  // displayed total must be re-fetched from FB whenever the picker range
+  // or selection changes. Reach is NOT auto-synced: it has daily values
+  // already in DB (the daily-insights effect just re-reads), and 365d
+  // sync is too heavy to fire automatically (would hit CF Workers
+  // subrequest limit on every selection change).
   //
-  // `syncingRef` (not state) is checked because the setTimeout closure
-  // captures `syncing` stale-ly. `refreshKey` is deliberately NOT in deps:
-  // syncPageInsights bumps it at the end, and including it here would
-  // re-trigger the auto-fire after every successful sync (infinite loop).
-  useEffect(() => {
-    if (selectedIds.size === 0) return;
-    const t = setTimeout(() => {
-      if (syncingRef.current) return;
-      void syncPageInsights();
-    }, 1500);
-    return () => clearTimeout(t);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedIds]);
-
-  // Auto-resync earnings when the picker range changes. Earnings is a
-  // single total per fanpage (no daily breakdown), so the displayed
-  // number must be re-fetched from FB to reflect the user's selection.
-  // Debounced 1s — slightly faster than the full-sync auto-fire so when
-  // both range and selection change together, this lighter sync wins
-  // and the heavier reach-sync's `syncingRef` check skips it (correct:
-  // selection change without range change is the only case where reach
-  // truly needs to re-fetch).
+  // `syncingRef` is checked instead of the `syncing` state because the
+  // setTimeout closure captures state stale-ly — a second timer fired
+  // after a manual click would otherwise see the old false value.
   useEffect(() => {
     if (selectedIds.size === 0) return;
     const t = setTimeout(() => {
@@ -609,7 +593,7 @@ export default function ReachDashboard() {
     }, 1000);
     return () => clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [rangeBody]);
+  }, [rangeBody, selectedIds]);
 
   /**
    * Lighter button: only fetches earnings (no reach insights). Useful when
