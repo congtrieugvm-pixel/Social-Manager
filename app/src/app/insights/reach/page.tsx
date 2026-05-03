@@ -5,10 +5,11 @@ import Link from "next/link";
 import { safeJson } from "@/lib/req-body";
 
 // Chunk size for bulk fanpage POSTs. CF Workers have a ~30s wall-clock limit;
-// each fanpage costs an FB Graph call (~200–2000ms) + DB write. 5 pages per
-// request keeps each call well under timeout while progress updates feel
-// responsive to the user.
-const BULK_FP_CHUNK = 5;
+// `syncPageInsights` now pulls 365 days, which the FB lib splits into 4× 90-day
+// windows per page → ~4 sequential FB calls × ~1s each ≈ 4–5s per page. At 3
+// pages/chunk that's ~15s per CF invocation, leaving headroom against the 30s
+// limit even when a page hits rate-limit backoff.
+const BULK_FP_CHUNK = 3;
 
 interface FanpageRow {
   id: number;
@@ -288,6 +289,12 @@ export default function ReachDashboard() {
   const [search, setSearch] = useState("");
   const [loadingSnap, setLoadingSnap] = useState(false);
   const [syncing, setSyncing] = useState(false);
+  // Mirror of `syncing` for early-return guards inside async functions and
+  // setTimeout closures. React state reads in closures are stale (the boolean
+  // captured at scheduling time, not when the timer fires), so two auto-fired
+  // syncs can race and double-hit FB Graph API. The ref reflects the latest
+  // value synchronously and dedupes concurrent invocations.
+  const syncingRef = useRef(false);
   const [syncMsg, setSyncMsg] = useState("");
   const [syncErr, setSyncErr] = useState("");
   const [refreshKey, setRefreshKey] = useState(0);
@@ -566,21 +573,43 @@ export default function ReachDashboard() {
     };
   }, [selectedIds, rangeMode, customFrom, customTo, refreshKey]);
 
-  // Auto-resync earnings when the picker range changes — earnings are
-  // stored as a single total per fanpage (no daily breakdown), so the
-  // number must be re-fetched from FB to reflect the user's selection.
-  // Debounced 1s so rapid range clicks don't pile up FB calls.
+  // Auto-fire full reach + earnings sync when the user changes selection
+  // (incl. "Chọn tất cả"). Reach data has daily breakdown so changing the
+  // picker range alone never needs a re-sync — daily-insights effect just
+  // re-reads the DB. Earnings has no daily breakdown though, so a separate
+  // lighter auto-fire below handles range changes.
+  //
+  // `syncingRef` (not state) is checked because the setTimeout closure
+  // captures `syncing` stale-ly. `refreshKey` is deliberately NOT in deps:
+  // syncPageInsights bumps it at the end, and including it here would
+  // re-trigger the auto-fire after every successful sync (infinite loop).
   useEffect(() => {
     if (selectedIds.size === 0) return;
     const t = setTimeout(() => {
-      // Don't stomp an in-flight manual sync — the user will see the
-      // result of theirs and the next range change can re-trigger.
-      if (syncing) return;
+      if (syncingRef.current) return;
+      void syncPageInsights();
+    }, 1500);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedIds]);
+
+  // Auto-resync earnings when the picker range changes. Earnings is a
+  // single total per fanpage (no daily breakdown), so the displayed
+  // number must be re-fetched from FB to reflect the user's selection.
+  // Debounced 1s — slightly faster than the full-sync auto-fire so when
+  // both range and selection change together, this lighter sync wins
+  // and the heavier reach-sync's `syncingRef` check skips it (correct:
+  // selection change without range change is the only case where reach
+  // truly needs to re-fetch).
+  useEffect(() => {
+    if (selectedIds.size === 0) return;
+    const t = setTimeout(() => {
+      if (syncingRef.current) return;
       void syncEarningsOnly();
     }, 1000);
     return () => clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [rangeBody, selectedIds, refreshKey]);
+  }, [rangeBody]);
 
   /**
    * Lighter button: only fetches earnings (no reach insights). Useful when
@@ -589,8 +618,10 @@ export default function ReachDashboard() {
    * earnings number reflects the dates the user chose.
    */
   async function syncEarningsOnly() {
+    if (syncingRef.current) return;
     const ids = Array.from(selectedIds);
     if (ids.length === 0) return;
+    syncingRef.current = true;
     setSyncing(true);
     setSyncMsg("");
     setSyncErr("");
@@ -678,24 +709,29 @@ export default function ReachDashboard() {
     } catch (e) {
       setSyncErr(e instanceof Error ? e.message : String(e));
     } finally {
+      syncingRef.current = false;
       setSyncing(false);
     }
   }
 
   async function syncPageInsights() {
+    if (syncingRef.current) return;
     const ids = Array.from(selectedIds);
     if (ids.length === 0) return;
+    syncingRef.current = true;
     setSyncing(true);
     setSyncMsg("");
     setSyncErr("");
-    // Snapshot insights pull the last 30 days. FB Insights aggregates monthly
-    // so a 30-day window is the natural reporting period. Earnings sync to
-    // the user-selected picker range (no daily breakdown).
+    // Pulls the last 365 days of page insights. The library chunks the FB
+    // call into 90-day windows internally so the date span is FB-safe;
+    // chunking on the CLIENT (BULK_FP_CHUNK=5) keeps each CF Worker
+    // invocation under the ~30s wall-clock. Earnings sync follows the
+    // user-selected picker range (no daily breakdown).
     //
     // Chunked sequential, not parallel: running insights/batch + sync-earnings
     // simultaneously over many pages doubles CF Workers subrequest pressure,
     // and parallel-on-all-ids was the trigger for empty-body crashes.
-    const SYNC_DAYS = 30;
+    const SYNC_DAYS = 365;
     let okCount = 0;
     let errCount = 0;
     let skipCount = 0;
@@ -771,6 +807,7 @@ export default function ReachDashboard() {
     } catch (e) {
       setSyncErr(e instanceof Error ? e.message : String(e));
     } finally {
+      syncingRef.current = false;
       setSyncing(false);
     }
   }
@@ -1032,7 +1069,7 @@ export default function ReachDashboard() {
             style={{ padding: "6px 12px", fontSize: 11 }}
             title={`Gọi Graph API cho ${selectedIds.size} fanpage — luôn pull 365 ngày, hiển thị filter theo ${rangeLabel}`}
           >
-            {syncing ? "Đang cập nhật…" : `⟳ Cập nhật reach · 30d`}
+            {syncing ? "Đang cập nhật…" : `⟳ Cập nhật reach`}
           </button>
           <button
             onClick={syncEarningsOnly}
