@@ -48,6 +48,46 @@ export async function postJson(
   });
 }
 
+/**
+ * Safe response → JSON parser. CF Workers occasionally return an empty body
+ * (timeout / kill / unhandled throw before the response is flushed). Bare
+ * `await res.json()` then crashes with "Unexpected end of JSON input",
+ * surfacing as an opaque error to the user. This helper:
+ *   - reads the body as text (single consumption),
+ *   - returns `{ error }` when body is empty or unparseable,
+ *   - hints CF-timeout when the status code suggests it (502/504/524).
+ */
+export async function safeJson<T = unknown>(
+  res: Response,
+): Promise<T & { error?: string }> {
+  let text: string;
+  try {
+    text = await res.text();
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    return { error: `Đọc response lỗi: ${msg}` } as T & { error?: string };
+  }
+  if (!text) {
+    const looksLikeTimeout =
+      res.status === 0 ||
+      res.status === 502 ||
+      res.status === 504 ||
+      res.status === 524 ||
+      res.status === 408;
+    const hint = looksLikeTimeout
+      ? "Server timeout (CF Workers ~30s) — chọn ít page hơn hoặc thử lại"
+      : `Server không trả response (HTTP ${res.status || "?"})`;
+    return { error: hint } as T & { error?: string };
+  }
+  try {
+    return JSON.parse(text) as T & { error?: string };
+  } catch {
+    return {
+      error: `Response không phải JSON (HTTP ${res.status}): ${text.slice(0, 120)}`,
+    } as T & { error?: string };
+  }
+}
+
 /** Client helper for PATCH + JSON body via X-Body header. */
 export async function patchJson(
   url: string,

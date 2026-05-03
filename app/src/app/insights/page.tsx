@@ -8,6 +8,7 @@ import {
   DEFAULT_PRESETS,
   type DateRangeValue,
 } from "@/app/_components/date-range-picker";
+import { safeJson } from "@/lib/req-body";
 
 interface FanpageRow {
   id: number;
@@ -152,7 +153,7 @@ export default function ContentPage() {
 
   const loadFanpages = useCallback(async () => {
     const res = await fetch("/api/fanpages", { cache: "no-store" });
-    const data = (await res.json()) as { rows: FanpageRow[] };
+    const data = await safeJson<{ rows?: FanpageRow[] }>(res);
     const arr = data.rows ?? [];
     setFanpages(arr);
     setSelectedIds((prev) => {
@@ -165,7 +166,7 @@ export default function ContentPage() {
 
   const loadGroups = useCallback(async () => {
     const res = await fetch("/api/insight-groups", { cache: "no-store" });
-    const data = (await res.json()) as { groups: GroupRow[] };
+    const data = await safeJson<{ groups?: GroupRow[] }>(res);
     setGroups(data.groups ?? []);
   }, []);
 
@@ -180,7 +181,7 @@ export default function ContentPage() {
       await Promise.all(
         ids.map(async (fpId) => {
           const res = await fetch(`/api/fanpages/${fpId}/posts`, { cache: "no-store" });
-          const data = (await res.json()) as { rows: PostRow[] };
+          const data = await safeJson<{ rows?: PostRow[] }>(res);
           map[fpId] = data.rows ?? [];
         }),
       );
@@ -372,13 +373,13 @@ export default function ContentPage() {
           method: "POST",
           headers: { "X-Body": JSON.stringify({ max: syncMax }) },
         });
-        const data = (await res.json()) as {
+        const data = await safeJson<{
           ok?: boolean;
           found?: number;
           inserted?: number;
           updated?: number;
           error?: string;
-        };
+        }>(res);
         if (res.ok) {
           postsFound += data.found ?? 0;
           postsInserted += data.inserted ?? 0;
@@ -401,7 +402,7 @@ export default function ContentPage() {
           method: "POST",
           headers: { "X-Body": JSON.stringify({ fanpageId: id }) },
         });
-        const data = (await res.json()) as BatchResponse;
+        const data = await safeJson<BatchResponse>(res);
         if (res.ok) {
           okIns += data.okCount ?? 0;
           errIns += data.errCount ?? 0;
@@ -438,7 +439,7 @@ export default function ContentPage() {
                       tokenOverrides: { [String(id)]: overrideFpId },
                     }) },
                   });
-                  const d2 = (await r2.json()) as BatchResponse;
+                  const d2 = await safeJson<BatchResponse>(r2);
                   setMessage(
                     `Retry ${failedFpName}: ${d2.okCount ?? 0}/${d2.total ?? 0} OK · ${d2.errCount ?? 0} lỗi`,
                   );
@@ -497,7 +498,7 @@ export default function ContentPage() {
         method: "POST",
         headers: { "X-Body": JSON.stringify({ ids, tokenOverrides }) },
       });
-      const data = (await res.json()) as BatchResponse;
+      const data = await safeJson<BatchResponse>(res);
       if (!res.ok) {
         setError(data.error ?? `Lỗi ${res.status}`);
         return;
@@ -551,7 +552,7 @@ export default function ContentPage() {
       const res = await fetch(`/api/posts/${postRowId}/insights`, {
         method: "POST",
       });
-      const data = await res.json();
+      const data = await safeJson<{ error?: string }>(res);
       if (!res.ok || data.error) {
         setError(data.error ?? `Lỗi ${res.status}`);
       } else {

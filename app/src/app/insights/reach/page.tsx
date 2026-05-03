@@ -2,6 +2,13 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
+import { safeJson } from "@/lib/req-body";
+
+// Chunk size for bulk fanpage POSTs. CF Workers have a ~30s wall-clock limit;
+// each fanpage costs an FB Graph call (~200–2000ms) + DB write. 5 pages per
+// request keeps each call well under timeout while progress updates feel
+// responsive to the user.
+const BULK_FP_CHUNK = 5;
 
 interface FanpageRow {
   id: number;
@@ -410,10 +417,10 @@ export default function ReachDashboard() {
   useEffect(() => {
     (async () => {
       const r1 = await fetch("/api/fanpages", { cache: "no-store" });
-      const d1 = (await r1.json()) as { rows: FanpageRow[] };
+      const d1 = await safeJson<{ rows?: FanpageRow[] }>(r1);
       setFanpages(d1.rows ?? []);
       const r2 = await fetch("/api/insight-groups", { cache: "no-store" });
-      const d2 = (await r2.json()) as { groups: GroupRow[] };
+      const d2 = await safeJson<{ groups?: GroupRow[] }>(r2);
       setGroups(d2.groups ?? []);
     })();
   }, []);
@@ -432,7 +439,7 @@ export default function ReachDashboard() {
           `/api/fanpages/snapshots?ids=${ids.join(",")}&${rangeQs}`,
           { cache: "no-store" },
         );
-        const d = (await res.json()) as { rows: SnapshotRow[] };
+        const d = await safeJson<{ rows?: SnapshotRow[] }>(res);
         if (!cancelled) setSnapshots(d.rows ?? []);
       } finally {
         if (!cancelled) setLoadingSnap(false);
@@ -507,10 +514,10 @@ export default function ReachDashboard() {
                 cache: "no-store",
               });
               if (!res.ok) return [m, [], 0, {}];
-              const d = (await res.json()) as {
+              const d = await safeJson<{
                 series?: Array<{ ts: number; value: number }>;
                 perFp?: Record<number, Array<{ ts: number; value: number }>>;
-              };
+              }>(res);
               const all = (d.series ?? []).map((p) => ({ t: p.ts, v: p.value }));
               const curr = all.filter((p) => p.t >= cutoffSec);
               const prev = all.filter((p) => p.t < cutoffSec);
@@ -587,37 +594,52 @@ export default function ReachDashboard() {
     setSyncing(true);
     setSyncMsg("");
     setSyncErr("");
+    // Aggregated counters across all chunks. Chunking is required because
+    // CF Workers ~30s wall-clock can't process 30+ pages × FB Graph calls
+    // in a single request — empty body crashes `await res.json()`.
+    let total = 0;
+    let okCount = 0;
+    let errCount = 0;
+    let skipCount = 0;
+    let monetizedCount = 0;
+    let totalMicros = 0;
+    let missingScopeCnt = 0;
+    let notMonetCnt = 0;
+    const errSamples: string[] = [];
+    let firstChunkError: string | null = null;
     try {
-      const res = await fetch("/api/fanpages/sync-earnings", {
-        method: "POST",
-        headers: { "X-Body": JSON.stringify({ ids, ...rangeBody }) },
-      });
-      const data = (await res.json()) as {
-        total?: number;
-        okCount?: number;
-        errCount?: number;
-        skipCount?: number;
-        monetizedCount?: number;
-        totalMicros?: number;
-        error?: string;
-        results?: Array<{
-          ok: boolean;
-          status?: string;
+      for (let i = 0; i < ids.length; i += BULK_FP_CHUNK) {
+        const chunk = ids.slice(i, i + BULK_FP_CHUNK);
+        const res = await fetch("/api/fanpages/sync-earnings", {
+          method: "POST",
+          headers: { "X-Body": JSON.stringify({ ids: chunk, ...rangeBody }) },
+        });
+        const data = await safeJson<{
+          total?: number;
+          okCount?: number;
+          errCount?: number;
+          skipCount?: number;
+          monetizedCount?: number;
+          totalMicros?: number;
           error?: string;
-          name?: string;
-        }>;
-      };
-      if (!res.ok || data.error) {
-        setSyncErr(data.error ?? `Lỗi ${res.status}`);
-      } else {
-        const moneSum =
-          data.monetizedCount && data.monetizedCount > 0
-            ? ` · 💰 ${fmtUsd(data.totalMicros ?? 0)} từ ${data.monetizedCount} page`
-            : "";
-        // Bucket per-page outcomes for a richer summary.
-        let missingScopeCnt = 0;
-        let notMonetCnt = 0;
-        const errSamples: string[] = [];
+          results?: Array<{
+            ok: boolean;
+            status?: string;
+            error?: string;
+            name?: string;
+          }>;
+        }>(res);
+        if (!res.ok || data.error) {
+          if (!firstChunkError) firstChunkError = data.error ?? `Lỗi ${res.status}`;
+          errCount += chunk.length;
+          continue;
+        }
+        total += data.total ?? 0;
+        okCount += data.okCount ?? 0;
+        errCount += data.errCount ?? 0;
+        skipCount += data.skipCount ?? 0;
+        monetizedCount += data.monetizedCount ?? 0;
+        totalMicros += data.totalMicros ?? 0;
         for (const r of data.results ?? []) {
           if (r.status === "missing_scope") missingScopeCnt++;
           else if (r.status === "not_monetized") notMonetCnt++;
@@ -625,24 +647,33 @@ export default function ReachDashboard() {
             errSamples.push(r.error);
           }
         }
-        const breakdown: string[] = [];
-        if (missingScopeCnt > 0) breakdown.push(`${missingScopeCnt} thiếu quyền`);
-        if (notMonetCnt > 0) breakdown.push(`${notMonetCnt} chưa BKT`);
-        const breakdownStr = breakdown.length > 0 ? ` · ${breakdown.join(" · ")}` : "";
+        // Progressive status during long syncs.
         setSyncMsg(
-          `Doanh thu: ${data.okCount ?? 0}/${data.total ?? 0} OK · ${data.errCount ?? 0} lỗi · ${data.skipCount ?? 0} skip${moneSum}${breakdownStr}`,
+          `Doanh thu: ${Math.min(i + chunk.length, ids.length)}/${ids.length} page · ${okCount} OK · ${errCount} lỗi`,
         );
-        if ((data.errCount ?? 0) > 0 && errSamples.length > 0) {
-          setSyncErr(`Graph: ${errSamples.join(" | ")}`);
-        }
-        // Reload fanpage rows so fresh earnings show in the KPI card.
-        const r1 = await fetch("/api/fanpages", { cache: "no-store" });
-        const d1 = (await r1.json()) as { rows: FanpageRow[] };
-        setFanpages(d1.rows ?? []);
-        // Auto-open the breakdown panel so user sees what changed
-        if ((data.monetizedCount ?? 0) > 0 || missingScopeCnt > 0) {
-          setEarningsExpanded(true);
-        }
+      }
+      if (firstChunkError) setSyncErr(firstChunkError);
+      const moneSum =
+        monetizedCount > 0
+          ? ` · 💰 ${fmtUsd(totalMicros)} từ ${monetizedCount} page`
+          : "";
+      const breakdown: string[] = [];
+      if (missingScopeCnt > 0) breakdown.push(`${missingScopeCnt} thiếu quyền`);
+      if (notMonetCnt > 0) breakdown.push(`${notMonetCnt} chưa BKT`);
+      const breakdownStr = breakdown.length > 0 ? ` · ${breakdown.join(" · ")}` : "";
+      setSyncMsg(
+        `Doanh thu: ${okCount}/${total} OK · ${errCount} lỗi · ${skipCount} skip${moneSum}${breakdownStr}`,
+      );
+      if (errCount > 0 && errSamples.length > 0 && !firstChunkError) {
+        setSyncErr(`Graph: ${errSamples.join(" | ")}`);
+      }
+      // Reload fanpage rows so fresh earnings show in the KPI card.
+      const r1 = await fetch("/api/fanpages", { cache: "no-store" });
+      const d1 = await safeJson<{ rows?: FanpageRow[] }>(r1);
+      setFanpages(d1.rows ?? []);
+      // Auto-open the breakdown panel so user sees what changed
+      if (monetizedCount > 0 || missingScopeCnt > 0) {
+        setEarningsExpanded(true);
       }
     } catch (e) {
       setSyncErr(e instanceof Error ? e.message : String(e));
@@ -657,60 +688,86 @@ export default function ReachDashboard() {
     setSyncing(true);
     setSyncMsg("");
     setSyncErr("");
+    // Snapshot insights pull the last 30 days. FB Insights aggregates monthly
+    // so a 30-day window is the natural reporting period. Earnings sync to
+    // the user-selected picker range (no daily breakdown).
+    //
+    // Chunked sequential, not parallel: running insights/batch + sync-earnings
+    // simultaneously over many pages doubles CF Workers subrequest pressure,
+    // and parallel-on-all-ids was the trigger for empty-body crashes.
+    const SYNC_DAYS = 30;
+    let okCount = 0;
+    let errCount = 0;
+    let skipCount = 0;
+    let monetizedCount = 0;
+    let totalMicros = 0;
+    let firstError: string | null = null;
+    const errs: string[] = [];
     try {
-      // Snapshot insights pull the last 30 days. FB Insights aggregates
-      // monthly so a 30-day window is the natural reporting period and
-      // keeps Graph API calls fast. Earnings sync to the user-selected
-      // picker range (no daily breakdown so the total must match the
-      // displayed window).
-      const SYNC_DAYS = 30;
-      const [insightsRes, earningsRes] = await Promise.all([
-        fetch("/api/fanpages/insights/batch", {
+      // Step 1: page insights, chunked.
+      for (let i = 0; i < ids.length; i += BULK_FP_CHUNK) {
+        const chunk = ids.slice(i, i + BULK_FP_CHUNK);
+        const res = await fetch("/api/fanpages/insights/batch", {
           method: "POST",
-          headers: { "X-Body": JSON.stringify({ ids, days: SYNC_DAYS }) },
-        }),
-        fetch("/api/fanpages/sync-earnings", {
-          method: "POST",
-          headers: { "X-Body": JSON.stringify({ ids, ...rangeBody }) },
-        }),
-      ]);
-      const data = (await insightsRes.json()) as {
-        okCount?: number;
-        errCount?: number;
-        skipCount?: number;
-        error?: string;
-        results?: Array<{ ok: boolean; error?: string; name?: string }>;
-      };
-      const earningsData = (await earningsRes.json().catch(() => ({}))) as {
-        monetizedCount?: number;
-        totalMicros?: number;
-        error?: string;
-      };
-      if (!insightsRes.ok || data.error) {
-        setSyncErr(data.error ?? `Lỗi ${insightsRes.status}`);
-      } else {
-        const monetSummary =
-          earningsData.monetizedCount && earningsData.monetizedCount > 0
-            ? ` · 💰 ${fmtUsd(earningsData.totalMicros)} từ ${earningsData.monetizedCount} page`
-            : "";
-        setSyncMsg(
-          `Cập nhật: ${data.okCount ?? 0} OK · ${data.errCount ?? 0} lỗi · ${data.skipCount ?? 0} skip${monetSummary}`,
-        );
-        const errs: string[] = [];
+          headers: { "X-Body": JSON.stringify({ ids: chunk, days: SYNC_DAYS }) },
+        });
+        const data = await safeJson<{
+          okCount?: number;
+          errCount?: number;
+          skipCount?: number;
+          error?: string;
+          results?: Array<{ ok: boolean; error?: string; name?: string }>;
+        }>(res);
+        if (!res.ok || data.error) {
+          if (!firstError) firstError = data.error ?? `Lỗi ${res.status}`;
+          errCount += chunk.length;
+          continue;
+        }
+        okCount += data.okCount ?? 0;
+        errCount += data.errCount ?? 0;
+        skipCount += data.skipCount ?? 0;
         for (const r of data.results ?? []) {
           if (!r.ok && r.error && errs.length < 2 && !errs.includes(r.error)) {
             errs.push(r.error);
           }
         }
-        if ((data.errCount ?? 0) > 0 && errs.length > 0) {
-          setSyncErr(`Graph: ${errs.join(" | ")}`);
-        }
-        // Reload fanpage rows so fresh earnings show in the KPI card.
-        const r1 = await fetch("/api/fanpages", { cache: "no-store" });
-        const d1 = (await r1.json()) as { rows: FanpageRow[] };
-        setFanpages(d1.rows ?? []);
-        setRefreshKey((k) => k + 1);
+        setSyncMsg(
+          `Insight: ${Math.min(i + chunk.length, ids.length)}/${ids.length} page · ${okCount} OK · ${errCount} lỗi`,
+        );
       }
+      // Step 2: earnings, chunked. Failures here don't block the insights
+      // success message — earnings often has missing-scope errors per page.
+      for (let i = 0; i < ids.length; i += BULK_FP_CHUNK) {
+        const chunk = ids.slice(i, i + BULK_FP_CHUNK);
+        const res = await fetch("/api/fanpages/sync-earnings", {
+          method: "POST",
+          headers: { "X-Body": JSON.stringify({ ids: chunk, ...rangeBody }) },
+        });
+        const data = await safeJson<{
+          monetizedCount?: number;
+          totalMicros?: number;
+          error?: string;
+        }>(res);
+        if (data.error) continue;
+        monetizedCount += data.monetizedCount ?? 0;
+        totalMicros += data.totalMicros ?? 0;
+      }
+      if (firstError) setSyncErr(firstError);
+      const monetSummary =
+        monetizedCount > 0
+          ? ` · 💰 ${fmtUsd(totalMicros)} từ ${monetizedCount} page`
+          : "";
+      setSyncMsg(
+        `Cập nhật: ${okCount} OK · ${errCount} lỗi · ${skipCount} skip${monetSummary}`,
+      );
+      if (errCount > 0 && errs.length > 0 && !firstError) {
+        setSyncErr(`Graph: ${errs.join(" | ")}`);
+      }
+      // Reload fanpage rows so fresh earnings show in the KPI card.
+      const r1 = await fetch("/api/fanpages", { cache: "no-store" });
+      const d1 = await safeJson<{ rows?: FanpageRow[] }>(r1);
+      setFanpages(d1.rows ?? []);
+      setRefreshKey((k) => k + 1);
     } catch (e) {
       setSyncErr(e instanceof Error ? e.message : String(e));
     } finally {
@@ -1168,10 +1225,10 @@ export default function ReachDashboard() {
                     );
                     // Reload fanpages so the ● badge + group filter counts refresh.
                     const r1 = await fetch("/api/fanpages", { cache: "no-store" });
-                    const d1 = (await r1.json()) as { rows: FanpageRow[] };
+                    const d1 = await safeJson<{ rows?: FanpageRow[] }>(r1);
                     setFanpages(d1.rows ?? []);
                     const r2 = await fetch("/api/insight-groups", { cache: "no-store" });
-                    const d2 = (await r2.json()) as { groups: GroupRow[] };
+                    const d2 = await safeJson<{ groups?: GroupRow[] }>(r2);
                     setGroups(d2.groups ?? []);
                   } catch (err) {
                     setSyncErr(err instanceof Error ? err.message : String(err));

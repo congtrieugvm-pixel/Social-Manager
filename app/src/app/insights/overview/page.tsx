@@ -2,6 +2,12 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
+import { safeJson } from "@/lib/req-body";
+
+// Chunk size for bulk fanpage POSTs. CF Workers ~30s wall-clock can't iterate
+// 30+ pages × FB Graph API calls in one request. Chunking sequentially keeps
+// each request well under the timeout.
+const BULK_FP_CHUNK = 5;
 
 interface OverviewRow {
   id: number;
@@ -92,8 +98,8 @@ export default function InsightsOverviewPage() {
         fetch("/api/insights/overview", { cache: "no-store" }),
         fetch("/api/insight-groups", { cache: "no-store" }),
       ]);
-      const o = (await oRes.json()) as { rows: OverviewRow[] };
-      const g = (await gRes.json()) as { groups: GroupRow[] };
+      const o = await safeJson<{ rows?: OverviewRow[] }>(oRes);
+      const g = await safeJson<{ groups?: GroupRow[] }>(gRes);
       setRows(o.rows ?? []);
       setGroups(g.groups ?? []);
     } finally {
@@ -177,24 +183,42 @@ export default function InsightsOverviewPage() {
     setBusy(true);
     setMessage("");
     setError("");
+    let okCount = 0;
+    let errCount = 0;
+    let skipCount = 0;
+    let firstError: string | null = null;
     try {
-      const res = await fetch("/api/fanpages/insights/batch", {
-        method: "POST",
-        headers: { "X-Body": JSON.stringify({ ids }) },
-      });
-      const data = (await res.json()) as {
-        okCount?: number;
-        errCount?: number;
-        skipCount?: number;
-        error?: string;
-      };
-      if (!res.ok || data.error) setError(data.error ?? `Lỗi ${res.status}`);
-      else {
+      // Chunked sequential — single request over all ids exceeds CF Workers
+      // ~30s wall-clock when N is large (FB Graph API call per page).
+      for (let i = 0; i < ids.length; i += BULK_FP_CHUNK) {
+        const chunk = ids.slice(i, i + BULK_FP_CHUNK);
+        const res = await fetch("/api/fanpages/insights/batch", {
+          method: "POST",
+          headers: { "X-Body": JSON.stringify({ ids: chunk }) },
+        });
+        const data = await safeJson<{
+          okCount?: number;
+          errCount?: number;
+          skipCount?: number;
+          error?: string;
+        }>(res);
+        if (!res.ok || data.error) {
+          if (!firstError) firstError = data.error ?? `Lỗi ${res.status}`;
+          errCount += chunk.length;
+          continue;
+        }
+        okCount += data.okCount ?? 0;
+        errCount += data.errCount ?? 0;
+        skipCount += data.skipCount ?? 0;
         setMessage(
-          `Insight trang: ${data.okCount ?? 0} OK · ${data.errCount ?? 0} lỗi · ${data.skipCount ?? 0} skip`,
+          `Insight trang: ${Math.min(i + chunk.length, ids.length)}/${ids.length} · ${okCount} OK · ${errCount} lỗi`,
         );
-        await load();
       }
+      if (firstError) setError(firstError);
+      setMessage(
+        `Insight trang: ${okCount} OK · ${errCount} lỗi · ${skipCount} skip`,
+      );
+      await load();
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -218,16 +242,17 @@ export default function InsightsOverviewPage() {
           method: "POST",
           headers: { "X-Body": JSON.stringify({ fanpageId: id }) },
         });
-        const data = (await res.json()) as {
+        const data = await safeJson<{
           total?: number;
           okCount?: number;
           errCount?: number;
           skipCount?: number;
-        };
+        }>(res);
         ok += data.okCount ?? 0;
         err += data.errCount ?? 0;
         skip += data.skipCount ?? 0;
         total += data.total ?? 0;
+        setMessage(`Reach posts: ${ok}/${total} OK · ${err} lỗi`);
       }
       setMessage(`Reach posts: ${ok}/${total} OK · ${err} lỗi · ${skip} bỏ qua`);
       await load();
