@@ -29,7 +29,15 @@ interface FanpageRow {
   username: string | null;
   fanCount: number | null;
   followersCount: number | null;
-  lastSyncedAt: number | null;
+  // /api/fanpages serializes the drizzle Date as ISO string; older callers
+  // expected epoch seconds. `lastSyncedSec()` accepts both.
+  lastSyncedAt: number | string | null;
+  lastSyncError: string | null;
+  // Stringified FbPageInsights map. The skip-fresh filter checks this is
+  // non-empty so a previous sync that errored (lastSyncError set, but the
+  // route still bumps lastSyncedAt to "now") doesn't get permanently
+  // skipped on subsequent clicks.
+  insightsJson: string | null;
   // Monetization
   monetizationStatus: string | null;
   earningsValue: number | null;     // micro-units
@@ -725,10 +733,17 @@ export default function ReachDashboard() {
     // simultaneously over many pages doubles CF Workers subrequest pressure,
     // and parallel-on-all-ids was the trigger for empty-body crashes.
     const SYNC_DAYS = 365;
-    // Skip-fresh filter: pages already synced within SKIP_FRESH_WINDOW_SEC
-    // (30 min) are excluded — their existing insights_json is reused. So
-    // pages already synced via a prior group sync don't get re-fetched
-    // when the user clicks "Cập nhật reach" on the "Tất cả" tab.
+    // Skip-fresh filter: skip a page only when ALL three conditions hold:
+    //   1. lastSyncedAt within 30 min
+    //   2. lastSyncError == null  (the previous sync actually succeeded —
+    //      the route's error path also bumps lastSyncedAt, so a recency-
+    //      only check would lock failed pages out of retry for 30 min)
+    //   3. insightsJson is non-empty  (the previous sync produced data;
+    //      a successful FB call with no metrics still leaves us with "{}"
+    //      and the KPI cards would render 0 if we kept skipping)
+    // Pages that errored or have empty data fall through and re-sync. This
+    // is the fix for "Tất cả tab shows 0 reach but groups show data" —
+    // some all-tab pages had lastSyncedAt from a stale prior failure.
     const nowSec = Math.floor(Date.now() / 1000);
     const fpById = new Map(fanpages.map((f) => [f.id, f]));
     const ids: number[] = [];
@@ -736,7 +751,13 @@ export default function ReachDashboard() {
     for (const id of allIds) {
       const fp = fpById.get(id);
       const lastSec = lastSyncedSec(fp?.lastSyncedAt ?? null);
-      if (lastSec != null && nowSec - lastSec < SKIP_FRESH_WINDOW_SEC) {
+      const recent = lastSec != null && nowSec - lastSec < SKIP_FRESH_WINDOW_SEC;
+      // Explicit `== null` (not `!fp?.lastSyncError`) so an unexpected
+      // empty-string value isn't mistaken for "succeeded".
+      const lastSucceeded = fp?.lastSyncError == null;
+      const hasData =
+        !!fp?.insightsJson && fp.insightsJson !== "{}" && fp.insightsJson !== "";
+      if (recent && lastSucceeded && hasData) {
         freshSkippedCount++;
         continue;
       }
@@ -744,8 +765,10 @@ export default function ReachDashboard() {
     }
     if (ids.length === 0) {
       setSyncMsg(
-        `Tất cả ${allIds.length} page đã sync gần đây (≤30 phút) — bỏ qua, dùng dữ liệu hiện có`,
+        `Tất cả ${allIds.length} page đã sync gần đây (≤30 phút) — dùng dữ liệu hiện có`,
       );
+      // Force chart re-read in case UI is showing stale state.
+      setRefreshKey((k) => k + 1);
       syncingRef.current = false;
       setSyncing(false);
       return;
@@ -825,7 +848,14 @@ export default function ReachDashboard() {
       if (errCount > 0 && errs.length > 0 && !firstError) {
         setSyncErr(`Graph: ${errs.join(" | ")}`);
       }
-      // Reload fanpage rows so fresh earnings show in the KPI card.
+      // Brief delay before re-reading. CF D1 has eventual consistency for
+      // read replicas — without this, the immediate GET /api/fanpages can
+      // hit a replica that hasn't yet seen the writes from /insights/batch,
+      // returning stale (empty) insightsJson and rendering the KPI cards
+      // as 0 even though the sync succeeded. 800ms covers the typical D1
+      // cross-region propagation window. This was the second contributing
+      // cause of "KPI=0 after sync" alongside the skip-fresh issue above.
+      await new Promise((r) => setTimeout(r, 800));
       const r1 = await fetch("/api/fanpages", { cache: "no-store" });
       const d1 = await safeJson<{ rows?: FanpageRow[] }>(r1);
       setFanpages(d1.rows ?? []);
