@@ -165,9 +165,19 @@ function parseInsights(json: string | null): {
   if (!json) return { reach: null, impressions: null, videoViews: null };
   try {
     const map = JSON.parse(json) as InsightsMap;
+    // FB deprecated `page_impressions` (no-suffix), `page_engaged_users`, etc
+    // on 2025-11-15. Backend now fetches the SAFE replacement set:
+    //   - page_impressions_unique  → unique reach
+    //   - page_post_engagements    → engagement count
+    //   - page_views_total         → total page views (closest "impressions" proxy)
+    // Plus best-effort legacy `page_video_views`. We map the "Impressions"
+    // column to `page_views_total` and fall back to deprecated `page_impressions`
+    // for any rows still holding pre-Nov-2025 cached JSON.
     return {
       reach: sumMetric(map["page_impressions_unique"]?.[0]),
-      impressions: sumMetric(map["page_impressions"]?.[0]),
+      impressions:
+        sumMetric(map["page_views_total"]?.[0]) ??
+        sumMetric(map["page_impressions"]?.[0]),
       videoViews: sumMetric(map["page_video_views"]?.[0]),
     };
   } catch {
@@ -1516,7 +1526,7 @@ export default function FanpagePage() {
                 width={110}
               />
               <SortableTh
-                label="Impressions"
+                label="Page views"
                 sortKey="impressions"
                 active={sortKey}
                 dir={sortDir}
