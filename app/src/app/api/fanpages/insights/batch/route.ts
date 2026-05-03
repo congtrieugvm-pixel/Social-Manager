@@ -68,61 +68,78 @@ export async function POST(req: Request) {
       ),
     );
 
-  const results: ItemResult[] = [];
-  let okCount = 0;
-  let skipCount = 0;
-  let errCount = 0;
+  // Parallel per-page processing within the chunk. The client already chunks
+  // ids (typically 3 per request) to stay under CF Workers' subrequest budget,
+  // so running those 3 in parallel inside one Worker invocation cuts wall-
+  // clock from 3×FB-API-time to max(FB-API-times) — roughly 3× faster on
+  // multi-page chunks. Subrequest *count* is unchanged (parallel doesn't
+  // multiply subrequests, just shortens wall-clock).
+  type Outcome =
+    | { kind: "ok"; result: ItemResult }
+    | { kind: "skip"; result: ItemResult }
+    | { kind: "err"; result: ItemResult };
 
-  // Sequential to avoid hammering Graph API / hitting rate limits.
-  for (const r of rows) {
-    const token = await decrypt(r.encPageAccessToken);
-    if (!token) {
-      results.push({
-        id: r.id,
-        pageId: r.pageId,
-        name: r.name,
-        ok: false,
-        error: "Chưa có page access token",
-      });
-      skipCount++;
-      continue;
-    }
-    const now = new Date();
-    try {
-      const insights = await fetchPageInsights(r.pageId, token, rangeOpts);
-      await db
-        .update(fanpages)
-        .set({
-          insightsJson: JSON.stringify(insights),
-          lastSyncedAt: now,
-          lastSyncError: null,
-          updatedAt: now,
-        })
-        .where(inArray(fanpages.id, [r.id]));
-      await recordFanpageSnapshot(r.id, insights, {
-        fanCount: r.fanCount,
-        followersCount: r.followersCount,
-        rangeStart,
-        rangeEnd,
-      });
-      results.push({ id: r.id, pageId: r.pageId, name: r.name, ok: true });
-      okCount++;
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e);
-      await db
-        .update(fanpages)
-        .set({ lastSyncError: msg, lastSyncedAt: now, updatedAt: now })
-        .where(inArray(fanpages.id, [r.id]));
-      results.push({
-        id: r.id,
-        pageId: r.pageId,
-        name: r.name,
-        ok: false,
-        error: msg,
-      });
-      errCount++;
-    }
-  }
+  const outcomes: Outcome[] = await Promise.all(
+    rows.map(async (r): Promise<Outcome> => {
+      const token = await decrypt(r.encPageAccessToken);
+      if (!token) {
+        return {
+          kind: "skip",
+          result: {
+            id: r.id,
+            pageId: r.pageId,
+            name: r.name,
+            ok: false,
+            error: "Chưa có page access token",
+          },
+        };
+      }
+      const now = new Date();
+      try {
+        const insights = await fetchPageInsights(r.pageId, token, rangeOpts);
+        await db
+          .update(fanpages)
+          .set({
+            insightsJson: JSON.stringify(insights),
+            lastSyncedAt: now,
+            lastSyncError: null,
+            updatedAt: now,
+          })
+          .where(inArray(fanpages.id, [r.id]));
+        await recordFanpageSnapshot(r.id, insights, {
+          fanCount: r.fanCount,
+          followersCount: r.followersCount,
+          rangeStart,
+          rangeEnd,
+        });
+        return {
+          kind: "ok",
+          result: { id: r.id, pageId: r.pageId, name: r.name, ok: true },
+        };
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
+        await db
+          .update(fanpages)
+          .set({ lastSyncError: msg, lastSyncedAt: now, updatedAt: now })
+          .where(inArray(fanpages.id, [r.id]));
+        return {
+          kind: "err",
+          result: {
+            id: r.id,
+            pageId: r.pageId,
+            name: r.name,
+            ok: false,
+            error: msg,
+          },
+        };
+      }
+    }),
+  );
+
+  const results: ItemResult[] = outcomes.map((o) => o.result);
+  const okCount = outcomes.filter((o) => o.kind === "ok").length;
+  const skipCount = outcomes.filter((o) => o.kind === "skip").length;
+  const errCount = outcomes.filter((o) => o.kind === "err").length;
 
   return NextResponse.json({
     ok: true,
