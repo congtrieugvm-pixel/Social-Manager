@@ -4,14 +4,20 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { safeJson } from "@/lib/req-body";
 
-// Chunk size for bulk fanpage POSTs. CF Workers limit BOTH wall-clock (~30s)
-// AND subrequest count (~50 free / ~1000 paid) per invocation. With the
-// 365-day reach sync, the FB lib splits each page into ~5 windows × 2 batched
-// metric calls = ~10 subrequests per page (best case), plus DB select/update
-// per page. Two pages per chunk fits comfortably under 50; one page is the
-// safest setting against rate-limit retries inflating the subrequest count
-// (a 429 retry doubles the subrequest cost).
-const BULK_FP_CHUNK = 1;
+// Chunk size for bulk fanpage POSTs. CF Workers limit wall-clock (~30s),
+// subrequest count (~50 free / ~1000 paid), AND CPU per invocation (the
+// last one bit us when we tried Promise.all with chunk=3 — Worker hit
+// Error 1102). Two pages per chunk processed SEQUENTIALLY in the route
+// keeps memory + CPU spread out: per chunk ≈ 2 × ~13 subrequests = 26,
+// well under the free cap with retry headroom. Halves the network
+// round-trips vs chunk=1 without stressing the Worker.
+const BULK_FP_CHUNK = 2;
+
+// Pages whose `lastSyncedAt` is within this window are skipped during a
+// bulk reach sync — the existing DB row already has fresh data. Solves
+// the "Tất cả tab re-checks pages already synced from group syncs"
+// issue: those pages reuse cached insights_json instead of an FB call.
+const SKIP_FRESH_WINDOW_SEC = 30 * 60; // 30 minutes
 
 interface FanpageRow {
   id: number;
@@ -126,6 +132,18 @@ function todayISO(): string {
 }
 function daysAgoISO(n: number): string {
   return new Date(Date.now() - n * 86_400_000).toISOString().slice(0, 10);
+}
+
+// `lastSyncedAt` is `integer("…", { mode: "timestamp" })` in drizzle. The
+// /api/fanpages route serializes the Date as an ISO string, while
+// /api/insights/overview pre-converts to epoch seconds — historic
+// inconsistency. Accept either form so the skip-fresh filter is robust
+// regardless of which endpoint hydrated the row.
+function lastSyncedSec(ts: number | string | null | undefined): number | null {
+  if (ts == null || ts === "") return null;
+  if (typeof ts === "number") return Number.isFinite(ts) ? ts : null;
+  const ms = new Date(ts).getTime();
+  return Number.isFinite(ms) ? Math.floor(ms / 1000) : null;
 }
 
 // ── Date helpers for the range picker ────────────────────────────
@@ -691,15 +709,15 @@ export default function ReachDashboard() {
 
   async function syncPageInsights() {
     if (syncingRef.current) return;
-    const ids = Array.from(selectedIds);
-    if (ids.length === 0) return;
+    const allIds = Array.from(selectedIds);
+    if (allIds.length === 0) return;
     syncingRef.current = true;
     setSyncing(true);
     setSyncMsg("");
     setSyncErr("");
     // Pulls the last 365 days of page insights. The library chunks the FB
     // call into 90-day windows internally so the date span is FB-safe;
-    // chunking on the CLIENT (BULK_FP_CHUNK=5) keeps each CF Worker
+    // chunking on the CLIENT (BULK_FP_CHUNK) keeps each CF Worker
     // invocation under the ~30s wall-clock. Earnings sync follows the
     // user-selected picker range (no daily breakdown).
     //
@@ -707,6 +725,31 @@ export default function ReachDashboard() {
     // simultaneously over many pages doubles CF Workers subrequest pressure,
     // and parallel-on-all-ids was the trigger for empty-body crashes.
     const SYNC_DAYS = 365;
+    // Skip-fresh filter: pages already synced within SKIP_FRESH_WINDOW_SEC
+    // (30 min) are excluded — their existing insights_json is reused. So
+    // pages already synced via a prior group sync don't get re-fetched
+    // when the user clicks "Cập nhật reach" on the "Tất cả" tab.
+    const nowSec = Math.floor(Date.now() / 1000);
+    const fpById = new Map(fanpages.map((f) => [f.id, f]));
+    const ids: number[] = [];
+    let freshSkippedCount = 0;
+    for (const id of allIds) {
+      const fp = fpById.get(id);
+      const lastSec = lastSyncedSec(fp?.lastSyncedAt ?? null);
+      if (lastSec != null && nowSec - lastSec < SKIP_FRESH_WINDOW_SEC) {
+        freshSkippedCount++;
+        continue;
+      }
+      ids.push(id);
+    }
+    if (ids.length === 0) {
+      setSyncMsg(
+        `Tất cả ${allIds.length} page đã sync gần đây (≤30 phút) — bỏ qua, dùng dữ liệu hiện có`,
+      );
+      syncingRef.current = false;
+      setSyncing(false);
+      return;
+    }
     let okCount = 0;
     let errCount = 0;
     let skipCount = 0;
@@ -742,8 +785,12 @@ export default function ReachDashboard() {
             errs.push(r.error);
           }
         }
+        const freshNote =
+          freshSkippedCount > 0
+            ? ` (bỏ qua ${freshSkippedCount} đã sync gần đây)`
+            : "";
         setSyncMsg(
-          `Insight: ${Math.min(i + chunk.length, ids.length)}/${ids.length} page · ${okCount} OK · ${errCount} lỗi`,
+          `Insight: ${Math.min(i + chunk.length, ids.length)}/${ids.length} page · ${okCount} OK · ${errCount} lỗi${freshNote}`,
         );
       }
       // Step 2: earnings, chunked. Failures here don't block the insights
@@ -768,8 +815,12 @@ export default function ReachDashboard() {
         monetizedCount > 0
           ? ` · 💰 ${fmtUsd(totalMicros)} từ ${monetizedCount} page`
           : "";
+      const freshSummary =
+        freshSkippedCount > 0
+          ? ` · ${freshSkippedCount} dùng dữ liệu cũ (≤30 phút)`
+          : "";
       setSyncMsg(
-        `Cập nhật: ${okCount} OK · ${errCount} lỗi · ${skipCount} skip${monetSummary}`,
+        `Cập nhật: ${okCount} OK · ${errCount} lỗi · ${skipCount} skip${freshSummary}${monetSummary}`,
       );
       if (errCount > 0 && errs.length > 0 && !firstError) {
         setSyncErr(`Graph: ${errs.join(" | ")}`);
