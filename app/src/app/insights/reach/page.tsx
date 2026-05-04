@@ -87,6 +87,19 @@ function fmtUsd(micros: number | null | undefined): string {
   return `$${amount.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 }
 
+// Mirrors classifyError() in /api/fanpages/insights/batch + sync-earnings.
+// Used to auto-skip pages whose previous sync failed with a permission /
+// auth error — those won't succeed by re-trying with the same stored
+// token, so syncing them again wastes time and noise. Pages re-enter
+// the sync set automatically once their lastSyncError clears (a
+// successful sync wipes it, see /api/fanpages/insights/batch:100).
+function isPermDeniedError(msg: string | null | undefined): boolean {
+  if (!msg) return false;
+  return /\(#?(200|190|10|102|459|464)\)|sufficient administrative permission|Invalid OAuth|access token/i.test(
+    msg,
+  );
+}
+
 interface GroupRow {
   id: number;
   name: string;
@@ -333,6 +346,11 @@ export default function ReachDashboard() {
   const [syncErr, setSyncErr] = useState("");
   const [refreshKey, setRefreshKey] = useState(0);
   const [earningsExpanded, setEarningsExpanded] = useState(false);
+  // Number of pages auto-skipped on the last sync because their
+  // lastSyncError matched a permission pattern. Drives the conditional
+  // "🔁 Thử lại pages thiếu quyền" button — only visible when there's
+  // something to retry. Reset on each new sync attempt.
+  const [lastPermSkipped, setLastPermSkipped] = useState(0);
   // Real daily series (from /api/fanpages/daily-insights). Keyed by metric.
   // Series is filtered to the user-selected window — sums to the period total
   // shown on each KPI card.
@@ -655,15 +673,44 @@ export default function ReachDashboard() {
    * the user only cares about doanh thu and doesn't want to wait for the
    * full reach sync. Uses the picker's current range so the displayed
    * earnings number reflects the dates the user chose.
+   *
+   * `forceAll = true` bypasses the auto-skip filter and retries pages whose
+   * previous sync was a permission error. Wired to a "Thử lại pages thiếu
+   * quyền" button that only appears after a sync where some pages got
+   * auto-skipped. Default behaviour is to skip them (saves time + noise).
    */
-  async function syncEarningsOnly() {
+  async function syncEarningsOnly(forceAll = false) {
     if (syncingRef.current) return;
-    const ids = Array.from(selectedIds);
-    if (ids.length === 0) return;
+    const allIds = Array.from(selectedIds);
+    if (allIds.length === 0) return;
     syncingRef.current = true;
     setSyncing(true);
     setSyncMsg("");
     setSyncErr("");
+    // Auto-skip pages whose previous sync was a permission error — same
+    // token won't suddenly succeed, so re-trying just wastes subrequests
+    // and floods the breakdown panel. `forceAll` opt-in retry button
+    // bypasses this; otherwise sync set = pages that haven't been flagged.
+    const fpById = new Map(fanpages.map((f) => [f.id, f]));
+    let permSkippedCount = 0;
+    const ids: number[] = [];
+    for (const id of allIds) {
+      const fp = fpById.get(id);
+      if (!forceAll && isPermDeniedError(fp?.lastSyncError)) {
+        permSkippedCount++;
+        continue;
+      }
+      ids.push(id);
+    }
+    setLastPermSkipped(permSkippedCount);
+    if (ids.length === 0) {
+      setSyncMsg(
+        `Tất cả ${allIds.length} page đã thiếu quyền lần trước — bấm "Thử lại tất cả" để re-fetch`,
+      );
+      syncingRef.current = false;
+      setSyncing(false);
+      return;
+    }
     // Aggregated counters across all chunks. Chunking still needed: CF
     // Workers' 30s wall-clock cap caps a single invocation at ~15 pages
     // worth of FB Graph calls. Chunk size lives in BULK_FP_CHUNK above.
@@ -751,8 +798,12 @@ export default function ReachDashboard() {
       if (missingScopeCnt > 0) breakdown.push(`${missingScopeCnt} thiếu scope`);
       if (notMonetCnt > 0) breakdown.push(`${notMonetCnt} chưa BKT`);
       const breakdownStr = breakdown.length > 0 ? ` · ${breakdown.join(" · ")}` : "";
+      const permSkipNote =
+        permSkippedCount > 0
+          ? ` · bỏ qua ${permSkippedCount} đã thiếu quyền`
+          : "";
       setSyncMsg(
-        `Doanh thu: ${okCount}/${total} OK · ${errCount} lỗi · ${skipCount} skip${moneSum}${breakdownStr}`,
+        `Doanh thu: ${okCount}/${total} OK · ${errCount} lỗi · ${skipCount} skip${permSkipNote}${moneSum}${breakdownStr}`,
       );
       if (errCount > 0 && errSamples.length > 0 && !firstChunkError) {
         setSyncErr(`Graph: ${errSamples.join(" | ")}`);
@@ -773,7 +824,7 @@ export default function ReachDashboard() {
     }
   }
 
-  async function syncPageInsights() {
+  async function syncPageInsights(forceAll = false) {
     if (syncingRef.current) return;
     const allIds = Array.from(selectedIds);
     if (allIds.length === 0) return;
@@ -806,6 +857,7 @@ export default function ReachDashboard() {
     const fpById = new Map(fanpages.map((f) => [f.id, f]));
     const ids: number[] = [];
     let freshSkippedCount = 0;
+    let permSkippedCount = 0;
     for (const id of allIds) {
       const fp = fpById.get(id);
       const lastSec = lastSyncedSec(fp?.lastSyncedAt ?? null);
@@ -819,12 +871,23 @@ export default function ReachDashboard() {
         freshSkippedCount++;
         continue;
       }
+      // Auto-skip pages whose last sync was a permission error. Same token
+      // won't suddenly succeed → wastes Worker CPU + makes "X thiếu quyền"
+      // creep up every sync. Cleared automatically once a successful sync
+      // resets lastSyncError (see /api/fanpages/insights/batch:100).
+      if (!forceAll && isPermDeniedError(fp?.lastSyncError)) {
+        permSkippedCount++;
+        continue;
+      }
       ids.push(id);
     }
+    setLastPermSkipped(permSkippedCount);
     if (ids.length === 0) {
-      setSyncMsg(
-        `Tất cả ${allIds.length} page đã sync gần đây (≤30 phút) — dùng dữ liệu hiện có`,
-      );
+      const reason =
+        permSkippedCount > 0 && freshSkippedCount === 0
+          ? `Tất cả ${allIds.length} page đã thiếu quyền lần trước — bấm "Thử lại tất cả" để re-fetch`
+          : `Tất cả ${allIds.length} page đã sync gần đây (≤30 phút) — dùng dữ liệu hiện có`;
+      setSyncMsg(reason);
       // Force chart re-read in case UI is showing stale state.
       setRefreshKey((k) => k + 1);
       syncingRef.current = false;
@@ -925,10 +988,14 @@ export default function ReachDashboard() {
         freshSkippedCount > 0
           ? ` · ${freshSkippedCount} dùng dữ liệu cũ (≤30 phút)`
           : "";
+      const permSkipSummary =
+        permSkippedCount > 0
+          ? ` · bỏ qua ${permSkippedCount} đã thiếu quyền`
+          : "";
       const permSummary = permCount > 0 ? ` · ${permCount} thiếu quyền` : "";
       const rateSummary = rateCount > 0 ? ` · ${rateCount} rate-limit` : "";
       setSyncMsg(
-        `Cập nhật: ${okCount} OK · ${errCount} lỗi${permSummary}${rateSummary} · ${skipCount} skip${freshSummary}${monetSummary}`,
+        `Cập nhật: ${okCount} OK · ${errCount} lỗi${permSummary}${rateSummary} · ${skipCount} skip${freshSummary}${permSkipSummary}${monetSummary}`,
       );
       // Only surface the alarming Graph toast for REAL errors. Permission
       // errors are summarised inline via "X thiếu quyền" — bombarding the
@@ -1208,7 +1275,7 @@ export default function ReachDashboard() {
         </div>
         <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
           <button
-            onClick={syncPageInsights}
+            onClick={() => syncPageInsights()}
             disabled={syncing || selectedIds.size === 0}
             className="btn btn-accent"
             style={{ padding: "6px 12px", fontSize: 11 }}
@@ -1217,7 +1284,7 @@ export default function ReachDashboard() {
             {syncing ? "Đang cập nhật…" : `⟳ Cập nhật reach`}
           </button>
           <button
-            onClick={syncEarningsOnly}
+            onClick={() => syncEarningsOnly()}
             disabled={syncing || selectedIds.size === 0}
             className="btn"
             style={{
@@ -1230,6 +1297,21 @@ export default function ReachDashboard() {
           >
             {syncing ? "…" : `$ Check doanh thu (${selectedIds.size})`}
           </button>
+          {lastPermSkipped > 0 && !syncing && (
+            <button
+              onClick={() => syncPageInsights(true)}
+              className="btn"
+              style={{
+                padding: "6px 12px",
+                fontSize: 11,
+                borderColor: "#b88c3a",
+                color: "#b88c3a",
+              }}
+              title={`Sync vừa rồi đã bỏ qua ${lastPermSkipped} page bị lỗi quyền lần trước. Bấm để thử lại tất cả (sau khi đã re-grant token / fix admin role trên FB).`}
+            >
+              🔁 Thử lại {lastPermSkipped} thiếu quyền
+            </button>
+          )}
           <Link href="/insights" className="btn" style={{ padding: "6px 12px", fontSize: 11 }}>
             ← Quản Lý Insight
           </Link>

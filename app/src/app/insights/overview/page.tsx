@@ -80,6 +80,16 @@ function fmtTime(ts: number | null): string {
   });
 }
 
+// Mirrors classifyError() in /api/fanpages/insights/batch. Auto-skips
+// pages whose previous sync was a permission/auth error — same token
+// won't suddenly succeed, so re-trying just wastes Worker CPU.
+function isPermDeniedError(msg: string | null | undefined): boolean {
+  if (!msg) return false;
+  return /\(#?(200|190|10|102|459|464)\)|sufficient administrative permission|Invalid OAuth|access token/i.test(
+    msg,
+  );
+}
+
 export default function InsightsOverviewPage() {
   const [rows, setRows] = useState<OverviewRow[]>([]);
   const [groups, setGroups] = useState<GroupRow[]>([]);
@@ -91,6 +101,9 @@ export default function InsightsOverviewPage() {
   const [groupFilter, setGroupFilter] = useState<"all" | "unassigned" | number>("all");
   const [sortKey, setSortKey] = useState<SortKey>("totalReach");
   const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
+  // Pages auto-skipped on the last sync because their lastSyncError matched
+  // a permission pattern. Drives the conditional "Thử lại" button.
+  const [lastPermSkipped, setLastPermSkipped] = useState(0);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -178,9 +191,31 @@ export default function InsightsOverviewPage() {
     };
   }, [filtered]);
 
-  async function syncAllInsights() {
-    const ids = filtered.filter((r) => r.hasPageToken).map((r) => r.id);
-    if (ids.length === 0) return;
+  async function syncAllInsights(forceAll = false) {
+    const allIds = filtered.filter((r) => r.hasPageToken).map((r) => r.id);
+    if (allIds.length === 0) return;
+    // Auto-skip pages whose last sync errored with a permission code
+    // (#200 etc.). Same token won't suddenly succeed; retrying floods
+    // the perm count and wastes Workers CPU. forceAll bypass exists
+    // for the post-fix retry button.
+    const rowById = new Map(rows.map((r) => [r.id, r]));
+    const ids: number[] = [];
+    let permSkippedCount = 0;
+    for (const id of allIds) {
+      const row = rowById.get(id);
+      if (!forceAll && isPermDeniedError(row?.lastSyncError)) {
+        permSkippedCount++;
+        continue;
+      }
+      ids.push(id);
+    }
+    setLastPermSkipped(permSkippedCount);
+    if (ids.length === 0) {
+      setMessage(
+        `Tất cả ${allIds.length} page đã thiếu quyền lần trước — bấm "Thử lại tất cả" để re-fetch`,
+      );
+      return;
+    }
     setBusy(true);
     setMessage("");
     setError("");
@@ -224,8 +259,10 @@ export default function InsightsOverviewPage() {
       if (firstError) setError(firstError);
       const permSummary = permCount > 0 ? ` · ${permCount} thiếu quyền` : "";
       const rateSummary = rateCount > 0 ? ` · ${rateCount} rate-limit` : "";
+      const permSkipSummary =
+        permSkippedCount > 0 ? ` · bỏ qua ${permSkippedCount} đã thiếu quyền` : "";
       setMessage(
-        `Insight trang: ${okCount} OK · ${errCount} lỗi${permSummary}${rateSummary} · ${skipCount} skip`,
+        `Insight trang: ${okCount} OK · ${errCount} lỗi${permSummary}${rateSummary} · ${skipCount} skip${permSkipSummary}`,
       );
       await load();
     } catch (e) {
@@ -366,7 +403,7 @@ export default function InsightsOverviewPage() {
             style={{ flex: 1, minWidth: 220, padding: "6px 10px", fontSize: 12 }}
           />
           <button
-            onClick={syncAllInsights}
+            onClick={() => syncAllInsights()}
             disabled={busy}
             className="btn"
             style={{ padding: "6px 12px", fontSize: 11 }}
@@ -381,6 +418,21 @@ export default function InsightsOverviewPage() {
           >
             {busy ? "Đang tải…" : "Reach all posts"}
           </button>
+          {lastPermSkipped > 0 && !busy && (
+            <button
+              onClick={() => syncAllInsights(true)}
+              className="btn"
+              style={{
+                padding: "6px 12px",
+                fontSize: 11,
+                borderColor: "#b88c3a",
+                color: "#b88c3a",
+              }}
+              title={`Sync vừa rồi đã bỏ qua ${lastPermSkipped} page bị lỗi quyền. Bấm để thử lại tất cả (sau khi đã re-grant token / fix admin role trên FB).`}
+            >
+              🔁 Thử lại {lastPermSkipped} thiếu quyền
+            </button>
+          )}
         </div>
 
         {message && (
