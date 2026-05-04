@@ -4,14 +4,14 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { safeJson } from "@/lib/req-body";
 
-// Chunk size for bulk fanpage POSTs. CF Workers limit wall-clock (~30s),
-// subrequest count (~50 free / ~1000 paid), AND CPU per invocation (the
-// last one bit us when we tried Promise.all with chunk=3 — Worker hit
-// Error 1102). Two pages per chunk processed SEQUENTIALLY in the route
-// keeps memory + CPU spread out: per chunk ≈ 2 × ~13 subrequests = 26,
-// well under the free cap with retry headroom. Halves the network
-// round-trips vs chunk=1 without stressing the Worker.
-const BULK_FP_CHUNK = 2;
+// Chunk size for bulk fanpage POSTs. Workers Paid gives 30s CPU + 1000
+// subrequests per invocation (vs Free's 10ms / 50). Each chunk POSTs N ids
+// to /insights/batch which sequentially calls FB Graph (~10–13 subrequests
+// per page). 10 pages × 13 = 130 subrequests, well under 1000; wall-clock
+// ~10–15s, well under 30s. Bumping past 15 risks brushing wall-time on
+// slow FB days, so 10 is the sweet spot for a 5× speedup over the old
+// chunk=2 (which existed only because of Free-plan 10ms CPU).
+const BULK_FP_CHUNK = 10;
 
 // Pages whose `lastSyncedAt` is within this window are skipped during a
 // bulk reach sync — the existing DB row already has fresh data. Solves
@@ -19,14 +19,11 @@ const BULK_FP_CHUNK = 2;
 // issue: those pages reuse cached insights_json instead of an FB call.
 const SKIP_FRESH_WINDOW_SEC = 30 * 60; // 30 minutes
 
-// Chunk size for the daily-insights GET. The endpoint reads
-// `insights_json` for every requested fanpage and JSON.parses each.
-// Each row is ~50–200KB; 100 rows in one call ≈ 10MB of parsing, which
-// can blow past the CF Workers free-plan 10ms CPU per invocation cap and
-// return empty (the symptom: "Tất cả tab shows 0, groups show data" —
-// groups stay under the threshold). 20 ids/chunk keeps each invocation
-// at ≤4MB of parse work, well within the limit.
-const DAILY_INSIGHTS_CHUNK = 20;
+// Chunk size for the daily-insights GET. Workers Paid (30s CPU) handles
+// 100 rows × ~200KB JSON.parse (~10MB total) in <100ms — Free's 10ms cap
+// was the only reason we ever chunked this. 100 keeps the entire "Tất
+// cả" tab in a single roundtrip (no client-side aggregation cost).
+const DAILY_INSIGHTS_CHUNK = 100;
 
 interface FanpageRow {
   id: number;
@@ -543,13 +540,11 @@ export default function ReachDashboard() {
         ];
         let reachPerFpCurr: Record<number, { t: number; v: number }[]> = {};
 
-        // Chunk the daily-insights call to keep each Worker's JSON-parse
-        // work bounded (see DAILY_INSIGHTS_CHUNK comment). For each metric
-        // we fire chunks SEQUENTIALLY (not Promise.all) — the 5 metrics
-        // already run in parallel via the outer Promise.all, so we get
-        // ≤5 concurrent fetches at any moment. Going parallel within a
-        // metric would multiply that to 5×N concurrent and risk pushing
-        // CF infrastructure into 1102 territory like fd7a3d7 did.
+        // Chunk the daily-insights call (one chunk handles all 100 ids on
+        // Paid plan — see DAILY_INSIGHTS_CHUNK). Per-metric chunks remain
+        // sequential because the 5 metrics already run in parallel via
+        // the outer Promise.all (≤5 concurrent fetches), and bumping that
+        // multiplier risks D1 read replica thrash on heavy syncs.
         const fetchOneMetric = async (
           m: Metric,
         ): Promise<
@@ -669,9 +664,9 @@ export default function ReachDashboard() {
     setSyncing(true);
     setSyncMsg("");
     setSyncErr("");
-    // Aggregated counters across all chunks. Chunking is required because
-    // CF Workers ~30s wall-clock can't process 30+ pages × FB Graph calls
-    // in a single request — empty body crashes `await res.json()`.
+    // Aggregated counters across all chunks. Chunking still needed: CF
+    // Workers' 30s wall-clock cap caps a single invocation at ~15 pages
+    // worth of FB Graph calls. Chunk size lives in BULK_FP_CHUNK above.
     let total = 0;
     let okCount = 0;
     let errCount = 0;

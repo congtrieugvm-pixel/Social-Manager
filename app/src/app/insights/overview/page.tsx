@@ -4,10 +4,10 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { safeJson } from "@/lib/req-body";
 
-// Chunk size for bulk fanpage POSTs. CF Workers ~30s wall-clock can't iterate
-// 30+ pages × FB Graph API calls in one request. Chunking sequentially keeps
-// each request well under the timeout.
-const BULK_FP_CHUNK = 5;
+// Chunk size for bulk fanpage POSTs. Workers Paid (30s CPU + 1000
+// subrequests). Each page = ~10–13 FB Graph subrequests; 15 pages × 13 =
+// 195 subrequests + ~15s wall-clock — comfortably under both caps.
+const BULK_FP_CHUNK = 15;
 
 interface OverviewRow {
   id: number;

@@ -4,6 +4,13 @@ compatibility_flags = ["nodejs_compat"]
 main = ".open-next/worker.js"
 workers_dev = true
 
+# Workers Paid plan — opt into the full 30s CPU budget. Default on Paid is
+# already 30000ms but stating it explicitly makes the dependency obvious to
+# anyone reading wrangler.toml (and locks the upper bound if Cloudflare ever
+# changes the default).
+[limits]
+cpu_ms = 30000
+
 [assets]
 directory = ".open-next/assets"
 binding = "ASSETS"

@@ -759,16 +759,20 @@ export async function fetchPageInsights(
     );
     return mergeInsights(all);
   }
-  // Multi-window: fetch sequentially (rate-limit friendly), then merge values
-  // per metric (dedup by end_time so overlapping window edges don't double-count).
+  // Multi-window: fetch in parallel. Workers Paid gives 1000 subrequests
+  // per invocation — 5 windows × ~10 subreqs = 50, fits with massive
+  // headroom. FB Graph rate limits per page-token are not per-second so
+  // a brief concurrent burst for ONE page is safe (whereas concurrency
+  // ACROSS pages risks token-level throttling, which is why the bulk
+  // route still iterates pages sequentially). Parallelism here cuts a
+  // 365-day fetch from ~5×base to ~1×base — the dominant speedup.
+  const partials = await Promise.all(
+    windows.map((w) =>
+      fetchPageInsightsWindow(pageId, pageAccessToken, w.from, w.to),
+    ),
+  );
   const byMetric = new Map<string, FbPageInsightRaw>();
-  for (const w of windows) {
-    const partial = await fetchPageInsightsWindow(
-      pageId,
-      pageAccessToken,
-      w.from,
-      w.to,
-    );
+  for (const partial of partials) {
     for (const item of partial) {
       const existing = byMetric.get(item.name);
       if (!existing) {
