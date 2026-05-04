@@ -33,6 +33,18 @@ interface ItemResult {
   /** "page" when page-level access token used, "user" when fell back to user token. */
   tokenSource?: "page" | "user";
   error?: string;
+  /** See insights/batch/route.ts — same classification scheme. */
+  errorKind?: "perm" | "rate" | "other";
+}
+
+function classifyError(msg: string): "perm" | "rate" | "other" {
+  if (/\(#?(200|190|10|102|459|464)\)|sufficient administrative permission|Invalid OAuth|access token/i.test(msg)) {
+    return "perm";
+  }
+  if (/\(#?(4|17|32|341|613)\)|rate limit|too many calls|temporarily blocked/i.test(msg)) {
+    return "rate";
+  }
+  return "other";
 }
 
 export async function POST(req: Request) {
@@ -88,7 +100,7 @@ export async function POST(req: Request) {
     );
 
   type Tagged = ItemResult & {
-    _kind: "ok" | "skip" | "err";
+    _kind: "ok" | "skip" | "perm" | "rate" | "err";
     _monetized?: boolean;
     _micros?: number;
   };
@@ -175,6 +187,7 @@ export async function POST(req: Request) {
         };
       } catch (e) {
         const msg = e instanceof Error ? e.message : String(e);
+        const kind = classifyError(msg);
         // Reset status to "unknown" so the UI doesn't show stale "monetized"
         // with old earnings_value when fetch fails entirely. Clear the value
         // too — anything stale is misleading.
@@ -195,7 +208,8 @@ export async function POST(req: Request) {
           name: r.name,
           ok: false,
           error: msg,
-          _kind: "err",
+          errorKind: kind,
+          _kind: kind === "perm" ? "perm" : kind === "rate" ? "rate" : "err",
         };
       }
     }),
@@ -203,6 +217,8 @@ export async function POST(req: Request) {
 
   let okCount = 0;
   let skipCount = 0;
+  let permCount = 0;
+  let rateCount = 0;
   let errCount = 0;
   let monetizedCount = 0;
   let totalMicros = 0;
@@ -216,13 +232,17 @@ export async function POST(req: Request) {
       }
     } else if (t._kind === "skip") {
       skipCount++;
+    } else if (t._kind === "perm") {
+      permCount++;
+    } else if (t._kind === "rate") {
+      rateCount++;
     } else {
       errCount++;
     }
-    const { _kind: _k, _monetized: _m, _micros: _µ, ...item } = t;
+    const { _kind: _k, _monetized: _m, _micros: _mu, ...item } = t;
     void _k;
     void _m;
-    void _µ;
+    void _mu;
     results.push(item);
   }
 
@@ -231,6 +251,8 @@ export async function POST(req: Request) {
     total: rows.length,
     okCount,
     errCount,
+    permCount,
+    rateCount,
     skipCount,
     monetizedCount,
     totalMicros,

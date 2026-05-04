@@ -186,11 +186,11 @@ export default function InsightsOverviewPage() {
     setError("");
     let okCount = 0;
     let errCount = 0;
+    let permCount = 0;
+    let rateCount = 0;
     let skipCount = 0;
     let firstError: string | null = null;
     try {
-      // Chunked sequential — single request over all ids exceeds CF Workers
-      // ~30s wall-clock when N is large (FB Graph API call per page).
       for (let i = 0; i < ids.length; i += BULK_FP_CHUNK) {
         const chunk = ids.slice(i, i + BULK_FP_CHUNK);
         const res = await fetch("/api/fanpages/insights/batch", {
@@ -200,6 +200,8 @@ export default function InsightsOverviewPage() {
         const data = await safeJson<{
           okCount?: number;
           errCount?: number;
+          permCount?: number;
+          rateCount?: number;
           skipCount?: number;
           error?: string;
         }>(res);
@@ -210,14 +212,20 @@ export default function InsightsOverviewPage() {
         }
         okCount += data.okCount ?? 0;
         errCount += data.errCount ?? 0;
+        permCount += data.permCount ?? 0;
+        rateCount += data.rateCount ?? 0;
         skipCount += data.skipCount ?? 0;
+        const permNote = permCount > 0 ? ` · ${permCount} thiếu quyền` : "";
+        const rateNote = rateCount > 0 ? ` · ${rateCount} rate-limit` : "";
         setMessage(
-          `Insight trang: ${Math.min(i + chunk.length, ids.length)}/${ids.length} · ${okCount} OK · ${errCount} lỗi`,
+          `Insight trang: ${Math.min(i + chunk.length, ids.length)}/${ids.length} · ${okCount} OK · ${errCount} lỗi${permNote}${rateNote}`,
         );
       }
       if (firstError) setError(firstError);
+      const permSummary = permCount > 0 ? ` · ${permCount} thiếu quyền` : "";
+      const rateSummary = rateCount > 0 ? ` · ${rateCount} rate-limit` : "";
       setMessage(
-        `Insight trang: ${okCount} OK · ${errCount} lỗi · ${skipCount} skip`,
+        `Insight trang: ${okCount} OK · ${errCount} lỗi${permSummary}${rateSummary} · ${skipCount} skip`,
       );
       await load();
     } catch (e) {

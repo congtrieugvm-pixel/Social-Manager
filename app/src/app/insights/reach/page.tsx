@@ -670,6 +670,8 @@ export default function ReachDashboard() {
     let total = 0;
     let okCount = 0;
     let errCount = 0;
+    let permCount = 0;
+    let rateCount = 0;
     let skipCount = 0;
     let monetizedCount = 0;
     let totalMicros = 0;
@@ -688,6 +690,8 @@ export default function ReachDashboard() {
           total?: number;
           okCount?: number;
           errCount?: number;
+          permCount?: number;
+          rateCount?: number;
           skipCount?: number;
           monetizedCount?: number;
           totalMicros?: number;
@@ -696,6 +700,7 @@ export default function ReachDashboard() {
             ok: boolean;
             status?: string;
             error?: string;
+            errorKind?: "perm" | "rate" | "other";
             name?: string;
           }>;
         }>(res);
@@ -707,19 +712,32 @@ export default function ReachDashboard() {
         total += data.total ?? 0;
         okCount += data.okCount ?? 0;
         errCount += data.errCount ?? 0;
+        permCount += data.permCount ?? 0;
+        rateCount += data.rateCount ?? 0;
         skipCount += data.skipCount ?? 0;
         monetizedCount += data.monetizedCount ?? 0;
         totalMicros += data.totalMicros ?? 0;
         for (const r of data.results ?? []) {
           if (r.status === "missing_scope") missingScopeCnt++;
           else if (r.status === "not_monetized") notMonetCnt++;
-          if (!r.ok && r.error && errSamples.length < 2 && !errSamples.includes(r.error)) {
+          // Suppress perm/rate errors from the verbose Graph toast — they
+          // are summarised inline (X thiếu quyền / X rate-limit).
+          if (
+            !r.ok &&
+            r.error &&
+            r.errorKind !== "perm" &&
+            r.errorKind !== "rate" &&
+            errSamples.length < 2 &&
+            !errSamples.includes(r.error)
+          ) {
             errSamples.push(r.error);
           }
         }
         // Progressive status during long syncs.
+        const permNote = permCount > 0 ? ` · ${permCount} thiếu quyền` : "";
+        const rateNote = rateCount > 0 ? ` · ${rateCount} rate-limit` : "";
         setSyncMsg(
-          `Doanh thu: ${Math.min(i + chunk.length, ids.length)}/${ids.length} page · ${okCount} OK · ${errCount} lỗi`,
+          `Doanh thu: ${Math.min(i + chunk.length, ids.length)}/${ids.length} page · ${okCount} OK · ${errCount} lỗi${permNote}${rateNote}`,
         );
       }
       if (firstChunkError) setSyncErr(firstChunkError);
@@ -728,7 +746,9 @@ export default function ReachDashboard() {
           ? ` · 💰 ${fmtUsd(totalMicros)} từ ${monetizedCount} page`
           : "";
       const breakdown: string[] = [];
-      if (missingScopeCnt > 0) breakdown.push(`${missingScopeCnt} thiếu quyền`);
+      if (permCount > 0) breakdown.push(`${permCount} thiếu quyền`);
+      if (rateCount > 0) breakdown.push(`${rateCount} rate-limit`);
+      if (missingScopeCnt > 0) breakdown.push(`${missingScopeCnt} thiếu scope`);
       if (notMonetCnt > 0) breakdown.push(`${notMonetCnt} chưa BKT`);
       const breakdownStr = breakdown.length > 0 ? ` · ${breakdown.join(" · ")}` : "";
       setSyncMsg(
@@ -813,10 +833,16 @@ export default function ReachDashboard() {
     }
     let okCount = 0;
     let errCount = 0;
+    let permCount = 0;
+    let rateCount = 0;
     let skipCount = 0;
     let monetizedCount = 0;
     let totalMicros = 0;
     let firstError: string | null = null;
+    // Only collects "real" error samples (network/app bugs). Permission and
+    // rate-limit errors are summarised via permCount/rateCount instead — the
+    // verbose FB error text adds noise without giving the user anything
+    // actionable (you can't fix #200 by retrying).
     const errs: string[] = [];
     try {
       // Step 1: page insights, chunked.
@@ -829,9 +855,16 @@ export default function ReachDashboard() {
         const data = await safeJson<{
           okCount?: number;
           errCount?: number;
+          permCount?: number;
+          rateCount?: number;
           skipCount?: number;
           error?: string;
-          results?: Array<{ ok: boolean; error?: string; name?: string }>;
+          results?: Array<{
+            ok: boolean;
+            error?: string;
+            errorKind?: "perm" | "rate" | "other";
+            name?: string;
+          }>;
         }>(res);
         if (!res.ok || data.error) {
           if (!firstError) firstError = data.error ?? `Lỗi ${res.status}`;
@@ -840,9 +873,19 @@ export default function ReachDashboard() {
         }
         okCount += data.okCount ?? 0;
         errCount += data.errCount ?? 0;
+        permCount += data.permCount ?? 0;
+        rateCount += data.rateCount ?? 0;
         skipCount += data.skipCount ?? 0;
         for (const r of data.results ?? []) {
-          if (!r.ok && r.error && errs.length < 2 && !errs.includes(r.error)) {
+          // Skip perm/rate kinds: noise, not bugs.
+          if (
+            !r.ok &&
+            r.error &&
+            r.errorKind !== "perm" &&
+            r.errorKind !== "rate" &&
+            errs.length < 2 &&
+            !errs.includes(r.error)
+          ) {
             errs.push(r.error);
           }
         }
@@ -850,8 +893,10 @@ export default function ReachDashboard() {
           freshSkippedCount > 0
             ? ` (bỏ qua ${freshSkippedCount} đã sync gần đây)`
             : "";
+        const permNote = permCount > 0 ? ` · ${permCount} thiếu quyền` : "";
+        const rateNote = rateCount > 0 ? ` · ${rateCount} rate-limit` : "";
         setSyncMsg(
-          `Insight: ${Math.min(i + chunk.length, ids.length)}/${ids.length} page · ${okCount} OK · ${errCount} lỗi${freshNote}`,
+          `Insight: ${Math.min(i + chunk.length, ids.length)}/${ids.length} page · ${okCount} OK · ${errCount} lỗi${permNote}${rateNote}${freshNote}`,
         );
       }
       // Step 2: earnings, chunked. Failures here don't block the insights
@@ -880,9 +925,15 @@ export default function ReachDashboard() {
         freshSkippedCount > 0
           ? ` · ${freshSkippedCount} dùng dữ liệu cũ (≤30 phút)`
           : "";
+      const permSummary = permCount > 0 ? ` · ${permCount} thiếu quyền` : "";
+      const rateSummary = rateCount > 0 ? ` · ${rateCount} rate-limit` : "";
       setSyncMsg(
-        `Cập nhật: ${okCount} OK · ${errCount} lỗi · ${skipCount} skip${freshSummary}${monetSummary}`,
+        `Cập nhật: ${okCount} OK · ${errCount} lỗi${permSummary}${rateSummary} · ${skipCount} skip${freshSummary}${monetSummary}`,
       );
+      // Only surface the alarming Graph toast for REAL errors. Permission
+      // errors are summarised inline via "X thiếu quyền" — bombarding the
+      // user with the verbose #200 message added no signal because retrying
+      // doesn't change FB-side admin role.
       if (errCount > 0 && errs.length > 0 && !firstError) {
         setSyncErr(`Graph: ${errs.join(" | ")}`);
       }

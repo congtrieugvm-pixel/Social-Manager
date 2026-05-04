@@ -25,6 +25,33 @@ interface ItemResult {
   name: string;
   ok: boolean;
   error?: string;
+  /**
+   * Classification of `error` for UI purposes:
+   *  - "perm"  → FB returned #200/#190 (admin role missing, 2FA required,
+   *              token invalid). User must fix on FB side; not a bug.
+   *  - "rate"  → FB returned #4/#17/#32 (rate-limit). Transient.
+   *  - "other" → real error (network, malformed response, app bug).
+   * Only set when ok === false.
+   */
+  errorKind?: "perm" | "rate" | "other";
+}
+
+/**
+ * Maps FB Graph error text to a coarse category. Permission errors are
+ * the dominant noise source — many user accounts have stored page tokens
+ * that have since lost admin access (page transferred, 2FA enforced on
+ * the owning Business, etc.). The UI uses this to suppress the verbose
+ * raw error toast for permission cases (the user can't fix them by
+ * retrying) and just show a "X thiếu quyền" count.
+ */
+function classifyError(msg: string): "perm" | "rate" | "other" {
+  if (/\(#?(200|190|10|102|459|464)\)|sufficient administrative permission|Invalid OAuth|access token/i.test(msg)) {
+    return "perm";
+  }
+  if (/\(#?(4|17|32|341|613)\)|rate limit|too many calls|temporarily blocked/i.test(msg)) {
+    return "rate";
+  }
+  return "other";
 }
 
 export async function POST(req: Request) {
@@ -69,7 +96,8 @@ export async function POST(req: Request) {
     );
 
   // Per-page status produced inside the parallel mapper so we can tally after.
-  type Tagged = ItemResult & { _kind: "ok" | "skip" | "err" };
+  // "perm" / "rate" are subcategories of failure; tallied separately for UI.
+  type Tagged = ItemResult & { _kind: "ok" | "skip" | "perm" | "rate" | "err" };
 
   // Parallelize per page. Each fanpage has its OWN page-token, so FB Graph
   // rate limits are independent across pages — concurrent calls don't risk
@@ -116,6 +144,7 @@ export async function POST(req: Request) {
         };
       } catch (e) {
         const msg = e instanceof Error ? e.message : String(e);
+        const kind = classifyError(msg);
         await db
           .update(fanpages)
           .set({ lastSyncError: msg, lastSyncedAt: now, updatedAt: now })
@@ -126,7 +155,8 @@ export async function POST(req: Request) {
           name: r.name,
           ok: false,
           error: msg,
-          _kind: "err",
+          errorKind: kind,
+          _kind: kind === "perm" ? "perm" : kind === "rate" ? "rate" : "err",
         };
       }
     }),
@@ -134,11 +164,15 @@ export async function POST(req: Request) {
 
   let okCount = 0;
   let skipCount = 0;
+  let permCount = 0;
+  let rateCount = 0;
   let errCount = 0;
   const results: ItemResult[] = [];
   for (const t of tagged) {
     if (t._kind === "ok") okCount++;
     else if (t._kind === "skip") skipCount++;
+    else if (t._kind === "perm") permCount++;
+    else if (t._kind === "rate") rateCount++;
     else errCount++;
     const { _kind: _omit, ...item } = t;
     void _omit;
@@ -150,6 +184,8 @@ export async function POST(req: Request) {
     total: rows.length,
     okCount,
     errCount,
+    permCount,
+    rateCount,
     skipCount,
     rangeStart,
     rangeEnd,
