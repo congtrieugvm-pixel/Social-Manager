@@ -874,18 +874,49 @@ export async function fetchPagePosts(
     "shares",
   ].join(",");
 
+  // Use `/{page-id}/posts` instead of `/published_posts`. Both return the
+  // page's own posts in v21, but `/published_posts` additionally requires
+  // `pages_read_user_content` AND a strict admin role check that many
+  // tokens don't pass — FB rejects with "Unknown path components" on
+  // tokens that have only `pages_read_engagement` (the basic read scope
+  // we get from /me/accounts). `/posts` works with just
+  // `pages_read_engagement`, returns the same edge data, and doesn't
+  // 400 on restricted pages.
+  //
+  // Fallback: if the new endpoint also fails (very old apps, weird
+  // page configs), retry once with `/published_posts` so we don't lose
+  // pages that previously worked.
   const all: FbPagePost[] = [];
-  let cursor: string | null = `/${pageId}/published_posts?fields=${fields}&limit=${limit}`;
-  while (cursor && all.length < max) {
-    const data: { data: FbPagePost[]; paging?: { next?: string } } =
-      await graphFetch(cursor, pageAccessToken);
-    all.push(...data.data);
-    if (data.paging?.next && all.length < max) {
-      const u = new URL(data.paging.next);
-      u.searchParams.delete("access_token");
-      cursor = `${u.pathname.replace("/v21.0", "")}${u.search}`;
+  const tryEdge = async (
+    edge: "posts" | "published_posts",
+  ): Promise<FbPagePost[]> => {
+    const out: FbPagePost[] = [];
+    let cursor: string | null = `/${pageId}/${edge}?fields=${fields}&limit=${limit}`;
+    while (cursor && out.length < max) {
+      const data: { data: FbPagePost[]; paging?: { next?: string } } =
+        await graphFetch(cursor, pageAccessToken);
+      out.push(...data.data);
+      if (data.paging?.next && out.length < max) {
+        const u = new URL(data.paging.next);
+        u.searchParams.delete("access_token");
+        cursor = `${u.pathname.replace("/v21.0", "")}${u.search}`;
+      } else {
+        cursor = null;
+      }
+    }
+    return out;
+  };
+  try {
+    all.push(...(await tryEdge("posts")));
+  } catch (primaryErr) {
+    const msg = primaryErr instanceof Error ? primaryErr.message : String(primaryErr);
+    // Only fall back when the primary endpoint claims it doesn't exist.
+    // Permission / token errors should surface — falling back can't fix
+    // those and just adds an extra failed call.
+    if (/Unknown path|nonexistent field|does not exist/i.test(msg)) {
+      all.push(...(await tryEdge("published_posts")));
     } else {
-      cursor = null;
+      throw primaryErr;
     }
   }
   return all.slice(0, max);

@@ -70,8 +70,18 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
   try {
     posts = await fetchPagePosts(fp.pageId, token, { max });
   } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    // Same classification as /insights/batch — the UI uses errorKind to
+    // decide whether to show a verbose toast or just count silently.
+    const errorKind = /\(#?(200|190|10|102|459|464)\)|sufficient administrative permission|Invalid OAuth|access token|Unknown path|nonexistent field|does not exist/i.test(
+      msg,
+    )
+      ? "perm"
+      : /\(#?(4|17|32|341|613)\)|rate limit|too many calls|temporarily blocked/i.test(msg)
+        ? "rate"
+        : "other";
     return NextResponse.json(
-      { error: e instanceof Error ? e.message : String(e) },
+      { error: msg, errorKind },
       { status: 502 },
     );
   }
