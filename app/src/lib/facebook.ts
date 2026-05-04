@@ -406,7 +406,11 @@ async function paginate<T>(
     if (data.paging?.next) {
       const u = new URL(data.paging.next);
       u.searchParams.delete("access_token");
-      cursor = `${u.pathname.replace("/v21.0", "")}${u.search}`;
+      // Strip whatever `/vNN.NN` prefix FB echoed back — graphFetch will
+      // re-prepend GRAPH_BASE which already contains the version. Hard-
+      // coding "/v21.0" here was stale (GRAPH_BASE is v23.0), making
+      // cursor doubly-versioned and 400-ing on every page after the first.
+      cursor = `${u.pathname.replace(/^\/v\d+\.\d+/, "")}${u.search}`;
     } else {
       cursor = null;
     }
@@ -848,6 +852,10 @@ export interface FbPagePost {
   reactions?: { summary?: { total_count?: number } };
   comments?: { summary?: { total_count?: number } };
   shares?: { count?: number };
+  // Only populated when fetching via /feed (used to filter visitor posts
+  // out and keep only page-authored ones). `/posts` and `/published_posts`
+  // are already pre-filtered by FB so they don't return this field.
+  from?: { id?: string; name?: string };
 }
 
 /**
@@ -861,7 +869,7 @@ export async function fetchPagePosts(
 ): Promise<FbPagePost[]> {
   const limit = opts.limit ?? 25;
   const max = opts.max ?? 100;
-  const fields = [
+  const baseFields = [
     "id",
     "message",
     "story",
@@ -872,54 +880,89 @@ export async function fetchPagePosts(
     "reactions.summary(true).limit(0)",
     "comments.summary(true).limit(0)",
     "shares",
-  ].join(",");
+  ];
 
-  // Use `/{page-id}/posts` instead of `/published_posts`. Both return the
-  // page's own posts in v21, but `/published_posts` additionally requires
-  // `pages_read_user_content` AND a strict admin role check that many
-  // tokens don't pass — FB rejects with "Unknown path components" on
-  // tokens that have only `pages_read_engagement` (the basic read scope
-  // we get from /me/accounts). `/posts` works with just
-  // `pages_read_engagement`, returns the same edge data, and doesn't
-  // 400 on restricted pages.
+  // 3-tier fallback chain. Each FB Graph edge has different permission
+  // semantics; pages with limited admin roles (Editor / Manager / certain
+  // Business Suite delegated configs) accept different subsets:
   //
-  // Fallback: if the new endpoint also fails (very old apps, weird
-  // page configs), retry once with `/published_posts` so we don't lose
-  // pages that previously worked.
-  const all: FbPagePost[] = [];
-  const tryEdge = async (
-    edge: "posts" | "published_posts",
+  //   /posts            → cheapest, lowest scope (`pages_read_engagement`).
+  //                       Works for full-admin tokens. FB returns "Unknown
+  //                       path components" when the user-on-token has a
+  //                       role gated out of this edge.
+  //   /feed             → most permissive admin-role-wise. Works for
+  //                       Editors/Managers where /posts is gated. Returns
+  //                       visitor posts too, so we filter to `from.id ===
+  //                       pageId` to keep only page-authored entries.
+  //                       Pagination needs an iteration cap because
+  //                       high-engagement pages may have many visitor
+  //                       posts diluting the page-authored ratio.
+  //   /published_posts  → strictest in scope (needs `pages_read_user_
+  //                       content` + admin) but in some Business Suite
+  //                       configs it's the only edge that responds.
+  //                       Last resort.
+  //
+  // Only "Unknown path / nonexistent field / does not exist" triggers a
+  // fall-through. Real auth errors (#190) propagate immediately so the
+  // caller can surface them without trying the next 2 calls.
+  const isUnknownPathErr = (err: unknown): boolean => {
+    const msg = err instanceof Error ? err.message : String(err);
+    return /Unknown path|nonexistent field|does not exist/i.test(msg);
+  };
+
+  const paginate = async (
+    edge: "posts" | "feed" | "published_posts",
+    extraFields: string[] = [],
+    keep?: (p: FbPagePost) => boolean,
   ): Promise<FbPagePost[]> => {
+    const fields = [...baseFields, ...extraFields].join(",");
     const out: FbPagePost[] = [];
     let cursor: string | null = `/${pageId}/${edge}?fields=${fields}&limit=${limit}`;
-    while (cursor && out.length < max) {
+    // Cap iterations so /feed on a high-visitor-traffic page can't loop
+    // indefinitely chasing page-authored posts that don't exist.
+    const maxIters = Math.max(8, Math.ceil((max * 4) / limit));
+    let iters = 0;
+    while (cursor && out.length < max && iters < maxIters) {
+      iters++;
       const data: { data: FbPagePost[]; paging?: { next?: string } } =
         await graphFetch(cursor, pageAccessToken);
-      out.push(...data.data);
+      const filtered = keep ? data.data.filter(keep) : data.data;
+      out.push(...filtered);
       if (data.paging?.next && out.length < max) {
         const u = new URL(data.paging.next);
         u.searchParams.delete("access_token");
-        cursor = `${u.pathname.replace("/v21.0", "")}${u.search}`;
+        // See note in graph paginator above — strip any `/vNN.NN` prefix
+        // FB echoes; graphFetch re-prepends GRAPH_BASE with its version.
+        cursor = `${u.pathname.replace(/^\/v\d+\.\d+/, "")}${u.search}`;
       } else {
         cursor = null;
       }
     }
     return out;
   };
+
+  // Tier 1 — /posts.
   try {
-    all.push(...(await tryEdge("posts")));
-  } catch (primaryErr) {
-    const msg = primaryErr instanceof Error ? primaryErr.message : String(primaryErr);
-    // Only fall back when the primary endpoint claims it doesn't exist.
-    // Permission / token errors should surface — falling back can't fix
-    // those and just adds an extra failed call.
-    if (/Unknown path|nonexistent field|does not exist/i.test(msg)) {
-      all.push(...(await tryEdge("published_posts")));
-    } else {
-      throw primaryErr;
+    return (await paginate("posts")).slice(0, max);
+  } catch (e1) {
+    if (!isUnknownPathErr(e1)) throw e1;
+
+    // Tier 2 — /feed with from-id filter. Includes visitor posts, so we
+    // keep only those where `from.id === pageId`. Posts where `from` is
+    // missing get dropped (FB sometimes omits it for restricted-visibility
+    // posts; safer to drop than misattribute).
+    try {
+      return (
+        await paginate("feed", ["from"], (p) => p.from?.id === pageId)
+      ).slice(0, max);
+    } catch (e2) {
+      if (!isUnknownPathErr(e2)) throw e2;
+
+      // Tier 3 — /published_posts. Only reached when both /posts and
+      // /feed are gated. Some Business Suite delegations land here.
+      return (await paginate("published_posts")).slice(0, max);
     }
   }
-  return all.slice(0, max);
 }
 
 export interface FbPostInsightsRaw {
