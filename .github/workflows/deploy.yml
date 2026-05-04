@@ -25,6 +25,21 @@ jobs:
         working-directory: app
         run: npm run cf:build
 
+      # Apply D1 migrations BEFORE Worker deploy — guarantees the schema
+      # the deployed code expects is in place. Wrangler's migrations
+      # tracking is idempotent (records applied .sql in a `d1_migrations`
+      # table on the D1 itself), so re-runs are no-ops once a migration
+      # has been applied. Step fails the workflow if the migration errors,
+      # which prevents shipping code that references a not-yet-applied
+      # schema change.
+      - name: Apply D1 migrations
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          workingDirectory: app
+          command: d1 migrations apply social-manager --remote
+
       - name: Deploy Worker
         uses: cloudflare/wrangler-action@v3
         with:
