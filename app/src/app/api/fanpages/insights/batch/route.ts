@@ -68,60 +68,81 @@ export async function POST(req: Request) {
       ),
     );
 
-  const results: ItemResult[] = [];
+  // Per-page status produced inside the parallel mapper so we can tally after.
+  type Tagged = ItemResult & { _kind: "ok" | "skip" | "err" };
+
+  // Parallelize per page. Each fanpage has its OWN page-token, so FB Graph
+  // rate limits are independent across pages — concurrent calls don't risk
+  // the per-token cap. Workers Paid gives 1000 subrequests / 30s wall, so
+  // even a 15-page chunk × ~10 inner subreqs = 150 concurrent reqs fits.
+  // Wall-clock per chunk drops from ~Σ(per-page) to ~max(per-page).
+  const tagged = await Promise.all(
+    rows.map(async (r): Promise<Tagged> => {
+      const token = await decrypt(r.encPageAccessToken);
+      if (!token) {
+        return {
+          id: r.id,
+          pageId: r.pageId,
+          name: r.name,
+          ok: false,
+          error: "Chưa có page access token",
+          _kind: "skip",
+        };
+      }
+      const now = new Date();
+      try {
+        const insights = await fetchPageInsights(r.pageId, token, rangeOpts);
+        await db
+          .update(fanpages)
+          .set({
+            insightsJson: JSON.stringify(insights),
+            lastSyncedAt: now,
+            lastSyncError: null,
+            updatedAt: now,
+          })
+          .where(inArray(fanpages.id, [r.id]));
+        await recordFanpageSnapshot(r.id, insights, {
+          fanCount: r.fanCount,
+          followersCount: r.followersCount,
+          rangeStart,
+          rangeEnd,
+        });
+        return {
+          id: r.id,
+          pageId: r.pageId,
+          name: r.name,
+          ok: true,
+          _kind: "ok",
+        };
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
+        await db
+          .update(fanpages)
+          .set({ lastSyncError: msg, lastSyncedAt: now, updatedAt: now })
+          .where(inArray(fanpages.id, [r.id]));
+        return {
+          id: r.id,
+          pageId: r.pageId,
+          name: r.name,
+          ok: false,
+          error: msg,
+          _kind: "err",
+        };
+      }
+    }),
+  );
+
   let okCount = 0;
   let skipCount = 0;
   let errCount = 0;
-
-  // Sequential to avoid hammering Graph API / hitting rate limits.
-  for (const r of rows) {
-    const token = await decrypt(r.encPageAccessToken);
-    if (!token) {
-      results.push({
-        id: r.id,
-        pageId: r.pageId,
-        name: r.name,
-        ok: false,
-        error: "Chưa có page access token",
-      });
-      skipCount++;
-      continue;
-    }
-    const now = new Date();
-    try {
-      const insights = await fetchPageInsights(r.pageId, token, rangeOpts);
-      await db
-        .update(fanpages)
-        .set({
-          insightsJson: JSON.stringify(insights),
-          lastSyncedAt: now,
-          lastSyncError: null,
-          updatedAt: now,
-        })
-        .where(inArray(fanpages.id, [r.id]));
-      await recordFanpageSnapshot(r.id, insights, {
-        fanCount: r.fanCount,
-        followersCount: r.followersCount,
-        rangeStart,
-        rangeEnd,
-      });
-      results.push({ id: r.id, pageId: r.pageId, name: r.name, ok: true });
-      okCount++;
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e);
-      await db
-        .update(fanpages)
-        .set({ lastSyncError: msg, lastSyncedAt: now, updatedAt: now })
-        .where(inArray(fanpages.id, [r.id]));
-      results.push({
-        id: r.id,
-        pageId: r.pageId,
-        name: r.name,
-        ok: false,
-        error: msg,
-      });
-      errCount++;
-    }
+  const results: ItemResult[] = [];
+  for (const t of tagged) {
+    if (t._kind === "ok") okCount++;
+    else if (t._kind === "skip") skipCount++;
+    else errCount++;
+    const { _kind: _omit, ...item } = t;
+    void _omit;
+    results.push(item);
   }
 
   return NextResponse.json({

@@ -5,13 +5,13 @@ import Link from "next/link";
 import { safeJson } from "@/lib/req-body";
 
 // Chunk size for bulk fanpage POSTs. Workers Paid gives 30s CPU + 1000
-// subrequests per invocation (vs Free's 10ms / 50). Each chunk POSTs N ids
-// to /insights/batch which sequentially calls FB Graph (~10–13 subrequests
-// per page). 10 pages × 13 = 130 subrequests, well under 1000; wall-clock
-// ~10–15s, well under 30s. Bumping past 15 risks brushing wall-time on
-// slow FB days, so 10 is the sweet spot for a 5× speedup over the old
-// chunk=2 (which existed only because of Free-plan 10ms CPU).
-const BULK_FP_CHUNK = 10;
+// subrequests per invocation. The bulk route now processes pages
+// IN PARALLEL (Promise.all) — wall-time per chunk = max(per-page) ≈ 3–5s
+// regardless of chunk size, bounded only by subrequest cap. 20 pages ×
+// ~13 subreqs = 260 subreqs (26% of 1000 cap) with ~50% headroom on
+// wall time even on slow FB days. Cuts client roundtrips in half vs
+// chunk=10.
+const BULK_FP_CHUNK = 20;
 
 // Pages whose `lastSyncedAt` is within this window are skipped during a
 // bulk reach sync — the existing DB row already has fresh data. Solves

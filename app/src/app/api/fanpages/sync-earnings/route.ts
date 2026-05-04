@@ -87,116 +87,143 @@ export async function POST(req: Request) {
       ),
     );
 
-  const results: ItemResult[] = [];
+  type Tagged = ItemResult & {
+    _kind: "ok" | "skip" | "err";
+    _monetized?: boolean;
+    _micros?: number;
+  };
+
+  // Parallelize per page. Each fanpage has its own token, so FB rate limits
+  // don't compound across the chunk. Drops chunk wall-time from Σ(pages) to
+  // max(pages) — typically 4–5× speedup for monetization sync (the FB
+  // earnings endpoint is the slow part, ~1–2s per page).
+  const tagged = await Promise.all(
+    rows.map(async (r): Promise<Tagged> => {
+      const now = new Date();
+      let token = await decrypt(r.encPageAccessToken);
+      let tokenSource: "page" | "user" = "page";
+
+      // Aggressive backfill: when no page token is stored but a user token is
+      // available, try to recover the page token via /{page-id}?fields=access_token.
+      // FB returns it only when the user has full admin role on that page —
+      // when it succeeds, persist the token so future syncs are faster and use
+      // page-level permissions which work better for monetization endpoints.
+      if (!token && r.encUserToken) {
+        const userTok = await decrypt(r.encUserToken);
+        if (userTok) {
+          try {
+            const detail = await fetchPageDetail(r.pageId, userTok);
+            if (detail?.access_token) {
+              token = detail.access_token;
+              tokenSource = "page";
+              await db
+                .update(fanpages)
+                .set({
+                  encPageAccessToken: await encrypt(detail.access_token),
+                  updatedAt: now,
+                })
+                .where(eq(fanpages.id, r.id));
+            }
+          } catch {
+            // best-effort; fall through to user-token path
+          }
+        }
+      }
+      if (!token) {
+        token = await decrypt(r.encUserToken);
+        tokenSource = "user";
+      }
+      if (!token) {
+        return {
+          id: r.id,
+          pageId: r.pageId,
+          name: r.name,
+          ok: false,
+          error: "Không có page token và cũng không có user token",
+          _kind: "skip",
+        };
+      }
+      try {
+        const earnings = await fetchPageEarningsBreakdown(r.pageId, token, rangeOpts);
+        await db
+          .update(fanpages)
+          .set({
+            monetizationStatus: earnings.status,
+            monetizationError: earnings.error,
+            earningsValue: earnings.totalMicros,
+            earningsCurrency: earnings.currency,
+            earningsRangeStart: earnings.rangeStart,
+            earningsRangeEnd: earnings.rangeEnd,
+            earningsUpdatedAt: now,
+            earningsBreakdownJson: JSON.stringify(earnings.sources),
+            updatedAt: now,
+          })
+          .where(eq(fanpages.id, r.id));
+        return {
+          id: r.id,
+          pageId: r.pageId,
+          name: r.name,
+          ok: true,
+          status: earnings.status,
+          totalMicros: earnings.totalMicros,
+          currency: earnings.currency,
+          tokenSource,
+          error: earnings.error ?? undefined,
+          _kind: "ok",
+          _monetized: earnings.status === "monetized",
+          _micros: earnings.totalMicros,
+        };
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
+        // Reset status to "unknown" so the UI doesn't show stale "monetized"
+        // with old earnings_value when fetch fails entirely. Clear the value
+        // too — anything stale is misleading.
+        await db
+          .update(fanpages)
+          .set({
+            monetizationStatus: "unknown",
+            monetizationError: msg,
+            earningsValue: null,
+            earningsBreakdownJson: null,
+            earningsUpdatedAt: now,
+            updatedAt: now,
+          })
+          .where(eq(fanpages.id, r.id));
+        return {
+          id: r.id,
+          pageId: r.pageId,
+          name: r.name,
+          ok: false,
+          error: msg,
+          _kind: "err",
+        };
+      }
+    }),
+  );
+
   let okCount = 0;
   let skipCount = 0;
   let errCount = 0;
   let monetizedCount = 0;
   let totalMicros = 0;
-
-  for (const r of rows) {
-    const now = new Date();
-    let token = await decrypt(r.encPageAccessToken);
-    let tokenSource: "page" | "user" = "page";
-
-    // Aggressive backfill: when no page token is stored but a user token is
-    // available, try to recover the page token via /{page-id}?fields=access_token.
-    // FB returns it only when the user has full admin role on that page —
-    // when it succeeds, persist the token so future syncs are faster and use
-    // page-level permissions which work better for monetization endpoints.
-    if (!token && r.encUserToken) {
-      const userTok = await decrypt(r.encUserToken);
-      if (userTok) {
-        try {
-          const detail = await fetchPageDetail(r.pageId, userTok);
-          if (detail?.access_token) {
-            token = detail.access_token;
-            tokenSource = "page";
-            await db
-              .update(fanpages)
-              .set({
-                encPageAccessToken: await encrypt(detail.access_token),
-                updatedAt: now,
-              })
-              .where(eq(fanpages.id, r.id));
-          }
-        } catch {
-          // best-effort; fall through to user-token path
-        }
-      }
-    }
-    if (!token) {
-      token = await decrypt(r.encUserToken);
-      tokenSource = "user";
-    }
-    if (!token) {
-      results.push({
-        id: r.id,
-        pageId: r.pageId,
-        name: r.name,
-        ok: false,
-        error: "Không có page token và cũng không có user token",
-      });
-      skipCount++;
-      continue;
-    }
-    try {
-      const earnings = await fetchPageEarningsBreakdown(r.pageId, token, rangeOpts);
-      await db
-        .update(fanpages)
-        .set({
-          monetizationStatus: earnings.status,
-          monetizationError: earnings.error,
-          earningsValue: earnings.totalMicros,
-          earningsCurrency: earnings.currency,
-          earningsRangeStart: earnings.rangeStart,
-          earningsRangeEnd: earnings.rangeEnd,
-          earningsUpdatedAt: now,
-          earningsBreakdownJson: JSON.stringify(earnings.sources),
-          updatedAt: now,
-        })
-        .where(eq(fanpages.id, r.id));
-      results.push({
-        id: r.id,
-        pageId: r.pageId,
-        name: r.name,
-        ok: true,
-        status: earnings.status,
-        totalMicros: earnings.totalMicros,
-        currency: earnings.currency,
-        tokenSource,
-        error: earnings.error ?? undefined,
-      });
-      if (earnings.status === "monetized") {
-        monetizedCount++;
-        totalMicros += earnings.totalMicros;
-      }
+  const results: ItemResult[] = [];
+  for (const t of tagged) {
+    if (t._kind === "ok") {
       okCount++;
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e);
-      // Reset status to "unknown" so the UI doesn't show stale "monetized"
-      // with old earnings_value when fetch fails entirely. Clear the value
-      // too — anything stale is misleading.
-      await db
-        .update(fanpages)
-        .set({
-          monetizationStatus: "unknown",
-          monetizationError: msg,
-          earningsValue: null,
-          earningsBreakdownJson: null,
-          earningsUpdatedAt: now,
-          updatedAt: now,
-        })
-        .where(eq(fanpages.id, r.id));
-      results.push({
-        id: r.id,
-        pageId: r.pageId,
-        name: r.name,
-        ok: false,
-        error: msg,
-      });
+      if (t._monetized) {
+        monetizedCount++;
+        totalMicros += t._micros ?? 0;
+      }
+    } else if (t._kind === "skip") {
+      skipCount++;
+    } else {
       errCount++;
     }
+    const { _kind: _k, _monetized: _m, _micros: _µ, ...item } = t;
+    void _k;
+    void _m;
+    void _µ;
+    results.push(item);
   }
 
   return NextResponse.json({

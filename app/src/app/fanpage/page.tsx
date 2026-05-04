@@ -5,9 +5,10 @@ import Link from "next/link";
 import { safeJson } from "@/lib/req-body";
 
 // Chunk size for bulk fanpage POSTs. Workers Paid (30s CPU + 1000
-// subrequests). Each page = ~10–13 FB Graph subrequests; 15 pages × 13 =
-// 195 subrequests + ~15s wall-clock — comfortably under both caps.
-const BULK_FP_CHUNK = 15;
+// subrequests) + parallel per-page processing in /insights/batch route.
+// Wall-time per chunk = max(per-page) ≈ 3–5s; subreq budget 20 × 13 = 260
+// (well under 1000). Halves client roundtrips vs chunk=10.
+const BULK_FP_CHUNK = 20;
 
 interface FbAccountOption {
   id: number;
