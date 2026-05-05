@@ -519,9 +519,15 @@ export default function ReachDashboard() {
   useEffect(() => {
     const ids = Array.from(selectedIds);
     let cancelled = false;
+    // Clear stale data IMMEDIATELY so KPI cards / chart show the loading
+    // state (or zeros) while the new selection is being fetched. Without
+    // this, the previous selection's numbers would render briefly until
+    // the new fetch completed — looked like "data mismatch" to the user
+    // since the page list reflected the new selection but the metrics
+    // still came from the old one.
+    setFullData(null);
     (async () => {
       if (ids.length === 0) {
-        if (!cancelled) setFullData(null);
         return;
       }
       setLoadingDaily(true);
@@ -769,7 +775,12 @@ export default function ReachDashboard() {
     let monetizedCount = 0;
     let totalMicros = 0;
     let missingScopeCnt = 0;
-    let notMonetCnt = 0;
+    // Counts driven by the new explicit Content-Monetization-enabled
+    // check the route now performs before fetching earnings.
+    let enabledMonetizedCount = 0;
+    let enabledZeroCount = 0;
+    let disabledCount = 0;
+    let unknownEnabledCount = 0;
     const errSamples: string[] = [];
     let firstChunkError: string | null = null;
     try {
@@ -787,6 +798,10 @@ export default function ReachDashboard() {
           rateCount?: number;
           skipCount?: number;
           monetizedCount?: number;
+          enabledMonetizedCount?: number;
+          enabledZeroCount?: number;
+          disabledCount?: number;
+          unknownEnabledCount?: number;
           totalMicros?: number;
           error?: string;
           results?: Array<{
@@ -809,10 +824,13 @@ export default function ReachDashboard() {
         rateCount += data.rateCount ?? 0;
         skipCount += data.skipCount ?? 0;
         monetizedCount += data.monetizedCount ?? 0;
+        enabledMonetizedCount += data.enabledMonetizedCount ?? 0;
+        enabledZeroCount += data.enabledZeroCount ?? 0;
+        disabledCount += data.disabledCount ?? 0;
+        unknownEnabledCount += data.unknownEnabledCount ?? 0;
         totalMicros += data.totalMicros ?? 0;
         for (const r of data.results ?? []) {
           if (r.status === "missing_scope") missingScopeCnt++;
-          else if (r.status === "not_monetized") notMonetCnt++;
           // Suppress perm/rate errors from the verbose Graph toast — they
           // are summarised inline (X thiếu quyền / X rate-limit).
           if (
@@ -834,15 +852,24 @@ export default function ReachDashboard() {
         );
       }
       if (firstChunkError) setSyncErr(firstChunkError);
+      // Build a granular breakdown reflecting the explicit monetization
+      // check the route now performs. Each segment fires only when its
+      // count > 0 to keep the message compact for tenants whose pages
+      // all land in the same bucket.
       const moneSum =
-        monetizedCount > 0
-          ? ` · 💰 ${fmtUsd(totalMicros)} từ ${monetizedCount} page`
+        enabledMonetizedCount > 0
+          ? ` · 💰 ${fmtUsd(totalMicros)} từ ${enabledMonetizedCount} page`
           : "";
       const breakdown: string[] = [];
+      if (enabledZeroCount > 0)
+        breakdown.push(`${enabledZeroCount} đã bật KT, doanh thu 0`);
+      if (disabledCount > 0)
+        breakdown.push(`${disabledCount} chưa bật KT nội dung`);
+      if (unknownEnabledCount > 0)
+        breakdown.push(`${unknownEnabledCount} không xác minh được`);
       if (permCount > 0) breakdown.push(`${permCount} thiếu quyền`);
       if (rateCount > 0) breakdown.push(`${rateCount} rate-limit`);
       if (missingScopeCnt > 0) breakdown.push(`${missingScopeCnt} thiếu scope`);
-      if (notMonetCnt > 0) breakdown.push(`${notMonetCnt} chưa BKT`);
       const breakdownStr = breakdown.length > 0 ? ` · ${breakdown.join(" · ")}` : "";
       const permSkipNote =
         permSkippedCount > 0

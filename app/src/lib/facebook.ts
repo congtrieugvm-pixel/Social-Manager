@@ -1212,6 +1212,51 @@ export function microsToAmount(micros: number | null | undefined): number {
   return micros / 1_000_000;
 }
 
+/**
+ * Explicit "is Content Monetization enabled for this page" check.
+ *
+ * Reads `monetization_options` on the Page node — FB returns the array of
+ * monetization features the page has access to (e.g. `["instream_ads",
+ * "story_ads", ...]`). Empty / missing array means none enabled.
+ *
+ * Used by the sync-earnings route to short-circuit before fetching the
+ * earnings metric: pages with no options enabled would just return
+ * code-100 errors anyway, and the explicit signal lets the UI distinguish
+ * "verified disabled" from "couldn't fetch earnings due to token issue".
+ *
+ * Returns `enabled: null` when the field can't be read (permission /
+ * version / restricted-app), letting the caller fall back to inferring
+ * from the earnings query (existing behaviour).
+ */
+export interface PageMonetizationCheck {
+  enabled: boolean | null;
+  options: string[];
+  error: string | null;
+}
+
+export async function fetchPageMonetizationOptions(
+  pageId: string,
+  pageAccessToken: string,
+): Promise<PageMonetizationCheck> {
+  try {
+    const res = await graphFetch<{
+      id?: string;
+      monetization_options?: string[] | null;
+    }>(`/${pageId}?fields=monetization_options`, pageAccessToken);
+    const options = Array.isArray(res.monetization_options)
+      ? res.monetization_options.filter((s): s is string => typeof s === "string")
+      : [];
+    return { enabled: options.length > 0, options, error: null };
+  } catch (e) {
+    const info = parseGraphError(e);
+    // Restricted/permission errors → return null so caller falls back to
+    // earnings inference. We do NOT propagate as a hard failure: missing
+    // visibility into monetization_options doesn't mean the page isn't
+    // earning, only that we can't pre-check.
+    return { enabled: null, options: [], error: info.message };
+  }
+}
+
 // =================== Earnings breakdown ===================
 //
 // As of Graph API v23, the older metrics (`page_daily_video_ad_break_earnings`,

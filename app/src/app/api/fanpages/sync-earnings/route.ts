@@ -7,6 +7,7 @@ import { getOwnerId } from "@/lib/scope";
 import {
   fetchPageDetail,
   fetchPageEarningsBreakdown,
+  fetchPageMonetizationOptions,
   resolveInsightRange,
 } from "@/lib/facebook";
 import { readBody } from "@/lib/req-body";
@@ -35,6 +36,16 @@ interface ItemResult {
   error?: string;
   /** See insights/batch/route.ts — same classification scheme. */
   errorKind?: "perm" | "rate" | "other";
+  /**
+   * Explicit "Content Monetization enabled" check result:
+   *   true  — `monetization_options` returned at least one feature
+   *   false — explicitly empty / disabled (we skip the earnings query)
+   *   null  — couldn't pre-check (field restricted), fell back to inferring
+   *           from the earnings query
+   */
+  monetizationEnabled?: boolean | null;
+  /** Comma-joined `monetization_options` from FB — diagnostic; null when not checked. */
+  monetizationOptions?: string[] | null;
 }
 
 function classifyError(msg: string): "perm" | "rate" | "other" {
@@ -156,6 +167,49 @@ export async function POST(req: Request) {
         };
       }
       try {
+        // Step 1 — explicit Content-Monetization-enabled check. User asked
+        // for this so the route can confirm "page bật kiếm tiền nội dung"
+        // before spending subrequests on the earnings metric. When FB
+        // confirms `monetization_options` is empty, we short-circuit to
+        // status=not_monetized without firing the earnings query (saves
+        // ~5 subrequests × N pages on tenant runs where most pages aren't
+        // enrolled). When the field is restricted, fall through to the
+        // earnings query and let the existing inference handle it.
+        const monet = await fetchPageMonetizationOptions(r.pageId, token);
+        if (monet.enabled === false) {
+          await db
+            .update(fanpages)
+            .set({
+              monetizationStatus: "not_monetized",
+              monetizationError: null,
+              earningsValue: 0,
+              earningsCurrency: null,
+              earningsRangeStart: rangeStart,
+              earningsRangeEnd: rangeEnd,
+              earningsUpdatedAt: now,
+              earningsBreakdownJson: "[]",
+              updatedAt: now,
+            })
+            .where(eq(fanpages.id, r.id));
+          return {
+            id: r.id,
+            pageId: r.pageId,
+            name: r.name,
+            ok: true,
+            status: "not_monetized",
+            totalMicros: 0,
+            currency: null,
+            tokenSource,
+            monetizationEnabled: false,
+            monetizationOptions: [],
+            _kind: "ok",
+            _monetized: false,
+            _micros: 0,
+          };
+        }
+
+        // Step 2 — earnings fetch. monet.enabled is true (verified) or
+        // null (couldn't verify); either way we run the metric query.
         const earnings = await fetchPageEarningsBreakdown(r.pageId, token, rangeOpts);
         await db
           .update(fanpages)
@@ -181,6 +235,8 @@ export async function POST(req: Request) {
           currency: earnings.currency,
           tokenSource,
           error: earnings.error ?? undefined,
+          monetizationEnabled: monet.enabled,
+          monetizationOptions: monet.options,
           _kind: "ok",
           _monetized: earnings.status === "monetized",
           _micros: earnings.totalMicros,
@@ -221,6 +277,13 @@ export async function POST(req: Request) {
   let rateCount = 0;
   let errCount = 0;
   let monetizedCount = 0;
+  // Sub-categories of `okCount` based on Content-Monetization status. Lets
+  // the UI render "X bật KT, Y chưa bật, Z không xác minh được, W thiếu quyền"
+  // without re-iterating `results` on the client side.
+  let enabledMonetizedCount = 0; // monet.enabled = true AND earned > 0
+  let enabledZeroCount = 0;       // monet.enabled = true AND earned 0 (eligible but no income in window)
+  let disabledCount = 0;          // monet.enabled = false (explicit "page chưa bật KT")
+  let unknownEnabledCount = 0;    // monet.enabled = null (couldn't pre-check)
   let totalMicros = 0;
   const results: ItemResult[] = [];
   for (const t of tagged) {
@@ -229,6 +292,14 @@ export async function POST(req: Request) {
       if (t._monetized) {
         monetizedCount++;
         totalMicros += t._micros ?? 0;
+      }
+      if (t.monetizationEnabled === false) {
+        disabledCount++;
+      } else if (t.monetizationEnabled === true) {
+        if ((t._micros ?? 0) > 0) enabledMonetizedCount++;
+        else enabledZeroCount++;
+      } else {
+        unknownEnabledCount++;
       }
     } else if (t._kind === "skip") {
       skipCount++;
@@ -255,6 +326,10 @@ export async function POST(req: Request) {
     rateCount,
     skipCount,
     monetizedCount,
+    enabledMonetizedCount,
+    enabledZeroCount,
+    disabledCount,
+    unknownEnabledCount,
     totalMicros,
     rangeStart,
     rangeEnd,
