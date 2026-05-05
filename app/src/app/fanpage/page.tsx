@@ -193,16 +193,34 @@ function parseInsights(
   try {
     const map = JSON.parse(json) as InsightsMap;
     const sinceSec = Math.floor(Date.now() / 1000) - days * 86_400;
+    // Reach 28d: prefer FB's rolling 28-day-unique series
+    // (`page_impressions_unique_days_28`). Each value = true unique
+    // reach over the trailing 28 days as of that date — the same
+    // number Business Suite shows. Falling back to summing the daily
+    // unique series double-counts users (a fan visiting 5 days = 5×
+    // counted) and was the source of the user's "10M reach 28d"
+    // — overcounted by ~10–28× on active pages.
+    const days28 = map["page_impressions_unique_days_28"]?.[0];
+    let reach: number | null = null;
+    if (days28 && days28.values.length > 0) {
+      const latest = days28.values[days28.values.length - 1];
+      if (typeof latest.value === "number") reach = latest.value;
+    }
+    if (reach === null) {
+      // Fallback for rows synced before days_28 was added. Note: this
+      // value over-counts by daily overlap. After the user re-syncs
+      // ("Cập nhật reach"), the days_28 path takes over and numbers
+      // line up with FB Business Suite.
+      reach = sumMetric(map["page_impressions_unique"]?.[0], sinceSec);
+    }
+    // Page views / Video views are RAW count metrics (not unique-by-day),
+    // so summing 28 daily values gives the legitimate 28-day total.
     // FB deprecated `page_impressions` (no-suffix), `page_engaged_users`, etc
     // on 2025-11-15. Backend now fetches the SAFE replacement set:
-    //   - page_impressions_unique  → unique reach
-    //   - page_post_engagements    → engagement count
-    //   - page_views_total         → total page views (closest "impressions" proxy)
-    // Plus best-effort legacy `page_video_views`. We map the "Impressions"
-    // column to `page_views_total` and fall back to deprecated `page_impressions`
-    // for any rows still holding pre-Nov-2025 cached JSON.
+    //   - page_views_total → total page views (closest "impressions" proxy)
+    //   - page_video_views → legacy, best-effort
     return {
-      reach: sumMetric(map["page_impressions_unique"]?.[0], sinceSec),
+      reach,
       impressions:
         sumMetric(map["page_views_total"]?.[0], sinceSec) ??
         sumMetric(map["page_impressions"]?.[0], sinceSec),

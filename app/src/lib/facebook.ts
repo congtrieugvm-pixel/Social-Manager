@@ -738,6 +738,32 @@ async function fetchPageInsightsWindow(
     }
   }
 
+  // Bonus query: period=days_28 unique reach. The daily-period
+  // `page_impressions_unique` we just fetched gives DAILY uniques —
+  // summing them over a 28-day window double-counts users who visited
+  // on multiple days (a frequent visitor counts up to 28×). FB's
+  // `days_28` period returns the true rolling 28-day-unique count per
+  // day; the latest value = "Reach in last 28 days" as of that date.
+  //
+  // Stored alongside the daily series under a synthetic name
+  // `page_impressions_unique_days_28` so charts/aggregations that want
+  // the daily granularity still work, and the fanpage list / overview
+  // can read the accurate 28d figure for the "Reach 28d" column.
+  // Best-effort: failure here doesn't impact the rest of the response;
+  // UI falls back to daily-sum (with the known over-count) when the
+  // days_28 series is missing.
+  try {
+    const res = await graphFetch<{ data: FbPageInsightRaw[] }>(
+      `/${pageId}/insights?metric=page_impressions_unique&period=days_28&${qs.replace("period=day&", "")}`,
+      pageAccessToken,
+    );
+    for (const item of res.data) {
+      all.push({ ...item, name: `${item.name}_days_28` });
+    }
+  } catch {
+    // best-effort
+  }
+
   return all;
 }
 

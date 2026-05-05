@@ -131,11 +131,13 @@ export async function GET() {
   const rows: OverviewRow[] = base.map((r) => {
     const agg = postAggMap.get(r.id);
     const early = earliestByFp.get(r.id);
-    // pageReach28d: sum of `page_impressions_unique` for the LAST 28 DAYS.
-    // The route used to sum `arr.values` unfiltered, which collapsed the
-    // entire 365-day stored window into the column — making every page's
-    // Reach 28d ~13× too large. Clamp by `end_time` so the number matches
-    // the column header.
+    // pageReach28d: prefer FB's rolling-28-day metric
+    // (`page_impressions_unique_days_28`) — its latest value IS the
+    // true 28-day-unique count. Sum-of-daily-uniques over 28 days
+    // double-counts users (a fan returning daily counts up to 28×) so
+    // it was reporting numbers ~10-28× too large for active pages.
+    // Falls back to clamped daily-sum for rows synced before the
+    // days_28 query was added; user can re-sync to upgrade.
     let pageReach28d: number | null = null;
     if (r.insightsJson) {
       try {
@@ -148,16 +150,23 @@ export async function GET() {
             }>;
           }>
         >;
-        const arr = parsed["page_impressions_unique"]?.[0];
-        if (arr) {
-          const sinceSec = Math.floor(Date.now() / 1000) - 28 * 86_400;
-          pageReach28d = arr.values.reduce((s, v) => {
-            const ts = v.end_time
-              ? Math.floor(new Date(v.end_time).getTime() / 1000)
-              : 0;
-            if (!Number.isFinite(ts) || ts < sinceSec) return s;
-            return s + (typeof v.value === "number" ? v.value : 0);
-          }, 0);
+        const days28 = parsed["page_impressions_unique_days_28"]?.[0];
+        if (days28 && days28.values.length > 0) {
+          const latest = days28.values[days28.values.length - 1];
+          if (typeof latest.value === "number") pageReach28d = latest.value;
+        }
+        if (pageReach28d === null) {
+          const arr = parsed["page_impressions_unique"]?.[0];
+          if (arr) {
+            const sinceSec = Math.floor(Date.now() / 1000) - 28 * 86_400;
+            pageReach28d = arr.values.reduce((s, v) => {
+              const ts = v.end_time
+                ? Math.floor(new Date(v.end_time).getTime() / 1000)
+                : 0;
+              if (!Number.isFinite(ts) || ts < sinceSec) return s;
+              return s + (typeof v.value === "number" ? v.value : 0);
+            }, 0);
+          }
         }
       } catch {}
     }
