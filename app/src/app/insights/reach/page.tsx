@@ -19,11 +19,20 @@ const BULK_FP_CHUNK = 20;
 // issue: those pages reuse cached insights_json instead of an FB call.
 const SKIP_FRESH_WINDOW_SEC = 30 * 60; // 30 minutes
 
-// Chunk size for the daily-insights GET. Workers Paid (30s CPU) handles
-// 100 rows × ~200KB JSON.parse (~10MB total) in <100ms — Free's 10ms cap
-// was the only reason we ever chunked this. 100 keeps the entire "Tất
-// cả" tab in a single roundtrip (no client-side aggregation cost).
-const DAILY_INSIGHTS_CHUNK = 100;
+// Chunk size for the daily-insights GET. CAPPED BY CLOUDFLARE D1's hard
+// limit of 100 bound parameters per query — the route runs
+// `WHERE owner_user_id = ? AND id IN (?,?,...,?)` so the placeholder
+// count is `1 + ids.length`. Pushing this to 100 (as a previous Paid-
+// plan tuning commit did) made the IN-list 100 placeholders + ownerId =
+// 101 params → query fails with no useful error → client's
+// `if (!res.ok) continue` silently swallows it → "Tất cả · 100" tab
+// renders KPI = 0. Smaller tabs (group filters with ≤90 pages) work
+// fine because they stay under the limit.
+//
+// 50 leaves comfortable headroom (51 params used vs 100 cap) and the
+// extra roundtrip cost over chunk=100 is negligible (~150ms for the
+// second call vs invisible/zero data, which was the user-visible bug).
+const DAILY_INSIGHTS_CHUNK = 50;
 
 interface FanpageRow {
   id: number;
@@ -585,7 +594,16 @@ export default function ReachDashboard() {
             const res = await fetch(`/api/fanpages/daily-insights?${params}`, {
               cache: "no-store",
             });
-            if (!res.ok) continue;
+            if (!res.ok) {
+              // Surface the failure in console so silent aggregation gaps
+              // don't masquerade as "0 reach". A previous version chunked
+              // at 100 ids/call and silently hit D1's 100-param limit;
+              // logging makes that class of bug obvious next time.
+              console.warn(
+                `daily-insights chunk failed: ${m} ids[${chunkIds.length}] status=${res.status}`,
+              );
+              continue;
+            }
             const d = await safeJson<{
               series?: Array<{ ts: number; value: number }>;
               perFp?: Record<number, Array<{ ts: number; value: number }>>;
