@@ -131,19 +131,33 @@ export async function GET() {
   const rows: OverviewRow[] = base.map((r) => {
     const agg = postAggMap.get(r.id);
     const early = earliestByFp.get(r.id);
+    // pageReach28d: sum of `page_impressions_unique` for the LAST 28 DAYS.
+    // The route used to sum `arr.values` unfiltered, which collapsed the
+    // entire 365-day stored window into the column — making every page's
+    // Reach 28d ~13× too large. Clamp by `end_time` so the number matches
+    // the column header.
     let pageReach28d: number | null = null;
     if (r.insightsJson) {
       try {
         const parsed = JSON.parse(r.insightsJson) as Record<
           string,
-          Array<{ values: Array<{ value: number | Record<string, number> }> }>
+          Array<{
+            values: Array<{
+              value: number | Record<string, number>;
+              end_time?: string;
+            }>;
+          }>
         >;
         const arr = parsed["page_impressions_unique"]?.[0];
         if (arr) {
-          pageReach28d = arr.values.reduce(
-            (s, v) => s + (typeof v.value === "number" ? v.value : 0),
-            0,
-          );
+          const sinceSec = Math.floor(Date.now() / 1000) - 28 * 86_400;
+          pageReach28d = arr.values.reduce((s, v) => {
+            const ts = v.end_time
+              ? Math.floor(new Date(v.end_time).getTime() / 1000)
+              : 0;
+            if (!Number.isFinite(ts) || ts < sinceSec) return s;
+            return s + (typeof v.value === "number" ? v.value : 0);
+          }, 0);
         }
       } catch {}
     }

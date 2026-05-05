@@ -146,19 +146,45 @@ function fmtTime(ts: number | null): string {
   return d.toLocaleDateString("vi-VN");
 }
 
-function sumMetric(m: InsightMetric | undefined): number | null {
+/**
+ * Sum metric values, optionally clamped to a recency window.
+ *
+ * `sinceSec` (epoch sec): when provided, only values with `end_time >=
+ * sinceSec` are summed. The columns in the fanpage list are labelled
+ * "Reach 28d", "Page views", "Video views" — they're meant to reflect
+ * the last 28 days, not the full 365 days that `insights_json` stores.
+ * Without the clamp, syncing a year of data made every column ~13× too
+ * large (the "số không có thật" the user reported).
+ */
+function sumMetric(
+  m: InsightMetric | undefined,
+  sinceSec?: number,
+): number | null {
   if (!m) return null;
   let total = 0;
+  let seen = 0;
   for (const v of m.values) {
-    if (typeof v.value === "number") total += v.value;
-    else if (v.value && typeof v.value === "object") {
+    if (sinceSec) {
+      const ts = v.end_time
+        ? Math.floor(new Date(v.end_time).getTime() / 1000)
+        : 0;
+      if (!Number.isFinite(ts) || ts < sinceSec) continue;
+    }
+    if (typeof v.value === "number") {
+      total += v.value;
+      seen++;
+    } else if (v.value && typeof v.value === "object") {
       for (const k of Object.keys(v.value)) total += v.value[k] ?? 0;
+      seen++;
     }
   }
-  return total;
+  return seen > 0 ? total : null;
 }
 
-function parseInsights(json: string | null): {
+function parseInsights(
+  json: string | null,
+  days = 28,
+): {
   reach: number | null;
   impressions: number | null;
   videoViews: number | null;
@@ -166,6 +192,7 @@ function parseInsights(json: string | null): {
   if (!json) return { reach: null, impressions: null, videoViews: null };
   try {
     const map = JSON.parse(json) as InsightsMap;
+    const sinceSec = Math.floor(Date.now() / 1000) - days * 86_400;
     // FB deprecated `page_impressions` (no-suffix), `page_engaged_users`, etc
     // on 2025-11-15. Backend now fetches the SAFE replacement set:
     //   - page_impressions_unique  → unique reach
@@ -175,11 +202,11 @@ function parseInsights(json: string | null): {
     // column to `page_views_total` and fall back to deprecated `page_impressions`
     // for any rows still holding pre-Nov-2025 cached JSON.
     return {
-      reach: sumMetric(map["page_impressions_unique"]?.[0]),
+      reach: sumMetric(map["page_impressions_unique"]?.[0], sinceSec),
       impressions:
-        sumMetric(map["page_views_total"]?.[0]) ??
-        sumMetric(map["page_impressions"]?.[0]),
-      videoViews: sumMetric(map["page_video_views"]?.[0]),
+        sumMetric(map["page_views_total"]?.[0], sinceSec) ??
+        sumMetric(map["page_impressions"]?.[0], sinceSec),
+      videoViews: sumMetric(map["page_video_views"]?.[0], sinceSec),
     };
   } catch {
     return { reach: null, impressions: null, videoViews: null };
