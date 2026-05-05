@@ -355,6 +355,27 @@ export default function ReachDashboard() {
   const [syncErr, setSyncErr] = useState("");
   const [refreshKey, setRefreshKey] = useState(0);
   const [earningsExpanded, setEarningsExpanded] = useState(false);
+  // Result of the "🎁 Check lời mời bật KT" button. `null` = not yet
+  // checked (button hidden), object = panel open with the invited list
+  // (or empty list + "không có" message when invitedCount === 0).
+  type InvitedPage = {
+    id: number;
+    pageId: string;
+    name: string;
+    pictureUrl: string | null;
+    link: string | null;
+    options: string[];
+  };
+  const [invitesData, setInvitesData] = useState<{
+    total: number;
+    invitedCount: number;
+    notInvitedCount: number;
+    permCount: number;
+    rateCount: number;
+    errorCount: number;
+    invited: InvitedPage[];
+  } | null>(null);
+  const [checkingInvites, setCheckingInvites] = useState(false);
   // Number of pages auto-skipped on the last sync because their
   // lastSyncError matched a permission pattern. Drives the conditional
   // "🔁 Thử lại pages thiếu quyền" button — only visible when there's
@@ -897,6 +918,98 @@ export default function ReachDashboard() {
     }
   }
 
+  /**
+   * Checks each selected fanpage for an active monetization invitation.
+   * Heuristic: FB returns a non-empty `monetization_options` array on the
+   * Page node when it offers Content Monetization / In-Stream Ads / etc.
+   * to the page admin. Empty / restricted = not invited.
+   *
+   * Result lives in `invitesData` and is rendered in a panel below the
+   * action buttons. No DB writes — pure read flow.
+   */
+  async function checkMonetizationInvites() {
+    if (syncingRef.current) return;
+    const ids = Array.from(selectedIds);
+    if (ids.length === 0) return;
+    syncingRef.current = true;
+    setCheckingInvites(true);
+    setSyncMsg("");
+    setSyncErr("");
+    setInvitesData(null);
+    try {
+      let total = 0;
+      let invitedCount = 0;
+      let notInvitedCount = 0;
+      let permCount = 0;
+      let rateCount = 0;
+      let errorCount = 0;
+      const invited: InvitedPage[] = [];
+      // Same chunking budget as the other bulk actions — each chunk does
+      // 1 monetization-options call per page (parallel inside the route),
+      // so 20 pages × 1 subreq fits with comfortable headroom.
+      for (let i = 0; i < ids.length; i += BULK_FP_CHUNK) {
+        const chunk = ids.slice(i, i + BULK_FP_CHUNK);
+        const res = await fetch("/api/fanpages/check-monetization-invites", {
+          method: "POST",
+          headers: { "X-Body": JSON.stringify({ ids: chunk }) },
+        });
+        if (!res.ok) {
+          // Don't bail the whole loop on one chunk error; aggregate what
+          // we can so a partial result is still useful.
+          errorCount += chunk.length;
+          continue;
+        }
+        const data = await safeJson<{
+          total?: number;
+          invitedCount?: number;
+          notInvitedCount?: number;
+          permCount?: number;
+          rateCount?: number;
+          errorCount?: number;
+          invited?: InvitedPage[];
+        }>(res);
+        total += data.total ?? 0;
+        invitedCount += data.invitedCount ?? 0;
+        notInvitedCount += data.notInvitedCount ?? 0;
+        permCount += data.permCount ?? 0;
+        rateCount += data.rateCount ?? 0;
+        errorCount += data.errorCount ?? 0;
+        for (const p of data.invited ?? []) invited.push(p);
+        setSyncMsg(
+          `Đang check lời mời: ${Math.min(i + chunk.length, ids.length)}/${ids.length} page · ${invitedCount} có lời mời`,
+        );
+      }
+      setInvitesData({
+        total,
+        invitedCount,
+        notInvitedCount,
+        permCount,
+        rateCount,
+        errorCount,
+        invited,
+      });
+      const note: string[] = [];
+      if (permCount > 0) note.push(`${permCount} thiếu quyền`);
+      if (rateCount > 0) note.push(`${rateCount} rate-limit`);
+      if (errorCount > 0) note.push(`${errorCount} lỗi`);
+      const noteStr = note.length > 0 ? ` · ${note.join(" · ")}` : "";
+      if (invitedCount > 0) {
+        setSyncMsg(
+          `🎁 Có ${invitedCount}/${total} page được mời bật kiếm tiền nội dung${noteStr}`,
+        );
+      } else {
+        setSyncMsg(
+          `Hiện tại không có trang nào được mời bật kiếm tiền nội dung (đã check ${total} page${noteStr})`,
+        );
+      }
+    } catch (e) {
+      setSyncErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      syncingRef.current = false;
+      setCheckingInvites(false);
+    }
+  }
+
   async function syncPageInsights(forceAll = false) {
     if (syncingRef.current) return;
     const allIds = Array.from(selectedIds);
@@ -1370,6 +1483,24 @@ export default function ReachDashboard() {
           >
             {syncing ? "…" : `$ Check doanh thu (${selectedIds.size})`}
           </button>
+          <button
+            onClick={checkMonetizationInvites}
+            disabled={
+              syncing || checkingInvites || selectedIds.size === 0
+            }
+            className="btn"
+            style={{
+              padding: "6px 12px",
+              fontSize: 11,
+              borderColor: "#b06ad9",
+              color: "#b06ad9",
+            }}
+            title={`Đọc field monetization_options trên ${selectedIds.size} fanpage. Page có array non-empty = FB đã expose monetization features (xem là "có lời mời bật KT").`}
+          >
+            {checkingInvites
+              ? "Đang check…"
+              : `🎁 Check lời mời bật KT (${selectedIds.size})`}
+          </button>
           {lastPermSkipped > 0 && !syncing && (
             <button
               onClick={() => syncPageInsights(true)}
@@ -1441,6 +1572,166 @@ export default function ReachDashboard() {
               }}
             >
               ⚠ {syncErr}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Monetization-invites panel — populated by checkMonetizationInvites().
+          Stays open until user dismisses (✕) or runs a different action.
+          When invitedCount === 0 we render the "không có" message instead
+          of the list, per UX requirement. */}
+      {invitesData && (
+        <div
+          style={{
+            marginBottom: 12,
+            border: "1px solid #b06ad9",
+            borderRadius: 8,
+            padding: "10px 12px",
+            background: "rgba(176, 106, 217, 0.05)",
+          }}
+        >
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 8,
+              marginBottom: invitesData.invitedCount > 0 ? 8 : 0,
+            }}
+          >
+            <span style={{ fontSize: 13, fontWeight: 600, color: "#b06ad9" }}>
+              🎁 Lời mời bật kiếm tiền
+            </span>
+            <span
+              className="mono"
+              style={{ fontSize: 10, color: "var(--muted)" }}
+            >
+              đã check {invitesData.total} page · {invitesData.invitedCount} có
+              lời mời · {invitesData.notInvitedCount} không có
+              {invitesData.permCount > 0
+                ? ` · ${invitesData.permCount} thiếu quyền`
+                : ""}
+              {invitesData.errorCount > 0
+                ? ` · ${invitesData.errorCount} lỗi`
+                : ""}
+            </span>
+            <button
+              onClick={() => setInvitesData(null)}
+              className="btn"
+              style={{
+                marginLeft: "auto",
+                padding: "2px 8px",
+                fontSize: 10,
+                borderColor: "var(--line)",
+              }}
+              title="Đóng panel"
+            >
+              ✕
+            </button>
+          </div>
+          {invitesData.invitedCount === 0 ? (
+            <div
+              className="mono"
+              style={{
+                fontSize: 11,
+                color: "var(--muted)",
+                fontStyle: "italic",
+              }}
+            >
+              Hiện tại không có trang nào được mời bật kiếm tiền nội dung.
+            </div>
+          ) : (
+            <div
+              style={{
+                display: "grid",
+                gridTemplateColumns: "repeat(auto-fill, minmax(260px, 1fr))",
+                gap: 6,
+              }}
+            >
+              {invitesData.invited.map((p) => (
+                <div
+                  key={p.id}
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 8,
+                    padding: "6px 8px",
+                    border: "1px solid var(--line)",
+                    borderRadius: 6,
+                    background: "var(--paper)",
+                  }}
+                >
+                  {p.pictureUrl ? (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img
+                      src={p.pictureUrl}
+                      alt=""
+                      width={28}
+                      height={28}
+                      style={{
+                        borderRadius: 4,
+                        objectFit: "cover",
+                        flexShrink: 0,
+                      }}
+                    />
+                  ) : (
+                    <div
+                      style={{
+                        width: 28,
+                        height: 28,
+                        borderRadius: 4,
+                        background: "var(--line)",
+                        flexShrink: 0,
+                      }}
+                    />
+                  )}
+                  <div style={{ minWidth: 0, flex: 1 }}>
+                    {p.link ? (
+                      <a
+                        href={p.link}
+                        target="_blank"
+                        rel="noreferrer"
+                        style={{
+                          fontSize: 12,
+                          fontWeight: 500,
+                          color: "var(--ink)",
+                          textDecoration: "none",
+                          display: "block",
+                          whiteSpace: "nowrap",
+                          overflow: "hidden",
+                          textOverflow: "ellipsis",
+                        }}
+                      >
+                        {p.name}
+                      </a>
+                    ) : (
+                      <div
+                        style={{
+                          fontSize: 12,
+                          fontWeight: 500,
+                          whiteSpace: "nowrap",
+                          overflow: "hidden",
+                          textOverflow: "ellipsis",
+                        }}
+                      >
+                        {p.name}
+                      </div>
+                    )}
+                    <div
+                      className="mono"
+                      style={{
+                        fontSize: 9,
+                        color: "var(--muted)",
+                        whiteSpace: "nowrap",
+                        overflow: "hidden",
+                        textOverflow: "ellipsis",
+                      }}
+                    >
+                      {p.options.join(", ")}
+                    </div>
+                  </div>
+                </div>
+              ))}
             </div>
           )}
         </div>
