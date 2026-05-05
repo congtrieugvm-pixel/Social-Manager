@@ -360,30 +360,20 @@ export default function ReachDashboard() {
   // "🔁 Thử lại pages thiếu quyền" button — only visible when there's
   // something to retry. Reset on each new sync attempt.
   const [lastPermSkipped, setLastPermSkipped] = useState(0);
-  // Real daily series (from /api/fanpages/daily-insights). Keyed by metric.
-  // Series is filtered to the user-selected window — sums to the period total
-  // shown on each KPI card.
-  const [dailySeries, setDailySeries] = useState<Record<Metric, { t: number; v: number }[]>>({
-    pageImpressionsUnique: [],
-    pageImpressions: [],
-    pageEngagements: [],
-    pageViews: [],
-    pageVideoViews: [],
-  });
-  // Sum of the prior equivalent-length window (e.g. for "30 ngày", days
-  // 60→30 ago). Drives the delta/% on KPI cards. Filled by the same effect
-  // that loads `dailySeries` (single fetch covers 2× window).
-  const [prevTotals, setPrevTotals] = useState<Record<Metric, number>>({
-    pageImpressionsUnique: 0,
-    pageImpressions: 0,
-    pageEngagements: 0,
-    pageViews: 0,
-    pageVideoViews: 0,
-  });
+  // Full-window per-metric data fetched ONCE per selection change. The
+  // range slider/picker filters this client-side via useMemo below — no
+  // network roundtrip on range changes (the old code refetched all 5
+  // metrics on every range tweak, which made the picker feel laggy).
+  // `null` = nothing loaded yet (or empty selection); empty inner objects
+  // = loaded but the selection's pages have no insights_json data.
+  type MetricBucket = {
+    series: Array<{ ts: number; value: number }>;
+    perFp: Record<number, Array<{ ts: number; value: number }>>;
+  };
+  const [fullData, setFullData] = useState<Record<Metric, MetricBucket> | null>(
+    null,
+  );
   const [loadingDaily, setLoadingDaily] = useState(false);
-  // Per-fanpage daily breakdown for REACH only. Lets the Top fanpage widget
-  // rank fanpages using the same data path as the KPI cards (sum equals).
-  const [reachPerFp, setReachPerFp] = useState<Record<number, { t: number; v: number }[]>>({});
 
   const rangeBody = useMemo<{ days?: number; from?: number; to?: number }>(() => {
     if (rangeMode === "custom") {
@@ -518,46 +508,24 @@ export default function ReachDashboard() {
     };
   }, [selectedIds, rangeQs, refreshKey]);
 
-  // Fetch daily series from insightsJson per fanpage. This is what the chart
-  // plots — actual day-by-day values from FB, not snapshot recording times.
-  // Truncates to the selected display window (rangeMode/custom).
+  // Fetch the FULL stored window of daily series for every metric in ONE
+  // request per chunk (multi-metric server-side, see daily-insights/route).
+  // Range filtering happens client-side in the useMemo block below — that
+  // way the KPI cards / chart / Top widget all update instantly when the
+  // user drags the date picker. The old code re-fetched every metric on
+  // every range tweak which felt sluggish on big selections.
+  //
+  // Re-runs ONLY on selection / refreshKey changes — NOT on range deps.
   useEffect(() => {
     const ids = Array.from(selectedIds);
     let cancelled = false;
     (async () => {
       if (ids.length === 0) {
-        if (!cancelled) {
-          setDailySeries({
-            pageImpressionsUnique: [],
-            pageImpressions: [],
-            pageEngagements: [],
-            pageViews: [],
-            pageVideoViews: [],
-          });
-          // Also reset the per-fanpage reach map; otherwise the Top widget
-          // shows stale rows from the previous selection after Bỏ chọn.
-          setReachPerFp({});
-        }
+        if (!cancelled) setFullData(null);
         return;
       }
       setLoadingDaily(true);
       try {
-        // Compute display-window days. Custom range translates to the
-        // explicit span; preset modes pass directly.
-        let displayDays = 0;
-        if (rangeMode === "custom" && customFrom && customTo) {
-          const f = Math.floor(new Date(customFrom + "T00:00:00").getTime() / 1000);
-          const t = Math.floor(new Date(customTo + "T23:59:59").getTime() / 1000);
-          if (Number.isFinite(f) && Number.isFinite(t) && t > f) {
-            displayDays = Math.max(1, Math.ceil((t - f) / 86_400));
-          }
-        } else if (typeof rangeMode === "number") {
-          displayDays = rangeMode;
-        }
-        // Fetch 2× the window so we can split into [prev, current] and
-        // compute period-over-period delta on the KPI cards.
-        const fetchDays = displayDays > 0 ? displayDays * 2 : 0;
-        const cutoffSec = Math.floor(Date.now() / 1000) - displayDays * 86_400;
         const metrics: Metric[] = [
           "pageImpressionsUnique",
           "pageImpressions",
@@ -565,109 +533,85 @@ export default function ReachDashboard() {
           "pageViews",
           "pageVideoViews",
         ];
-        let reachPerFpCurr: Record<number, { t: number; v: number }[]> = {};
-
-        // Chunk the daily-insights call (one chunk handles all 100 ids on
-        // Paid plan — see DAILY_INSIGHTS_CHUNK). Per-metric chunks remain
-        // sequential because the 5 metrics already run in parallel via
-        // the outer Promise.all (≤5 concurrent fetches), and bumping that
-        // multiplier risks D1 read replica thrash on heavy syncs.
-        const fetchOneMetric = async (
-          m: Metric,
-        ): Promise<
-          [
-            Metric,
-            { t: number; v: number }[],
-            number,
-            Record<number, { t: number; v: number }[]>,
-          ]
-        > => {
-          const dayTotalsAll = new Map<number, number>();
-          const allFpDay: Record<number, Map<number, number>> = {};
-          for (let i = 0; i < ids.length; i += DAILY_INSIGHTS_CHUNK) {
-            const chunkIds = ids.slice(i, i + DAILY_INSIGHTS_CHUNK);
-            const params = new URLSearchParams({
-              ids: chunkIds.join(","),
-              metric: m,
-              days: String(fetchDays),
-            });
-            const res = await fetch(`/api/fanpages/daily-insights?${params}`, {
-              cache: "no-store",
-            });
-            if (!res.ok) {
-              // Surface the failure in console so silent aggregation gaps
-              // don't masquerade as "0 reach". A previous version chunked
-              // at 100 ids/call and silently hit D1's 100-param limit;
-              // logging makes that class of bug obvious next time.
-              console.warn(
-                `daily-insights chunk failed: ${m} ids[${chunkIds.length}] status=${res.status}`,
-              );
-              continue;
+        // Per-metric accumulators across chunks of ≤DAILY_INSIGHTS_CHUNK
+        // ids each (capped well under D1's 100-bound-param limit).
+        const dayTotalsByMetric = new Map<Metric, Map<number, number>>();
+        const perFpByMetric = new Map<Metric, Map<number, Map<number, number>>>();
+        for (const m of metrics) {
+          dayTotalsByMetric.set(m, new Map());
+          perFpByMetric.set(m, new Map());
+        }
+        for (let i = 0; i < ids.length; i += DAILY_INSIGHTS_CHUNK) {
+          const chunkIds = ids.slice(i, i + DAILY_INSIGHTS_CHUNK);
+          const params = new URLSearchParams({
+            ids: chunkIds.join(","),
+            metrics: metrics.join(","),
+            // No `days` — server returns full stored window; client filters.
+          });
+          const res = await fetch(
+            `/api/fanpages/daily-insights?${params}`,
+            { cache: "no-store" },
+          );
+          if (!res.ok) {
+            console.warn(
+              `daily-insights chunk failed: ids[${chunkIds.length}] status=${res.status}`,
+            );
+            continue;
+          }
+          const d = await safeJson<{
+            byMetric?: Record<
+              string,
+              {
+                series?: Array<{ ts: number; value: number }>;
+                perFp?: Record<number, Array<{ ts: number; value: number }>>;
+              }
+            >;
+          }>(res);
+          for (const m of metrics) {
+            const bucket = d.byMetric?.[m];
+            if (!bucket) continue;
+            const dayTotals = dayTotalsByMetric.get(m)!;
+            for (const p of bucket.series ?? []) {
+              dayTotals.set(p.ts, (dayTotals.get(p.ts) ?? 0) + p.value);
             }
-            const d = await safeJson<{
-              series?: Array<{ ts: number; value: number }>;
-              perFp?: Record<number, Array<{ ts: number; value: number }>>;
-            }>(res);
-            // Aggregate aggregate-series across chunks: sum by ts.
-            for (const p of d.series ?? []) {
-              dayTotalsAll.set(
-                p.ts,
-                (dayTotalsAll.get(p.ts) ?? 0) + p.value,
-              );
-            }
-            // Aggregate per-fanpage series. Each chunk only returns
-            // perFp for ITS fanpages, so we build up a per-fp Map.
-            for (const [fpIdStr, arr] of Object.entries(d.perFp ?? {})) {
+            const perFp = perFpByMetric.get(m)!;
+            for (const [fpIdStr, arr] of Object.entries(bucket.perFp ?? {})) {
               const fpId = Number(fpIdStr);
-              let fpMap = allFpDay[fpId];
+              let fpMap = perFp.get(fpId);
               if (!fpMap) {
                 fpMap = new Map<number, number>();
-                allFpDay[fpId] = fpMap;
+                perFp.set(fpId, fpMap);
               }
               for (const p of arr) {
                 fpMap.set(p.ts, (fpMap.get(p.ts) ?? 0) + p.value);
               }
             }
           }
-          const all = Array.from(dayTotalsAll, ([t, v]) => ({ t, v })).sort(
-            (a, b) => a.t - b.t,
-          );
-          const curr = all.filter((p) => p.t >= cutoffSec);
-          const prev = all.filter((p) => p.t < cutoffSec);
-          const prevSum = prev.reduce((s, p) => s + p.v, 0);
-          const perFpCurr: Record<number, { t: number; v: number }[]> = {};
-          for (const [fpIdStr, fpMap] of Object.entries(allFpDay)) {
-            const fpId = Number(fpIdStr);
-            perFpCurr[fpId] = Array.from(fpMap, ([t, v]) => ({ t, v }))
-              .filter((p) => p.t >= cutoffSec)
-              .sort((a, b) => a.t - b.t);
-          }
-          return [m, curr, prevSum, perFpCurr];
-        };
-        const results = await Promise.all(metrics.map(fetchOneMetric));
+        }
         if (!cancelled) {
-          const nextSeries: Record<Metric, { t: number; v: number }[]> = {
-            pageImpressionsUnique: [],
-            pageImpressions: [],
-            pageEngagements: [],
-            pageViews: [],
-            pageVideoViews: [],
+          const next: Record<Metric, MetricBucket> = {
+            pageImpressionsUnique: { series: [], perFp: {} },
+            pageImpressions: { series: [], perFp: {} },
+            pageEngagements: { series: [], perFp: {} },
+            pageViews: { series: [], perFp: {} },
+            pageVideoViews: { series: [], perFp: {} },
           };
-          const nextPrev: Record<Metric, number> = {
-            pageImpressionsUnique: 0,
-            pageImpressions: 0,
-            pageEngagements: 0,
-            pageViews: 0,
-            pageVideoViews: 0,
-          };
-          for (const [m, s, prevSum, perFpCurr] of results) {
-            nextSeries[m] = s;
-            nextPrev[m] = prevSum;
-            if (m === "pageImpressionsUnique") reachPerFpCurr = perFpCurr;
+          for (const m of metrics) {
+            const dayTotals = dayTotalsByMetric.get(m)!;
+            const perFpMap = perFpByMetric.get(m)!;
+            next[m].series = Array.from(dayTotals, ([ts, value]) => ({
+              ts,
+              value,
+            })).sort((a, b) => a.ts - b.ts);
+            const perFp: Record<number, Array<{ ts: number; value: number }>> =
+              {};
+            for (const [fpId, m2] of perFpMap) {
+              perFp[fpId] = Array.from(m2, ([ts, value]) => ({ ts, value }))
+                .sort((a, b) => a.ts - b.ts);
+            }
+            next[m].perFp = perFp;
           }
-          setDailySeries(nextSeries);
-          setPrevTotals(nextPrev);
-          setReachPerFp(reachPerFpCurr);
+          setFullData(next);
         }
       } finally {
         if (!cancelled) setLoadingDaily(false);
@@ -676,7 +620,91 @@ export default function ReachDashboard() {
     return () => {
       cancelled = true;
     };
-  }, [selectedIds, rangeMode, customFrom, customTo, refreshKey]);
+  }, [selectedIds, refreshKey]);
+
+  // Derive the displayed series + delta totals + Top-widget breakdown
+  // from `fullData` and the current range. Pure local computation —
+  // recomputes instantly when the range slider/picker changes.
+  const { dailySeries, prevTotals, reachPerFp } = useMemo<{
+    dailySeries: Record<Metric, { t: number; v: number }[]>;
+    prevTotals: Record<Metric, number>;
+    reachPerFp: Record<number, { t: number; v: number }[]>;
+  }>(() => {
+    const empty: Record<Metric, { t: number; v: number }[]> = {
+      pageImpressionsUnique: [],
+      pageImpressions: [],
+      pageEngagements: [],
+      pageViews: [],
+      pageVideoViews: [],
+    };
+    const zeros: Record<Metric, number> = {
+      pageImpressionsUnique: 0,
+      pageImpressions: 0,
+      pageEngagements: 0,
+      pageViews: 0,
+      pageVideoViews: 0,
+    };
+    if (!fullData) {
+      return { dailySeries: empty, prevTotals: zeros, reachPerFp: {} };
+    }
+    // Resolve the current display window in epoch sec. Mirrors the old
+    // server-side window logic but happens locally on already-fetched data.
+    let curStart = 0;
+    let curEnd = 0;
+    if (rangeMode === "custom" && customFrom && customTo) {
+      const f = Math.floor(new Date(customFrom + "T00:00:00").getTime() / 1000);
+      const t = Math.floor(new Date(customTo + "T23:59:59").getTime() / 1000);
+      if (Number.isFinite(f) && Number.isFinite(t) && t > f) {
+        curStart = f;
+        curEnd = t;
+      }
+    } else if (typeof rangeMode === "number") {
+      curEnd = Math.floor(Date.now() / 1000);
+      curStart = curEnd - rangeMode * 86_400;
+    }
+    const span = curEnd > curStart ? curEnd - curStart : 0;
+    // Previous window of equal length for delta calc on KPI cards.
+    const prevEnd = curStart;
+    const prevStart = curStart - span;
+    const series: Record<Metric, { t: number; v: number }[]> = { ...empty };
+    const prev: Record<Metric, number> = { ...zeros };
+    let perFpCurr: Record<number, { t: number; v: number }[]> = {};
+    const inWindow = (ts: number) =>
+      curStart > 0 ? ts >= curStart && ts <= curEnd : true;
+    const inPrev = (ts: number) =>
+      span > 0 ? ts >= prevStart && ts < prevEnd : false;
+    for (const m of [
+      "pageImpressionsUnique",
+      "pageImpressions",
+      "pageEngagements",
+      "pageViews",
+      "pageVideoViews",
+    ] as Metric[]) {
+      const bucket = fullData[m];
+      if (!bucket) continue;
+      const cur: { t: number; v: number }[] = [];
+      let prevSum = 0;
+      for (const p of bucket.series) {
+        if (inWindow(p.ts)) cur.push({ t: p.ts, v: p.value });
+        else if (inPrev(p.ts)) prevSum += p.value;
+      }
+      series[m] = cur;
+      prev[m] = prevSum;
+      if (m === "pageImpressionsUnique") {
+        const out: Record<number, { t: number; v: number }[]> = {};
+        for (const [fpIdStr, arr] of Object.entries(bucket.perFp)) {
+          const fpId = Number(fpIdStr);
+          const filtered: { t: number; v: number }[] = [];
+          for (const p of arr) {
+            if (inWindow(p.ts)) filtered.push({ t: p.ts, v: p.value });
+          }
+          out[fpId] = filtered;
+        }
+        perFpCurr = out;
+      }
+    }
+    return { dailySeries: series, prevTotals: prev, reachPerFp: perFpCurr };
+  }, [fullData, rangeMode, customFrom, customTo]);
 
   // No auto-fired FB syncs on this page. Earlier revisions auto-fetched
   // earnings (and briefly reach) when selection or range changed; the user

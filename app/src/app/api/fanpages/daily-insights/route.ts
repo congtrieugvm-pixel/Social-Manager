@@ -33,20 +33,40 @@ function valueAsNumber(v: number | Record<string, number>): number {
   return 0;
 }
 
+interface MetricBucket {
+  series: Array<{ ts: number; value: number }>;
+  perFp: Record<number, Array<{ ts: number; value: number }>>;
+}
+
 /**
- * GET /api/fanpages/daily-insights?ids=1,2,3&metric=pageImpressionsUnique
- *   &days=365                        — last N days (truncates series end-aligned to today)
- *   &from=<epochSec>&to=<epochSec>   — explicit window (overrides `days` if both set)
+ * GET /api/fanpages/daily-insights?ids=1,2,3
  *
- * Reads `insights_json` for the given fanpages, extracts daily values for the
- * requested metric, and aggregates (sums) by day across all fanpages so the
- * reach dashboard can plot a real daily time series.
+ *   Single metric (legacy):
+ *     &metric=pageImpressionsUnique
+ *
+ *   Multi metric (preferred — one D1 read + one JSON.parse pass per
+ *   fanpage covers all five metrics, vs the old 5× cost):
+ *     &metrics=pageImpressionsUnique,pageImpressions,pageEngagements,pageViews,pageVideoViews
+ *
+ *   Optional time-window filter:
+ *     &days=365
+ *     &from=<epochSec>&to=<epochSec>     (overrides `days` when both set)
+ *
+ * Reads `insights_json` for the given fanpages ONCE, extracts daily values
+ * for every requested metric in a single pass, and aggregates (sums) by day
+ * across all fanpages.
+ *
+ * Response shape:
+ *   - With `metrics` (plural): `{ byMetric: Record<metricKey, MetricBucket>, ... }`
+ *   - With `metric` (singular): legacy `{ series, perFp, ... }` flat shape
+ *   so old client builds keep working until they refresh.
  */
 export async function GET(req: Request) {
   const ownerId = await getOwnerId();
   const url = new URL(req.url);
   const idsParam = url.searchParams.get("ids") ?? "";
-  const metric = url.searchParams.get("metric") ?? "pageImpressionsUnique";
+  const metricsParam = url.searchParams.get("metrics");
+  const metricParam = url.searchParams.get("metric");
   const days = Number(url.searchParams.get("days")) || 0;
   const fromSec = Number(url.searchParams.get("from")) || 0;
   const toSec = Number(url.searchParams.get("to")) || 0;
@@ -55,16 +75,31 @@ export async function GET(req: Request) {
     .split(",")
     .map((s) => Number(s.trim()))
     .filter((n) => Number.isFinite(n) && n > 0);
-  if (ids.length === 0) {
-    return NextResponse.json({ series: [], rangeStart: 0, rangeEnd: 0, metric });
-  }
 
-  const fbMetric = METRIC_KEY[metric];
-  if (!fbMetric) {
+  // Resolve which metrics the caller asked for. Plural takes precedence;
+  // singular is the legacy path. Default to reach if neither is set.
+  const requestedMetrics: string[] = metricsParam
+    ? metricsParam
+        .split(",")
+        .map((s) => s.trim())
+        .filter(Boolean)
+    : metricParam
+      ? [metricParam]
+      : ["pageImpressionsUnique"];
+
+  const validPairs = requestedMetrics
+    .map((key) => ({ key, fb: METRIC_KEY[key] }))
+    .filter((p): p is { key: string; fb: string } => Boolean(p.fb));
+
+  if (validPairs.length === 0) {
     return NextResponse.json(
-      { error: `Metric không hỗ trợ: ${metric}` },
+      { error: `Metric không hỗ trợ: ${requestedMetrics.join(",")}` },
       { status: 400 },
     );
+  }
+
+  if (ids.length === 0) {
+    return shapeEmpty(metricsParam, requestedMetrics);
   }
 
   const rows = await db
@@ -75,12 +110,20 @@ export async function GET(req: Request) {
     .from(fanpages)
     .where(and(eq(fanpages.ownerUserId, ownerId), inArray(fanpages.id, ids)));
 
-  // Aggregate per-day across fanpages PLUS a per-fanpage day map. The
-  // per-fp breakdown lets the reach dashboard's Top widget rank fanpages
-  // using the SAME data path (and therefore SAME numbers) as the KPI cards
-  // — fixes a long-standing mismatch between header total and Top sum.
-  const dayTotals = new Map<string, number>();
-  const perFpDayMap = new Map<number, Map<string, number>>();
+  // Single-pass extraction: parse each insights_json once, walk every
+  // requested metric series in the same iteration. Old code re-read +
+  // re-parsed the same rows once per metric → 5x the parse work for the
+  // 5-metric reach dashboard. With ~100 fanpages × ~200KB insights_json,
+  // that's ~10MB extra parse work per dashboard load that this collapses.
+  type Buckets = {
+    dayTotals: Map<string, number>;
+    perFpDayMap: Map<number, Map<string, number>>;
+  };
+  const buckets = new Map<string, Buckets>();
+  for (const { key } of validPairs) {
+    buckets.set(key, { dayTotals: new Map(), perFpDayMap: new Map() });
+  }
+
   for (const r of rows) {
     if (!r.insightsJson) continue;
     let parsed: FbInsights;
@@ -89,57 +132,112 @@ export async function GET(req: Request) {
     } catch {
       continue;
     }
-    const series = parsed[fbMetric];
-    if (!Array.isArray(series) || series.length === 0) continue;
-    const values = series[0]?.values ?? [];
-    const fpDayMap = new Map<string, number>();
-    for (const v of values) {
-      if (!v?.end_time) continue;
-      const num = valueAsNumber(v.value);
-      dayTotals.set(v.end_time, (dayTotals.get(v.end_time) ?? 0) + num);
-      fpDayMap.set(v.end_time, num);
+    for (const { key, fb } of validPairs) {
+      const series = parsed[fb];
+      if (!Array.isArray(series) || series.length === 0) continue;
+      const values = series[0]?.values ?? [];
+      const bucket = buckets.get(key)!;
+      const fpDayMap = new Map<string, number>();
+      for (const v of values) {
+        if (!v?.end_time) continue;
+        const num = valueAsNumber(v.value);
+        bucket.dayTotals.set(
+          v.end_time,
+          (bucket.dayTotals.get(v.end_time) ?? 0) + num,
+        );
+        fpDayMap.set(v.end_time, num);
+      }
+      bucket.perFpDayMap.set(r.id, fpDayMap);
     }
-    perFpDayMap.set(r.id, fpDayMap);
   }
 
-  // Build sorted aggregate series of {ts (epoch sec), value}.
-  let series = Array.from(dayTotals.entries())
-    .map(([endTime, value]) => ({
-      ts: Math.floor(new Date(endTime).getTime() / 1000),
-      value,
-    }))
-    .filter((p) => Number.isFinite(p.ts) && p.ts > 0)
-    .sort((a, b) => a.ts - b.ts);
-
-  // Same shape per fanpage.
-  const perFp: Record<number, Array<{ ts: number; value: number }>> = {};
-  for (const [fpId, dayMap] of perFpDayMap) {
-    perFp[fpId] = Array.from(dayMap.entries())
+  // Helper: ISO end_time → epoch sec, sorted, finite-only.
+  const toSeries = (
+    m: Map<string, number>,
+  ): Array<{ ts: number; value: number }> =>
+    Array.from(m.entries())
       .map(([endTime, value]) => ({
         ts: Math.floor(new Date(endTime).getTime() / 1000),
         value,
       }))
       .filter((p) => Number.isFinite(p.ts) && p.ts > 0)
       .sort((a, b) => a.ts - b.ts);
-  }
 
-  // Filter aggregate AND per-fp series by the same window.
-  function applyFilter<T extends { ts: number }>(arr: T[]): T[] {
+  // Apply optional time-window filter to a series. The new client paths
+  // skip these params (it filters client-side once the full window is in
+  // hand, which makes range slider changes free). Legacy calls still
+  // honour `days`/`from`/`to`.
+  const cutoff = days > 0 ? Math.floor(Date.now() / 1000) - days * 86_400 : 0;
+  const applyWindow = <T extends { ts: number }>(arr: T[]): T[] => {
     if (fromSec > 0 && toSec > 0) {
       return arr.filter((p) => p.ts >= fromSec && p.ts <= toSec);
-    } else if (days > 0 && arr.length > 0) {
-      const cutoff = Math.floor(Date.now() / 1000) - days * 86_400;
+    }
+    if (cutoff > 0) {
       return arr.filter((p) => p.ts >= cutoff);
     }
     return arr;
-  }
-  series = applyFilter(series);
-  for (const fpId of Object.keys(perFp)) {
-    perFp[Number(fpId)] = applyFilter(perFp[Number(fpId)]);
+  };
+
+  const byMetric: Record<string, MetricBucket> = {};
+  let earliest = 0;
+  let latest = 0;
+  for (const { key } of validPairs) {
+    const bucket = buckets.get(key)!;
+    const series = applyWindow(toSeries(bucket.dayTotals));
+    const perFp: Record<number, Array<{ ts: number; value: number }>> = {};
+    for (const [fpId, dayMap] of bucket.perFpDayMap) {
+      perFp[fpId] = applyWindow(toSeries(dayMap));
+    }
+    byMetric[key] = { series, perFp };
+    if (series.length > 0) {
+      if (!earliest || series[0].ts < earliest) earliest = series[0].ts;
+      if (!latest || series[series.length - 1].ts > latest)
+        latest = series[series.length - 1].ts;
+    }
   }
 
-  const rangeStart = series.length > 0 ? series[0].ts : 0;
-  const rangeEnd = series.length > 0 ? series[series.length - 1].ts : 0;
+  // Plural response shape — preferred. Carries every requested metric.
+  if (metricsParam) {
+    return NextResponse.json({
+      byMetric,
+      metrics: requestedMetrics,
+      rangeStart: earliest,
+      rangeEnd: latest,
+    });
+  }
 
-  return NextResponse.json({ series, perFp, rangeStart, rangeEnd, metric });
+  // Singular legacy shape — keeps any not-yet-refreshed client builds
+  // working through the deploy window. Drop after a couple of days.
+  const onlyKey = validPairs[0].key;
+  const only = byMetric[onlyKey];
+  return NextResponse.json({
+    series: only.series,
+    perFp: only.perFp,
+    metric: onlyKey,
+    rangeStart: earliest,
+    rangeEnd: latest,
+  });
+}
+
+function shapeEmpty(
+  metricsParam: string | null,
+  requestedMetrics: string[],
+): Response {
+  if (metricsParam) {
+    const byMetric: Record<string, MetricBucket> = {};
+    for (const m of requestedMetrics) byMetric[m] = { series: [], perFp: {} };
+    return NextResponse.json({
+      byMetric,
+      metrics: requestedMetrics,
+      rangeStart: 0,
+      rangeEnd: 0,
+    });
+  }
+  return NextResponse.json({
+    series: [],
+    perFp: {},
+    metric: requestedMetrics[0] ?? "pageImpressionsUnique",
+    rangeStart: 0,
+    rangeEnd: 0,
+  });
 }
