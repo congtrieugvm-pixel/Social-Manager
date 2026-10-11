@@ -40,13 +40,23 @@ jobs:
           workingDirectory: app
           command: d1 migrations apply social-manager --remote
 
+      # Plain `npx wrangler deploy` (project's pinned wrangler) instead of
+      # wrangler-action, which hides the real error inside a collapsed group.
+      # On failure the log tail is re-emitted as ::error:: annotations so it
+      # shows on the run summary page.
       - name: Deploy Worker
-        uses: cloudflare/wrangler-action@v3
-        with:
-          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          workingDirectory: app
-          command: deploy
+        working-directory: app
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          set -o pipefail
+          if ! npx wrangler deploy 2>&1 | tee deploy.log; then
+            grep -v '^\s*$' deploy.log | tail -n 25 | while IFS= read -r line; do
+              echo "::error title=wrangler deploy::${line}"
+            done
+            exit 1
+          fi
           # No `secrets:` upload here. The old ENC_KEY upload ran BEFORE the
           # deploy and, once it started failing ("Failed to upload secrets"),
           # blocked every deploy — while the app never read ENC_KEY (crypto
