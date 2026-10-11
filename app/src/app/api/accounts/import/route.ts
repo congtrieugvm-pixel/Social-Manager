@@ -9,7 +9,7 @@ import {
   type FieldKey,
   type ParsedRow,
 } from "@/lib/parser";
-import { inArray, sql } from "drizzle-orm";
+import { and, eq, inArray, sql } from "drizzle-orm";
 import { readBody } from "@/lib/req-body";
 import { getOwnerId } from "@/lib/scope";
 import { AuthError } from "@/lib/auth";
@@ -21,7 +21,7 @@ interface ImportBody {
   order?: FieldKey[];
 }
 
-type RowStatus = "inserted" | "existing" | "conflict" | "error" | "invalid";
+type RowStatus = "inserted" | "existing" | "error" | "invalid";
 
 interface ResultRow extends ParsedRow {
   status?: RowStatus;
@@ -53,42 +53,30 @@ function sanitizeOrder(order: unknown): FieldKey[] {
 }
 
 /**
- * Look up which usernames already exist, case-insensitively and across ALL
- * owners — `accounts.username` has a global UNIQUE index, so a username owned
- * by another user would make the insert fail. Returns lowercased username →
- * owner id.
+ * Usernames (lowercased) that already exist in THIS user's accounts. Other
+ * users may hold the same TikTok username — uniqueness is per owner
+ * (index accounts_owner_username_unique, migration 0006).
  */
-async function findExisting(usernames: string[]): Promise<Map<string, number | null>> {
-  const out = new Map<string, number | null>();
+async function findExisting(usernames: string[], ownerId: number): Promise<Set<string>> {
+  const out = new Set<string>();
   const lowered = [...new Set(usernames.map((u) => u.toLowerCase()))];
   for (let i = 0; i < lowered.length; i += IN_CHUNK) {
     const chunk = lowered.slice(i, i + IN_CHUNK);
     const found = await db
-      .select({ username: accounts.username, ownerUserId: accounts.ownerUserId })
+      .select({ username: accounts.username })
       .from(accounts)
-      .where(inArray(sql`lower(${accounts.username})`, chunk));
-    for (const f of found) out.set(f.username.toLowerCase(), f.ownerUserId);
+      .where(and(eq(accounts.ownerUserId, ownerId), inArray(sql`lower(${accounts.username})`, chunk)));
+    for (const f of found) out.add(f.username.toLowerCase());
   }
   return out;
 }
 
-function markExisting(
-  rows: ParsedRow[],
-  existing: Map<string, number | null>,
-  ownerId: number,
-): ResultRow[] {
+function markExisting(rows: ParsedRow[], existing: Set<string>): ResultRow[] {
   return rows.map((r) => {
     if (!r.valid) return { ...r, status: "invalid" as const };
-    const key = r.username.toLowerCase();
-    if (!existing.has(key)) return r;
-    return existing.get(key) === ownerId
-      ? { ...r, valid: false, status: "existing" as const, error: "Đã tồn tại trong DB" }
-      : {
-          ...r,
-          valid: false,
-          status: "conflict" as const,
-          error: "Username đã thuộc tài khoản người dùng khác",
-        };
+    return existing.has(r.username.toLowerCase())
+      ? { ...r, valid: false, status: "existing" as const, error: "Đã có trong tài khoản của bạn" }
+      : r;
   });
 }
 
@@ -116,8 +104,9 @@ export async function POST(req: Request) {
     const { rows } = dedupByUsername(parsed);
     const existing = await findExisting(
       rows.filter((r) => r.valid).map((r) => r.username),
+      ownerId,
     );
-    const marked = markExisting(rows, existing, ownerId);
+    const marked = markExisting(rows, existing);
 
     const resolvedGroupId =
       typeof groupId === "number" && Number.isFinite(groupId) ? groupId : null;
@@ -157,7 +146,6 @@ export async function POST(req: Request) {
       validCount: out.filter((r) => r.status !== "invalid").length,
       inserted: count("inserted"),
       skippedExisting: count("existing"),
-      conflict: count("conflict"),
       failed: count("error"),
       invalid: count("invalid"),
       rows: out,
@@ -179,10 +167,11 @@ export async function PUT(req: Request) {
     const { rows, duplicates } = dedupByUsername(parsed);
     const existing = await findExisting(
       rows.filter((r) => r.valid).map((r) => r.username),
+      ownerId,
     );
 
     return NextResponse.json({
-      rows: markExisting(rows, existing, ownerId),
+      rows: markExisting(rows, existing),
       duplicatesInInput: duplicates,
     });
   } catch (e) {

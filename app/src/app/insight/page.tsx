@@ -202,7 +202,7 @@ export default function InsightPage() {
   const [pagesTick, setPagesTick] = useState(0);
   const [sort, setSort] = useState<{ key: SortKey; dir: "asc" | "desc" }>({ key: "reach", dir: "desc" });
   const [checked, setChecked] = useState<Set<string>>(new Set());
-  const [showTokens, setShowTokens] = useState(false);
+  const [tab, setTab] = useState<"reach" | "tokens">("reach");
   const [showGroups, setShowGroups] = useState(false);
   const freshRef = useRef(false);
   const runRef = useRef(0);
@@ -224,7 +224,7 @@ export default function InsightPage() {
       ]);
       if (!t.ok) setNotice({ tone: "err", text: t.data.error ?? "Không tải được token" });
       setTokens(t.data.tokens ?? []);
-      if ((t.data.tokens ?? []).length === 0) setShowTokens(true);
+      if ((t.data.tokens ?? []).length === 0) setTab("tokens");
       if (g.ok) {
         setGroups(g.data.groups);
         setAssignments(g.data.assignments);
@@ -410,6 +410,13 @@ export default function InsightPage() {
     if (!r.ok) return setNotice({ tone: "err", text: r.data.error ?? "Không xóa được token" });
     setTokens((prev) => prev?.filter((x) => x.id !== t.id) ?? prev);
     setNotice({ tone: "ok", text: `Đã xóa token “${t.label}”.` });
+  }
+
+  async function renameToken(t: Token, label: string) {
+    const r = await api(`/api/insight/tokens/${t.id}`, { method: "PATCH", body: { label } });
+    if (!r.ok) return setNotice({ tone: "err", text: r.data.error ?? "Không đổi được tên token" });
+    const shown = label.trim() || t.fbName || `Token #${t.id}`;
+    setTokens((prev) => prev?.map((x) => (x.id === t.id ? { ...x, label: shown } : x)) ?? prev);
   }
 
   // --- groups ---------------------------------------------------------------
@@ -609,10 +616,15 @@ export default function InsightPage() {
           </h1>
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
-          <button className="btn" style={smallBtn} onClick={() => setShowTokens((v) => !v)} aria-expanded={showTokens}>
-            Token ({tokens?.length ?? 0}) {showTokens ? "▴" : "▾"}
-          </button>
-          <div className="btn-group" role="tablist" aria-label="Chọn kỳ">
+          <div className="btn-group" role="tablist" aria-label="Chọn tab">
+            <button role="tab" aria-selected={tab === "reach"} className={`btn-seg${tab === "reach" ? " active" : ""}`} onClick={() => setTab("reach")}>
+              Reach
+            </button>
+            <button role="tab" aria-selected={tab === "tokens"} className={`btn-seg${tab === "tokens" ? " active" : ""}`} onClick={() => setTab("tokens")}>
+              Quản lý token ({tokens?.length ?? 0})
+            </button>
+          </div>
+          {tab === "reach" && <div className="btn-group" role="tablist" aria-label="Chọn kỳ">
             {RANGES.map((r) => (
               <button
                 key={r.key}
@@ -624,7 +636,7 @@ export default function InsightPage() {
                 {r.label}
               </button>
             ))}
-          </div>
+          </div>}
         </div>
       </header>
 
@@ -649,17 +661,37 @@ export default function InsightPage() {
         </div>
       )}
 
-      {showTokens && tokens && (
-        <TokenPanel tokens={tokens} pageCounts={tokenPages} onAdd={addToken} onDelete={deleteToken} />
-      )}
-
-      {tokens === null || pagesProgress ? (
+      {tab === "tokens" ? (
+        tokens && (
+          <TokenManager
+            tokens={tokens}
+            pages={pages}
+            loadingPages={pagesProgress}
+            groups={groups}
+            assignments={assignments}
+            onAdd={addToken}
+            onDelete={deleteToken}
+            onRename={renameToken}
+            onAssign={assign}
+            onCreateGroup={createGroup}
+            onReloadPages={() => setPagesTick((n) => n + 1)}
+          />
+        )
+      ) : tokens === null || pagesProgress ? (
         <div className="card mono" style={{ color: "var(--muted)", fontSize: 12 }}>
           {pagesProgress ? `Đang tải danh sách Trang ${pagesProgress.done}/${pagesProgress.total} token…` : "Đang tải…"}
         </div>
-      ) : tokens.length === 0 ? null : pages.length === 0 ? (
+      ) : tokens.length === 0 ? (
+        <div className="card" style={{ color: "var(--muted)", lineHeight: 1.6 }}>
+          Chưa có token. Mở tab{" "}
+          <button className="btn" style={{ padding: "2px 8px", fontSize: 11 }} onClick={() => setTab("tokens")}>
+            Quản lý token
+          </button>{" "}
+          để nhập System User Token / User Token.
+        </div>
+      ) : pages.length === 0 ? (
         <div className="card" style={{ color: "var(--muted)" }}>
-          Token chưa đọc được Trang nào (cần quyền pages_show_list). Xem lỗi ở danh sách token phía trên.
+          Token chưa đọc được Trang nào (cần quyền pages_show_list). Xem lỗi ở tab Quản lý token.
         </div>
       ) : (
         <>
@@ -1063,84 +1095,217 @@ function GroupManager({
   );
 }
 
-function TokenPanel({
+// "Quản lý token" tab: paste System User / User / Page tokens and see, per
+// token, the pages it reads — with group assignment right there.
+function TokenManager({
   tokens,
-  pageCounts,
+  pages,
+  loadingPages,
+  groups,
+  assignments,
   onAdd,
   onDelete,
+  onRename,
+  onAssign,
+  onCreateGroup,
+  onReloadPages,
 }: {
   tokens: Token[];
-  pageCounts: Record<number, number>;
+  pages: Page[];
+  loadingPages: { done: number; total: number } | null;
+  groups: Group[];
+  assignments: Record<string, number>;
   onAdd: (raw: string, label: string) => Promise<boolean>;
   onDelete: (t: Token) => void;
+  onRename: (t: Token, label: string) => void;
+  onAssign: (pageIds: string[], groupId: number | null) => Promise<void>;
+  onCreateGroup: (name: string, color: string) => Promise<Group | null>;
+  onReloadPages: () => void;
 }) {
   const [raw, setRaw] = useState("");
   const [label, setLabel] = useState("");
   const [busy, setBusy] = useState(false);
+  const [open, setOpen] = useState<Set<number>>(new Set());
+  const [filter, setFilter] = useState("");
+  const groupById = new Map(groups.map((g) => [g.id, g]));
+
+  function toggle(id: number) {
+    setOpen((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
   return (
-    <section className="card" style={{ marginBottom: 24 }}>
-      <div className="section-label" style={{ marginBottom: 10 }}>
-        Token đọc Insight — dán User Access Token (đọc mọi Trang tài khoản quản lý) hoặc Page Token. Token được mã hóa khi lưu.
-      </div>
-      <form
-        style={{ display: "flex", gap: 8, flexWrap: "wrap" }}
-        onSubmit={async (e) => {
-          e.preventDefault();
-          if (!raw.trim() || busy) return;
-          setBusy(true);
-          const ok = await onAdd(raw.trim(), label.trim());
-          setBusy(false);
-          if (ok) {
-            setRaw("");
-            setLabel("");
-          }
-        }}
-      >
-        <input
-          className="input mono"
-          placeholder="EAA…"
-          value={raw}
-          onChange={(e) => setRaw(e.target.value)}
-          autoComplete="off"
-          spellCheck={false}
-          style={{ flex: "3 1 260px", fontSize: 12 }}
-        />
-        <input className="input" placeholder="Tên gợi nhớ (tùy chọn)" value={label} onChange={(e) => setLabel(e.target.value)} style={{ flex: "1 1 140px" }} />
-        <button className="btn btn-primary" style={smallBtn} disabled={!raw.trim() || busy}>
-          {busy ? "Đang kiểm tra…" : "Thêm token"}
-        </button>
-      </form>
+    <>
+      <section className="card" style={{ marginBottom: 20 }}>
+        <h2 className="h2-serif" style={{ fontSize: 18, marginBottom: 6 }}>
+          Thêm <em>token</em>
+        </h2>
+        <div className="section-label" style={{ marginBottom: 12, lineHeight: 1.6 }}>
+          Dán <b>System User Token</b> (Business Manager) hoặc User Access Token — đọc mọi Trang mà user đó quản lý — hoặc
+          một Page Token. Cần quyền pages_show_list + read_insights. Token được kiểm tra với Facebook rồi lưu mã hóa; dán
+          lại token mới của cùng user sẽ thay token cũ.
+        </div>
+        <form
+          style={{ display: "flex", gap: 8, flexWrap: "wrap" }}
+          onSubmit={async (e) => {
+            e.preventDefault();
+            if (!raw.trim() || busy) return;
+            setBusy(true);
+            const ok = await onAdd(raw.trim(), label.trim());
+            setBusy(false);
+            if (ok) {
+              setRaw("");
+              setLabel("");
+            }
+          }}
+        >
+          <input
+            className="input mono"
+            placeholder="EAA… (System User Token / User Token / Page Token)"
+            aria-label="Token"
+            value={raw}
+            onChange={(e) => setRaw(e.target.value)}
+            autoComplete="off"
+            spellCheck={false}
+            style={{ flex: "3 1 280px", fontSize: 12 }}
+          />
+          <input
+            className="input"
+            placeholder="Tên gợi nhớ (tùy chọn)"
+            value={label}
+            onChange={(e) => setLabel(e.target.value)}
+            style={{ flex: "1 1 150px" }}
+          />
+          <button className="btn btn-primary" style={smallBtn} disabled={!raw.trim() || busy}>
+            {busy ? "Đang kiểm tra…" : "Thêm token"}
+          </button>
+        </form>
+      </section>
+
       {tokens.length > 0 && (
-        <div className="table-wrap" style={{ marginTop: 14 }}>
-          <table className="table">
-            <tbody>
-              {tokens.map((t) => (
-                <tr key={t.id}>
-                  <td>
-                    <div style={{ color: "var(--ink)" }}>{t.label}</div>
-                    <div className="mono" style={{ fontSize: 10, color: "var(--dim)" }}>
-                      {t.fbName && t.fbName !== t.label ? `${t.fbName} · ` : ""}
-                      {t.preview}
+        <section className="section">
+          <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", marginBottom: 12 }}>
+            <h2 className="h2-serif" style={{ fontSize: 18 }}>
+              User <em>&amp; Trang</em>
+            </h2>
+            <span className="mono" style={{ fontSize: 11, color: "var(--muted)" }}>
+              {tokens.length} token · {pages.length} Trang
+              {loadingPages ? ` · đang đọc ${loadingPages.done}/${loadingPages.total}…` : ""}
+            </span>
+            <span style={{ flex: 1 }} />
+            <input
+              className="input"
+              placeholder="Lọc Trang…"
+              value={filter}
+              onChange={(e) => setFilter(e.target.value)}
+              style={{ maxWidth: 220, padding: "4px 8px", fontSize: 12 }}
+            />
+            <button className="btn" style={smallBtn} onClick={() => setOpen(new Set(tokens.map((t) => t.id)))}>
+              Mở hết
+            </button>
+            <button className="btn" style={smallBtn} onClick={onReloadPages} disabled={!!loadingPages}>
+              ↻ Đọc lại Trang
+            </button>
+          </div>
+
+          <div style={{ display: "grid", gap: 10 }}>
+            {tokens.map((t) => {
+              const term = filter.trim().toLowerCase();
+              const own = pages.filter((p) => p.tokenIds.includes(t.id));
+              const shown = term ? own.filter((p) => p.name.toLowerCase().includes(term) || p.id.includes(term)) : own;
+              const isOpen = open.has(t.id) || (!!term && shown.length > 0);
+              return (
+                <div key={t.id} className="card insight-token-card" style={{ padding: 0, overflow: "hidden" }}>
+                  <div style={{ display: "flex", gap: 10, alignItems: "center", padding: "12px 14px", flexWrap: "wrap" }}>
+                    <button
+                      className="btn"
+                      style={{ padding: "2px 8px", fontSize: 11 }}
+                      onClick={() => toggle(t.id)}
+                      aria-expanded={isOpen}
+                      aria-label={isOpen ? "Thu gọn" : "Mở danh sách Trang"}
+                    >
+                      {isOpen ? "▾" : "▸"}
+                    </button>
+                    <div style={{ minWidth: 0, flex: "1 1 220px" }}>
+                      <input
+                        className="input"
+                        defaultValue={t.label}
+                        aria-label="Tên token"
+                        onBlur={(e) => {
+                          const v = e.target.value.trim();
+                          if (v !== t.label) onRename(t, v);
+                        }}
+                        onKeyDown={(e) => e.key === "Enter" && (e.target as HTMLInputElement).blur()}
+                        style={{ padding: "3px 8px", fontSize: 13, fontWeight: 600, maxWidth: 280, width: "100%" }}
+                      />
+                      <div className="mono" style={{ fontSize: 10, color: "var(--dim)", marginTop: 3 }}>
+                        {t.fbName && t.fbName !== t.label ? `${t.fbName} · ` : ""}
+                        {t.preview}
+                      </div>
                     </div>
-                  </td>
-                  <td>
                     <span className="chip">{t.kind === "page" ? "Page token" : "User token"}</span>
-                  </td>
-                  <td className="mono" style={{ fontSize: 11, color: "var(--muted)", whiteSpace: "nowrap" }}>
-                    {pageCounts[t.id] !== undefined ? `${pageCounts[t.id]} Trang` : ""}
-                  </td>
-                  <td style={{ fontSize: 11, color: "var(--danger)", maxWidth: 280 }}>{t.lastError ?? ""}</td>
-                  <td className="right">
+                    <span className="mono" style={{ fontSize: 11, color: "var(--muted)", whiteSpace: "nowrap" }}>
+                      {own.length} Trang
+                    </span>
                     <button className="btn btn-danger" style={{ padding: "3px 8px", fontSize: 10 }} onClick={() => onDelete(t)}>
                       Xóa
                     </button>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+                  </div>
+                  {t.lastError && (
+                    <div style={{ padding: "0 14px 10px 50px", fontSize: 11, color: "var(--danger)" }}>{t.lastError}</div>
+                  )}
+                  {isOpen && (
+                    <div style={{ borderTop: "1px solid var(--line)", maxHeight: 360, overflowY: "auto" }}>
+                      {shown.length === 0 ? (
+                        <div style={{ padding: 14, fontSize: 12, color: "var(--muted)" }}>
+                          {own.length === 0 ? "Token này chưa đọc được Trang nào." : "Không có Trang khớp."}
+                        </div>
+                      ) : (
+                        <table className="table">
+                          <tbody>
+                            {shown.map((p) => {
+                              const g = assignments[p.id] ? groupById.get(assignments[p.id]) ?? null : null;
+                              return (
+                                <tr key={p.id}>
+                                  <td style={{ width: 36 }}>
+                                    <PageAvatar page={p} color={g?.color ?? null} />
+                                  </td>
+                                  <td>
+                                    <div className="insight-ellipsis" style={{ maxWidth: 320, color: "var(--ink)" }} title={p.name}>
+                                      {p.name}
+                                    </div>
+                                    <div className="mono" style={{ fontSize: 10, color: "var(--dim)" }}>
+                                      {p.id}
+                                      {p.tokenIds.length > 1 ? ` · đọc được qua ${p.tokenIds.length} token` : ""}
+                                    </div>
+                                  </td>
+                                  <td className="right">
+                                    <GroupSelect
+                                      groups={groups}
+                                      value={g?.id ?? null}
+                                      onChange={(gid) => onAssign([p.id], gid)}
+                                      onCreate={onCreateGroup}
+                                      compact
+                                    />
+                                  </td>
+                                </tr>
+                              );
+                            })}
+                          </tbody>
+                        </table>
+                      )}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </section>
       )}
-    </section>
+    </>
   );
 }

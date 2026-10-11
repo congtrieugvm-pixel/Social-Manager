@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { generateTotpCode } from "@/lib/totp";
+import { encodeBodyHeader } from "@/lib/req-body";
 
 interface Video {
   id: string;
@@ -233,6 +234,7 @@ export default function Dashboard() {
   const [sortDir, setSortDir] = useState<SortDir>("desc");
 
   const [exportOpen, setExportOpen] = useState(false);
+  const [transferOpen, setTransferOpen] = useState(false);
   const [exportBusy, setExportBusy] = useState(false);
   const [exportText, setExportText] = useState("");
   const [exportCount, setExportCount] = useState(0);
@@ -1524,6 +1526,15 @@ export default function Dashboard() {
               {exportBusy ? "Đang xuất…" : `Xuất (${selected.size})`}
             </button>
             <button
+              onClick={() => setTransferOpen(true)}
+              disabled={selected.size === 0}
+              title="Chuyển / sao chép thông tin các tài khoản đã chọn sang user khác"
+              className="btn"
+              style={{ padding: "5px 10px", fontSize: 10, flexShrink: 0 }}
+            >
+              Chuyển user
+            </button>
+            <button
               onClick={removeSelectedFromGroup}
               disabled={selected.size === 0}
               title="Xóa khỏi nhóm (giữ tài khoản)"
@@ -2382,6 +2393,17 @@ export default function Dashboard() {
             </div>
           </div>
         </div>
+      )}
+
+      {transferOpen && (
+        <TransferModal
+          ids={Array.from(selected)}
+          onClose={() => setTransferOpen(false)}
+          onDone={async (mode) => {
+            if (mode === "move") setSelected(new Set());
+            await load();
+          }}
+        />
       )}
 
       {exportOpen && (
@@ -3636,6 +3658,137 @@ function HistoryList({
           )}
         </div>
       ))}
+    </div>
+  );
+}
+
+// Give the selected accounts to another app user — move (they leave this
+// list) or copy (both users keep one). Server: /api/accounts/transfer.
+function TransferModal({
+  ids,
+  onClose,
+  onDone,
+}: {
+  ids: number[];
+  onClose: () => void;
+  onDone: (mode: "move" | "copy") => Promise<void>;
+}) {
+  const [toUsername, setToUsername] = useState("");
+  const [mode, setMode] = useState<"move" | "copy">("move");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [result, setResult] = useState<{
+    done: number;
+    to: string;
+    mode: "move" | "copy";
+    skipped: Array<{ username: string; reason: string }>;
+  } | null>(null);
+
+  async function submit() {
+    if (!toUsername.trim() || busy) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const res = await fetch("/api/accounts/transfer", {
+        method: "POST",
+        headers: { "X-Body": encodeBodyHeader({ ids, toUsername: toUsername.trim(), mode }) },
+      });
+      const data = await res.json().catch(() => ({ error: `Lỗi ${res.status}` }));
+      if (!res.ok || data.error) {
+        setError(data.error ?? `Lỗi ${res.status}`);
+        return;
+      }
+      setResult(data);
+      await onDone(mode);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="modal-overlay" onClick={onClose}>
+      <div className="modal" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 520, width: "90%" }}>
+        <div className="mono" style={{ fontSize: 10, letterSpacing: "0.18em", textTransform: "uppercase", color: "var(--muted)" }}>
+          Chuyển tài khoản
+        </div>
+        <h2 style={{ fontFamily: "var(--font-serif)", fontSize: 22, margin: "6px 0 16px", letterSpacing: "-0.01em" }}>
+          {ids.length} tài khoản → user khác
+        </h2>
+
+        {result ? (
+          <div style={{ fontSize: 13, lineHeight: 1.6 }}>
+            <div style={{ color: "var(--good)" }}>
+              Đã {result.mode === "move" ? "chuyển" : "sao chép"} {result.done} tài khoản cho <b>{result.to}</b>.
+            </div>
+            {result.skipped.length > 0 && (
+              <div style={{ marginTop: 10 }}>
+                <div style={{ color: "var(--warn)" }}>Bỏ qua {result.skipped.length}:</div>
+                <ul style={{ margin: "4px 0 0 18px", maxHeight: 180, overflowY: "auto", color: "var(--muted)" }}>
+                  {result.skipped.map((s) => (
+                    <li key={s.username}>
+                      <span className="mono" style={{ color: "var(--ink-soft)" }}>{s.username}</span> — {s.reason}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+            <div style={{ marginTop: 16, textAlign: "right" }}>
+              <button className="btn btn-primary" onClick={onClose} style={{ padding: "6px 14px", fontSize: 12 }}>
+                Xong
+              </button>
+            </div>
+          </div>
+        ) : (
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+              submit();
+            }}
+          >
+            <label className="section-label" style={{ display: "block", marginBottom: 6 }}>
+              Username của user nhận
+            </label>
+            <input
+              className="input"
+              value={toUsername}
+              onChange={(e) => setToUsername(e.target.value)}
+              placeholder="vd: nhanvien01"
+              autoFocus
+              style={{ width: "100%" }}
+            />
+            <div style={{ display: "grid", gap: 8, margin: "16px 0", fontSize: 13 }}>
+              <label style={{ display: "flex", gap: 8, alignItems: "flex-start", cursor: "pointer" }}>
+                <input type="radio" checked={mode === "move"} onChange={() => setMode("move")} />
+                <span>
+                  <b>Chuyển</b> — tài khoản rời khỏi danh sách của bạn, sang user nhận.
+                </span>
+              </label>
+              <label style={{ display: "flex", gap: 8, alignItems: "flex-start", cursor: "pointer" }}>
+                <input type="radio" checked={mode === "copy"} onChange={() => setMode("copy")} />
+                <span>
+                  <b>Sao chép</b> — user nhận có một bản, bạn vẫn giữ bản của mình.
+                </span>
+              </label>
+            </div>
+            <div style={{ fontSize: 11, color: "var(--muted)", lineHeight: 1.5, marginBottom: 14 }}>
+              Toàn bộ thông tin được chuyển (pass, email, 2FA, lịch sử, token Hotmail, ghi chú, số liệu). Nhóm /
+              trạng thái / quốc gia / máy / nhân viên là danh mục riêng của bạn nên được để trống bên user nhận.
+              Tài khoản user nhận đã có sẽ được bỏ qua.
+            </div>
+            {error && <div style={{ color: "var(--danger)", fontSize: 12, marginBottom: 12 }}>{error}</div>}
+            <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+              <button type="button" className="btn" onClick={onClose} style={{ padding: "6px 14px", fontSize: 12 }}>
+                Hủy
+              </button>
+              <button className="btn btn-primary" disabled={!toUsername.trim() || busy} style={{ padding: "6px 14px", fontSize: 12 }}>
+                {busy ? "Đang xử lý…" : mode === "move" ? "Chuyển" : "Sao chép"}
+              </button>
+            </div>
+          </form>
+        )}
+      </div>
     </div>
   );
 }

@@ -70,7 +70,7 @@ interface ParsedRow {
   note: string;
   valid: boolean;
   error?: string;
-  status?: "inserted" | "existing" | "conflict" | "error" | "invalid";
+  status?: "inserted" | "existing" | "error" | "invalid";
 }
 
 interface PreviewResponse {
@@ -81,7 +81,6 @@ interface PreviewResponse {
 interface ImportResponse {
   inserted: number;
   skippedExisting: number;
-  conflict: number;
   failed: number;
   invalid: number;
   rows: ParsedRow[];
@@ -349,7 +348,6 @@ ${SHORT_EXAMPLE}`;
       setResult({
         inserted: count("inserted"),
         skippedExisting: count("existing"),
-        conflict: count("conflict"),
         failed: count("error"),
         invalid: count("invalid"),
         rows,
@@ -367,7 +365,7 @@ ${SHORT_EXAMPLE}`;
   function retryFailed() {
     if (!result) return;
     const failed = result.rows.filter(
-      (r) => r.status === "error" || r.status === "conflict",
+      (r) => r.status === "error",
     );
     setText(failed.map((r) => r.raw).join("\n"));
     setResult(null);
@@ -733,14 +731,6 @@ ${SHORT_EXAMPLE}`;
               <div className="section-label">Trùng (bỏ qua)</div>
               <div className="kpi-num">{result.skippedExisting}</div>
             </div>
-            {result.conflict > 0 && (
-              <div>
-                <div className="section-label">Thuộc người dùng khác</div>
-                <div className="kpi-num" style={{ color: "var(--accent)" }}>
-                  {result.conflict}
-                </div>
-              </div>
-            )}
             {result.failed > 0 && (
               <div>
                 <div className="section-label">Lỗi lưu</div>
@@ -798,9 +788,9 @@ ${SHORT_EXAMPLE}`;
           )}
 
           <div style={{ marginTop: 20, display: "flex", gap: 16, alignItems: "center" }}>
-            {result.failed + result.conflict > 0 && (
+            {result.failed > 0 && (
               <button onClick={retryFailed} className="btn btn-primary">
-                Đưa {result.failed + result.conflict} dòng lỗi vào ô nhập để sửa / thử lại
+                Đưa {result.failed} dòng lỗi vào ô nhập để sửa / thử lại
               </button>
             )}
             <Link

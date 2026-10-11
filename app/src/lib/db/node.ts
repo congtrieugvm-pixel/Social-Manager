@@ -71,7 +71,7 @@ export function initNodeDb(): BetterSQLite3Database<typeof schema> {
 
     CREATE TABLE IF NOT EXISTS accounts (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
-      username TEXT NOT NULL UNIQUE,
+      username TEXT NOT NULL,
       enc_password TEXT,
       enc_email TEXT,
       enc_2fa TEXT,
@@ -252,6 +252,41 @@ export function initNodeDb(): BetterSQLite3Database<typeof schema> {
   sqlite.exec(`CREATE INDEX IF NOT EXISTS idx_accounts_country_id ON accounts(country_id);`);
   sqlite.exec(`CREATE INDEX IF NOT EXISTS idx_accounts_machine_id ON accounts(machine_id);`);
   sqlite.exec(`CREATE INDEX IF NOT EXISTS idx_accounts_employee_id ON accounts(employee_id);`);
+
+  // Usernames are unique per user, not globally (mirrors D1 migration 0006).
+  // Old local DBs declared `username TEXT NOT NULL UNIQUE` inline, which
+  // SQLite can't drop — rebuild the table once without it, keeping every
+  // column (the stored CREATE sql already includes ALTER-added columns) and
+  // every index.
+  const accountsSql = (
+    sqlite.prepare(`SELECT sql FROM sqlite_master WHERE type='table' AND name='accounts'`).get() as
+      | { sql: string }
+      | undefined
+  )?.sql;
+  if (accountsSql && /username\s+TEXT\s+NOT\s+NULL\s+UNIQUE/i.test(accountsSql)) {
+    const indexSql = (
+      sqlite
+        .prepare(`SELECT sql FROM sqlite_master WHERE type='index' AND tbl_name='accounts' AND sql IS NOT NULL`)
+        .all() as Array<{ sql: string }>
+    ).map((r) => r.sql);
+    sqlite.pragma("foreign_keys = OFF");
+    sqlite.transaction(() => {
+      sqlite.exec(
+        accountsSql
+          .replace(/username\s+TEXT\s+NOT\s+NULL\s+UNIQUE/i, "username TEXT NOT NULL")
+          .replace(/CREATE TABLE\s+("?accounts"?|`accounts`)/i, "CREATE TABLE accounts__rebuild"),
+      );
+      sqlite.exec(`INSERT INTO accounts__rebuild SELECT * FROM accounts`);
+      sqlite.exec(`DROP TABLE accounts`);
+      sqlite.exec(`ALTER TABLE accounts__rebuild RENAME TO accounts`);
+      for (const s of indexSql) sqlite.exec(s);
+    })();
+    sqlite.pragma("foreign_keys = ON");
+  }
+  sqlite.exec(`DROP INDEX IF EXISTS accounts_username_unique;`);
+  sqlite.exec(
+    `CREATE UNIQUE INDEX IF NOT EXISTS accounts_owner_username_unique ON accounts(owner_user_id, username);`,
+  );
 
   // Seed default statuses on first boot (only if empty)
   const statusCount = sqlite
