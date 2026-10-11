@@ -47,11 +47,10 @@ jobs:
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           workingDirectory: app
           command: deploy
-          # `secrets:` declares which Worker secrets to upload via
-          # `wrangler secret bulk` after deploy. Each must also exist as a
-          # GitHub Actions repo secret with the same name (set in repo
-          # Settings → Secrets and variables → Actions).
-          secrets: |
-            ENC_KEY
-        env:
-          ENC_KEY: ${{ secrets.ENC_KEY }}
+          # No `secrets:` upload here. The old ENC_KEY upload ran BEFORE the
+          # deploy and, once it started failing ("Failed to upload secrets"),
+          # blocked every deploy — while the app never read ENC_KEY (crypto
+          # uses ENCRYPTION_KEY). `wrangler deploy` keeps the Worker's
+          # existing secrets; manage them with `wrangler secret put`.
+          # Never change ENCRYPTION_KEY on a live Worker — stored credentials
+          # would no longer decrypt.
