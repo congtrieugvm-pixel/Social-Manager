@@ -40,8 +40,19 @@ function getNodeDb(): Db {
   // folding so the file-tracer used by `opennextjs-cloudflare build` won't
   // statically follow into `node.ts` (which pulls in better-sqlite3 — a
   // native binding incompatible with Cloudflare Workers).
-  const spec = process.env.NODE_DB_MODULE || "./node";
-  const mod: { initNodeDb: () => Db } = dynRequire(spec);
+  //
+  // `next dev` (webpack, Next 15) turns the dynamic `dynRequire(spec)` into
+  // an empty context → "Cannot find module './node'". In development use a
+  // literal require; `next build` sets NODE_ENV=production so webpack prunes
+  // this branch and better-sqlite3 stays out of the Workers bundle.
+  let mod: { initNodeDb: () => Db };
+  if (process.env.NODE_ENV === "development") {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    mod = require("./node");
+  } else {
+    const spec = process.env.NODE_DB_MODULE || "./node";
+    mod = dynRequire(spec);
+  }
   nodeDbInstance = mod.initNodeDb();
   return nodeDbInstance;
 }
