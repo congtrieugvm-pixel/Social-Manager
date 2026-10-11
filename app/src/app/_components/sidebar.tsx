@@ -13,15 +13,7 @@ type NavItem = {
 const nav: NavItem[] = [
   { href: "/", label: "Tài Khoản Tiktok" },
   { href: "/facebook", label: "Tài Khoản Facebook" },
-  {
-    href: "/fanpage",
-    label: "Quản Lý Fanpage",
-    children: [
-      { href: "/fanpage", label: "Danh sách fanpage" },
-      { href: "/insights", label: "Nội dung" },
-      { href: "/insights/reach", label: "Reach Dashboard" },
-    ],
-  },
+  { href: "/insight", label: "Insight" },
 ];
 
 interface SidebarProps {

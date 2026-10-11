@@ -1036,3 +1036,29 @@ input[type="checkbox"] {
   color: var(--muted);
   text-align: center;
 }
+
+/* =======================  Insight (Reach)  ======================= */
+
+.insight-num {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.kpi-num.insight-num {
+  font-size: 26px;
+  letter-spacing: -0.01em;
+}
+
+.insight-ellipsis {
+  max-width: 150px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+@media (max-width: 900px) {
+  .insight-kpis {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}

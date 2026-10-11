@@ -148,112 +148,6 @@ export const facebookAccounts = sqliteTable("facebook_accounts", {
     .default(sql`(unixepoch())`),
 });
 
-export const insightGroups = sqliteTable("insight_groups", {
-  id: integer("id").primaryKey({ autoIncrement: true }),
-  ownerUserId: integer("owner_user_id"),
-  name: text("name").notNull(),
-  color: text("color").notNull().default("#5e6ad2"),
-  description: text("description"),
-  sortOrder: integer("sort_order").notNull().default(0),
-  createdAt: integer("created_at", { mode: "timestamp" })
-    .notNull()
-    .default(sql`(unixepoch())`),
-});
-
-export const fanpages = sqliteTable("fanpages", {
-  id: integer("id").primaryKey({ autoIncrement: true }),
-  ownerUserId: integer("owner_user_id"),
-  fbAccountId: integer("fb_account_id")
-    .notNull()
-    .references(() => facebookAccounts.id, { onDelete: "cascade" }),
-  insightGroupId: integer("insight_group_id").references(() => insightGroups.id, {
-    onDelete: "set null",
-  }),
-  pageId: text("page_id").notNull(),
-  name: text("name").notNull(),
-  category: text("category"),
-  categoryList: text("category_list"),
-  about: text("about"),
-  description: text("description"),
-  pictureUrl: text("picture_url"),
-  coverUrl: text("cover_url"),
-  link: text("link"),
-  username: text("username"),
-  fanCount: integer("fan_count"),
-  followersCount: integer("followers_count"),
-  newLikeCount: integer("new_like_count"),
-  ratingCount: integer("rating_count"),
-  overallStarRating: text("overall_star_rating"),
-  verificationStatus: text("verification_status"),
-  tasks: text("tasks"),
-  encPageAccessToken: text("enc_page_access_token"),
-  insightsJson: text("insights_json"),
-  lastSyncedAt: integer("last_synced_at", { mode: "timestamp" }),
-  lastSyncError: text("last_sync_error"),
-  // Monetization (in-stream ad break earnings). `monetization_status`:
-  //   'monetized'      → page returned non-zero earnings in the window
-  //   'eligible'       → endpoint returned data with all-zero values
-  //   'not_monetized'  → endpoint refused (page not onboarded, missing scope)
-  //   'unknown'        → never checked
-  monetizationStatus: text("monetization_status"),
-  monetizationError: text("monetization_error"),
-  earningsValue: integer("earnings_value"),       // micro-units (×1_000_000) to avoid float drift
-  earningsCurrency: text("earnings_currency"),
-  earningsRangeStart: integer("earnings_range_start"),
-  earningsRangeEnd: integer("earnings_range_end"),
-  earningsUpdatedAt: integer("earnings_updated_at", { mode: "timestamp" }),
-  // JSON: Array<{ source, micros, available, error }> — see EarningsSource type.
-  earningsBreakdownJson: text("earnings_breakdown_json"),
-  createdAt: integer("created_at", { mode: "timestamp" })
-    .notNull()
-    .default(sql`(unixepoch())`),
-  updatedAt: integer("updated_at", { mode: "timestamp" })
-    .notNull()
-    .default(sql`(unixepoch())`),
-});
-
-export const fanpagePosts = sqliteTable("fanpage_posts", {
-  id: integer("id").primaryKey({ autoIncrement: true }),
-  fanpageId: integer("fanpage_id")
-    .notNull()
-    .references(() => fanpages.id, { onDelete: "cascade" }),
-  postId: text("post_id").notNull(),
-  message: text("message"),
-  story: text("story"),
-  permalinkUrl: text("permalink_url"),
-  fullPictureUrl: text("full_picture_url"),
-  statusType: text("status_type"),
-  createdTime: integer("created_time"),
-
-  reactionsTotal: integer("reactions_total"),
-  commentsTotal: integer("comments_total"),
-  sharesTotal: integer("shares_total"),
-
-  impressions: integer("impressions"),
-  impressionsUnique: integer("impressions_unique"),
-  reach: integer("reach"),
-  engagedUsers: integer("engaged_users"),
-  clicks: integer("clicks"),
-  videoViews: integer("video_views"),
-
-  insightsJson: text("insights_json"),
-  lastInsightsAt: integer("last_insights_at", { mode: "timestamp" }),
-  lastInsightsError: text("last_insights_error"),
-
-  // Per-post ad break earnings (videos only).
-  adBreakEarnings: integer("ad_break_earnings"),       // micro-units
-  adBreakCurrency: text("ad_break_currency"),
-  earningsUpdatedAt: integer("earnings_updated_at", { mode: "timestamp" }),
-  earningsError: text("earnings_error"),
-
-  createdAt: integer("created_at", { mode: "timestamp" })
-    .notNull()
-    .default(sql`(unixepoch())`),
-  updatedAt: integer("updated_at", { mode: "timestamp" })
-    .notNull()
-    .default(sql`(unixepoch())`),
-});
-
 export const appUsers = sqliteTable("app_users", {
   id: integer("id").primaryKey({ autoIncrement: true }),
   username: text("username").notNull().unique(),
@@ -283,37 +177,10 @@ export const appSessions = sqliteTable("app_sessions", {
   expiresAt: integer("expires_at").notNull(),
 });
 
-export const fanpageSnapshots = sqliteTable("fanpage_snapshots", {
-  id: integer("id").primaryKey({ autoIncrement: true }),
-  fanpageId: integer("fanpage_id")
-    .notNull()
-    .references(() => fanpages.id, { onDelete: "cascade" }),
-  takenAt: integer("taken_at", { mode: "timestamp" })
-    .notNull()
-    .default(sql`(unixepoch())`),
-  fanCount: integer("fan_count"),
-  followersCount: integer("followers_count"),
-  pageImpressions: integer("page_impressions"),
-  pageImpressionsUnique: integer("page_impressions_unique"),
-  pageEngagements: integer("page_engagements"),
-  pageViews: integer("page_views"),
-  pageVideoViews: integer("page_video_views"),
-  rangeStart: integer("range_start"),
-  rangeEnd: integer("range_end"),
-});
-
 export type Account = typeof accounts.$inferSelect;
 export type NewAccount = typeof accounts.$inferInsert;
 export type FacebookAccount = typeof facebookAccounts.$inferSelect;
 export type NewFacebookAccount = typeof facebookAccounts.$inferInsert;
-export type Fanpage = typeof fanpages.$inferSelect;
-export type NewFanpage = typeof fanpages.$inferInsert;
-export type FanpagePost = typeof fanpagePosts.$inferSelect;
-export type NewFanpagePost = typeof fanpagePosts.$inferInsert;
-export type InsightGroup = typeof insightGroups.$inferSelect;
-export type NewInsightGroup = typeof insightGroups.$inferInsert;
-export type FanpageSnapshot = typeof fanpageSnapshots.$inferSelect;
-export type NewFanpageSnapshot = typeof fanpageSnapshots.$inferInsert;
 export type Group = typeof groups.$inferSelect;
 export type NewGroup = typeof groups.$inferInsert;
 export type Status = typeof statuses.$inferSelect;

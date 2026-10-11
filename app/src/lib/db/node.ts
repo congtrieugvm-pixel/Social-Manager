@@ -121,73 +121,6 @@ export function initNodeDb(): BetterSQLite3Database<typeof schema> {
     CREATE INDEX IF NOT EXISTS idx_fb_accounts_machine_id ON facebook_accounts(machine_id);
     CREATE INDEX IF NOT EXISTS idx_fb_accounts_employee_id ON facebook_accounts(employee_id);
 
-    CREATE TABLE IF NOT EXISTS fanpages (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      fb_account_id INTEGER NOT NULL REFERENCES facebook_accounts(id) ON DELETE CASCADE,
-      page_id TEXT NOT NULL,
-      name TEXT NOT NULL,
-      category TEXT,
-      category_list TEXT,
-      about TEXT,
-      description TEXT,
-      picture_url TEXT,
-      cover_url TEXT,
-      link TEXT,
-      username TEXT,
-      fan_count INTEGER,
-      followers_count INTEGER,
-      new_like_count INTEGER,
-      rating_count INTEGER,
-      overall_star_rating TEXT,
-      verification_status TEXT,
-      tasks TEXT,
-      enc_page_access_token TEXT,
-      insights_json TEXT,
-      last_synced_at INTEGER,
-      last_sync_error TEXT,
-      created_at INTEGER NOT NULL DEFAULT (unixepoch()),
-      updated_at INTEGER NOT NULL DEFAULT (unixepoch())
-    );
-    CREATE UNIQUE INDEX IF NOT EXISTS idx_fanpages_account_page ON fanpages(fb_account_id, page_id);
-    CREATE INDEX IF NOT EXISTS idx_fanpages_page_id ON fanpages(page_id);
-
-    CREATE TABLE IF NOT EXISTS fanpage_posts (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      fanpage_id INTEGER NOT NULL REFERENCES fanpages(id) ON DELETE CASCADE,
-      post_id TEXT NOT NULL,
-      message TEXT,
-      story TEXT,
-      permalink_url TEXT,
-      full_picture_url TEXT,
-      status_type TEXT,
-      created_time INTEGER,
-      reactions_total INTEGER,
-      comments_total INTEGER,
-      shares_total INTEGER,
-      impressions INTEGER,
-      impressions_unique INTEGER,
-      reach INTEGER,
-      engaged_users INTEGER,
-      clicks INTEGER,
-      video_views INTEGER,
-      insights_json TEXT,
-      last_insights_at INTEGER,
-      last_insights_error TEXT,
-      created_at INTEGER NOT NULL DEFAULT (unixepoch()),
-      updated_at INTEGER NOT NULL DEFAULT (unixepoch())
-    );
-    CREATE UNIQUE INDEX IF NOT EXISTS idx_fanpage_posts_fp_post ON fanpage_posts(fanpage_id, post_id);
-    CREATE INDEX IF NOT EXISTS idx_fanpage_posts_created ON fanpage_posts(created_time DESC);
-
-    CREATE TABLE IF NOT EXISTS insight_groups (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      name TEXT NOT NULL UNIQUE,
-      color TEXT NOT NULL DEFAULT '#5e6ad2',
-      description TEXT,
-      sort_order INTEGER NOT NULL DEFAULT 0,
-      created_at INTEGER NOT NULL DEFAULT (unixepoch())
-    );
-
     CREATE TABLE IF NOT EXISTS app_users (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       username TEXT NOT NULL UNIQUE,
@@ -207,20 +140,6 @@ export function initNodeDb(): BetterSQLite3Database<typeof schema> {
     );
     CREATE INDEX IF NOT EXISTS idx_app_sessions_user ON app_sessions(user_id);
     CREATE INDEX IF NOT EXISTS idx_app_sessions_expires ON app_sessions(expires_at);
-
-    CREATE TABLE IF NOT EXISTS fanpage_snapshots (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      fanpage_id INTEGER NOT NULL REFERENCES fanpages(id) ON DELETE CASCADE,
-      taken_at INTEGER NOT NULL DEFAULT (unixepoch()),
-      fan_count INTEGER,
-      followers_count INTEGER,
-      page_impressions INTEGER,
-      page_impressions_unique INTEGER,
-      page_engagements INTEGER,
-      page_views INTEGER,
-      page_video_views INTEGER
-    );
-    CREATE INDEX IF NOT EXISTS idx_fanpage_snapshots_fp_time ON fanpage_snapshots(fanpage_id, taken_at DESC);
   `);
 
   function ensureColumn(table: string, column: string, ddl: string) {
@@ -232,11 +151,14 @@ export function initNodeDb(): BetterSQLite3Database<typeof schema> {
     }
   }
 
-  ensureColumn(
-    "fanpages",
-    "insight_group_id",
-    "insight_group_id INTEGER REFERENCES insight_groups(id) ON DELETE SET NULL",
-  );
+  // Fanpage management was removed (mirrors D1 migration 0004). Children
+  // first so FK checks pass. The Insight screen reads pages live from Graph.
+  sqlite.exec(`
+    DROP TABLE IF EXISTS fanpage_snapshots;
+    DROP TABLE IF EXISTS fanpage_posts;
+    DROP TABLE IF EXISTS fanpages;
+    DROP TABLE IF EXISTS insight_groups;
+  `);
 
   // Multi-tenant ownership column added in migration 0002. Local dev DBs
   // bootstrapped before this migration must be ALTERed to match. NULL ok
@@ -247,10 +169,8 @@ export function initNodeDb(): BetterSQLite3Database<typeof schema> {
     "countries",
     "machines",
     "employees",
-    "insight_groups",
     "accounts",
     "facebook_accounts",
-    "fanpages",
   ]) {
     ensureColumn(
       tbl,
@@ -273,36 +193,14 @@ export function initNodeDb(): BetterSQLite3Database<typeof schema> {
       "countries",
       "machines",
       "employees",
-      "insight_groups",
       "accounts",
       "facebook_accounts",
-      "fanpages",
     ]) {
       sqlite
         .prepare(`UPDATE ${tbl} SET owner_user_id = ? WHERE owner_user_id IS NULL`)
         .run(firstAdmin.id);
     }
   }
-  ensureColumn("fanpage_snapshots", "range_start", "range_start INTEGER");
-  ensureColumn("fanpage_snapshots", "range_end", "range_end INTEGER");
-  sqlite.exec(
-    `CREATE INDEX IF NOT EXISTS idx_fanpages_insight_group ON fanpages(insight_group_id);`,
-  );
-
-  // Monetization tracking (page-level + post-level).
-  ensureColumn("fanpages", "monetization_status", "monetization_status TEXT");
-  ensureColumn("fanpages", "monetization_error", "monetization_error TEXT");
-  ensureColumn("fanpages", "earnings_value", "earnings_value INTEGER");
-  ensureColumn("fanpages", "earnings_currency", "earnings_currency TEXT");
-  ensureColumn("fanpages", "earnings_range_start", "earnings_range_start INTEGER");
-  ensureColumn("fanpages", "earnings_range_end", "earnings_range_end INTEGER");
-  ensureColumn("fanpages", "earnings_updated_at", "earnings_updated_at INTEGER");
-  ensureColumn("fanpages", "earnings_breakdown_json", "earnings_breakdown_json TEXT");
-  ensureColumn("fanpage_posts", "ad_break_earnings", "ad_break_earnings INTEGER");
-  ensureColumn("fanpage_posts", "ad_break_currency", "ad_break_currency TEXT");
-  ensureColumn("fanpage_posts", "earnings_updated_at", "earnings_updated_at INTEGER");
-  ensureColumn("fanpage_posts", "earnings_error", "earnings_error TEXT");
-
   ensureColumn("accounts", "group_id", "group_id INTEGER REFERENCES groups(id) ON DELETE SET NULL");
   ensureColumn("accounts", "status_id", "status_id INTEGER REFERENCES statuses(id) ON DELETE SET NULL");
   ensureColumn("accounts", "country_id", "country_id INTEGER REFERENCES countries(id) ON DELETE SET NULL");

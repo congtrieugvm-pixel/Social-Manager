@@ -22,7 +22,6 @@ export async function POST(req: Request) {
       { status: 400 },
     );
   }
-  // Cascades to fanpages (and from there to fanpage_posts / fanpage_snapshots).
   await db
     .delete(facebookAccounts)
     .where(

@@ -178,7 +178,7 @@ function htmlResponse(message: string, isError: boolean, accountId?: number | nu
   <p style="color:#334;">${escapeHtml(message)}</p>
   <div style="margin-top:24px; display:flex; gap:8px;">
     <a href="/facebook" style="padding:8px 14px; border:1px solid #ccc; border-radius:6px; text-decoration:none; color:#111;">Về danh sách tài khoản</a>
-    <a href="/fanpage" style="padding:8px 14px; background:#111; color:#fff; border-radius:6px; text-decoration:none;">Sang Fanpage</a>
+    <a href="/insight" style="padding:8px 14px; background:#111; color:#fff; border-radius:6px; text-decoration:none;">Sang Insight</a>
   </div>
   ${
     !isError && accountId

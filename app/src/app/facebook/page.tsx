@@ -264,7 +264,7 @@ export default function FacebookPage() {
     if (ids.length === 0) return;
     if (
       !confirm(
-        `Xóa vĩnh viễn ${ids.length} tài khoản Facebook? Toàn bộ fanpage / posts / snapshots liên quan cũng bị xóa.`,
+        `Xóa vĩnh viễn ${ids.length} tài khoản Facebook?`,
       )
     ) {
       return;
@@ -306,37 +306,6 @@ export default function FacebookPage() {
         setBulkMessage(`⚠ ${data.error ?? `Lỗi ${res.status}`}`);
       } else {
         setBulkMessage(`Cập nhật ${data.updated ?? 0} tài khoản`);
-        await load();
-      }
-    } catch (e) {
-      setBulkMessage(`⚠ ${e instanceof Error ? e.message : String(e)}`);
-    } finally {
-      setBulkAction(null);
-    }
-  }
-
-  async function bulkSyncPages() {
-    const ids = Array.from(selected);
-    if (ids.length === 0) return;
-    setBulkAction("sync");
-    setBulkMessage("");
-    try {
-      const res = await fetch("/api/facebook/accounts/sync-pages", {
-        method: "POST",
-        headers: { "X-Body": JSON.stringify({ ids }) },
-      });
-      const data = (await res.json()) as {
-        total?: number;
-        success?: number;
-        failed?: number;
-        error?: string;
-      };
-      if (!res.ok || data.error) {
-        setBulkMessage(`⚠ ${data.error ?? `Lỗi ${res.status}`}`);
-      } else {
-        setBulkMessage(
-          `Sync fanpage: ${data.success ?? 0}/${data.total ?? 0} OK · ${data.failed ?? 0} lỗi`,
-        );
         await load();
       }
     } catch (e) {
@@ -509,8 +478,8 @@ export default function FacebookPage() {
           </span>
         </div>
         <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-          <Link href="/fanpage" className="btn" style={{ padding: "6px 12px", fontSize: 10 }}>
-            Fanpage
+          <Link href="/insight" className="btn" style={{ padding: "6px 12px", fontSize: 10 }}>
+            Insight
           </Link>
           <Link href="/groups" className="btn" style={{ padding: "6px 12px", fontSize: 10 }}>
             Nhóm
@@ -592,20 +561,11 @@ export default function FacebookPage() {
               Đã chọn {selected.size}
             </span>
             <button
-              onClick={bulkSyncPages}
-              disabled={bulkAction !== null}
-              className="btn"
-              style={{ padding: "5px 10px", fontSize: 11 }}
-              title="Tải lại fanpage từ Facebook cho các tài khoản đã chọn"
-            >
-              {bulkAction === "sync" ? "Đang sync…" : "↻ Sync Pages"}
-            </button>
-            <button
               onClick={bulkRefreshAvatar}
               disabled={bulkAction !== null}
               className="btn"
               style={{ padding: "5px 10px", fontSize: 11 }}
-              title="Làm mới ảnh đại diện FB (URL CDN hết hạn sau vài ngày) — chỉ gọi /me?picture, không sync fanpage"
+              title="Làm mới ảnh đại diện FB (URL CDN hết hạn sau vài ngày) — chỉ gọi /me?picture"
             >
               {bulkAction === "avatar" ? "Đang lấy…" : "↻ Lấy AVT"}
             </button>

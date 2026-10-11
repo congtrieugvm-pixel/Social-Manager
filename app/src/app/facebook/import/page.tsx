@@ -467,12 +467,12 @@ ${SHORT_EXAMPLE}`;
           >
             Mỗi dòng có thể có ít cột hơn cấu hình — các trường trống sẽ được lưu là
             rỗng. Chỉ cần <span style={{ color: "var(--ink)" }}>username</span> có mặt
-            là dòng hợp lệ. Token dùng để load fanpage bên{" "}
+            là dòng hợp lệ. Token dùng để xem Reach các Trang bên{" "}
             <Link
-              href="/fanpage"
+              href="/insight"
               style={{ color: "var(--accent)", textDecoration: "underline" }}
             >
-              Quản lý Fanpage
+              Insight
             </Link>
             .
           </div>
