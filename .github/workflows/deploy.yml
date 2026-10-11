@@ -63,6 +63,8 @@ jobs:
             echo "::error title=wrangler deploy::${msg}"
             exit 1
           fi
+          url=$(grep -oE 'https://[^ ]+\.workers\.dev' deploy.log | head -n 1)
+          echo "::notice title=Deployed::${url:-deploy OK}"
           # No `secrets:` upload here. The old ENC_KEY upload ran BEFORE the
           # deploy and, once it started failing ("Failed to upload secrets"),
           # blocked every deploy — while the app never read ENC_KEY (crypto
