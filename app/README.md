@@ -68,42 +68,54 @@ regex OTP 6 số, copy vào clipboard.
 
 ## Insight — Lượt tiếp cận (Reach) của Trang
 
-Menu **Insight** (`/insight`). Tính năng "Quản lý Fanpage" đã bị gỡ (10/2026) cùng
-toàn bộ dữ liệu (`fanpages`, `fanpage_posts`, `fanpage_snapshots`, `insight_groups`
-— migration `0004_drop_fanpages.sql`). Insight **không lưu Trang vào DB**: danh sách
-Trang được đọc trực tiếp từ Graph bằng token của từng tài khoản Facebook.
+Menu **Insight** (`/insight`), hoàn toàn độc lập với "Tài khoản Facebook". Tính năng
+"Quản lý Fanpage" cũ đã bị gỡ (10/2026) cùng toàn bộ dữ liệu (migration
+`0004_drop_fanpages.sql`). Insight **không lưu Trang vào DB** — danh sách Trang đọc
+trực tiếp từ Graph bằng các token dán vào Insight.
 
-- Kỳ: **Hôm nay | 7 ngày | 28 ngày** (nhớ theo user: localStorage `rmf_insight_<user>`).
-- Ô tổng: tổng reach (cộng các Trang — người xem nhiều Trang có thể bị tính nhiều lần),
-  số Trang có dữ liệu, Trang reach cao nhất, % so với kỳ liền trước.
-- Biểu đồ cột reach theo ngày (7/28 ngày), bảng từng Trang sắp xếp được, Xuất CSV (UTF-8 BOM).
-- Lọc theo nhóm: Trang thuộc nhóm của các tài khoản Facebook quản lý nó.
+- **Token:** nút "Token (n)" → dán **User Access Token** (đọc mọi Trang tài khoản đó quản
+  lý, cần `pages_show_list` + `read_insights`) hoặc **Page Token**. Server kiểm tra token với
+  Graph, lưu mã hóa AES-GCM (bảng `insight_tokens`); trình duyệt chỉ thấy preview `EAA…xxxx`.
+  Dán lại token của cùng tài khoản/Trang → cập nhật, không nhân đôi.
+- **Phân nhóm:** tạo/sửa/xóa nhóm có màu ("＋ / ✎ Nhóm"), gán Trang vào nhóm ngay trên dòng
+  hoặc chọn nhiều Trang → "Chuyển vào nhóm…" (có "＋ Nhóm mới…"). Một Trang thuộc một nhóm
+  (bảng `insight_page_groups`, `insight_page_assignments` — migration `0005`). Lọc theo nhóm
+  + "Chưa phân nhóm"; xóa nhóm → Trang về "Chưa phân nhóm".
+- Kỳ **Hôm nay | 7 ngày | 28 ngày** và nhóm đang lọc được nhớ theo user
+  (localStorage `rmf_insight_<user>`). Ô tổng, biểu đồ cột theo ngày, bảng sắp xếp được
+  (tiêu đề cố định khi cuộn), tìm Trang, Xuất CSV (UTF-8 BOM, có cột Nhóm).
 
 ### Endpoint
 
-| Route | Trả về |
+| Route | Việc |
 |---|---|
-| `GET /api/insight/accounts` | tài khoản FB có token + nhóm |
-| `GET /api/insight/accounts/:id/pages` | Trang mà tài khoản đó quản lý (classic + Business Manager) |
-| `GET /api/insight/reach?pageId=&range=today\|7d\|28d&accounts=1,2` | `{ range, metric, reach, prev, daily[], via, todayPending?, unsupported?, reason? }` — 429 `{ cooling: true }` khi mọi token đang bị giới hạn |
+| `GET / POST /api/insight/tokens` | danh sách token (không có token gốc) / thêm `{ token, label? }` |
+| `PATCH / DELETE /api/insight/tokens/:id` | đổi tên / xóa token |
+| `GET /api/insight/tokens/:id/pages` | Trang token đọc được (classic + Business Manager) |
+| `GET / POST /api/insight/groups` | nhóm + `assignments { pageId: groupId }` / tạo nhóm `{ name, color }` |
+| `PATCH / DELETE /api/insight/groups/:id` | sửa / xóa nhóm |
+| `POST /api/insight/assign` | `{ pageIds[], groupId \| null }` gán / bỏ nhóm |
+| `GET /api/insight/reach?pageId=&tokens=1,2` | `{ metric, via, ranges: { today, 7d, 28d }, unsupported?, reason? }` — mỗi kỳ `{ reach, prev, daily[], todayPending? }`; 429 `{ cooling: true }` khi mọi token đang bị giới hạn |
 
 ### Quyết định về dữ liệu Reach (`src/lib/page-reach.ts`)
 
-- **Không cố định một metric.** Meta đã ngừng nhiều metric Page Insights năm 2025. Server
-  thử lần lượt `page_impressions_unique` → `page_total_media_view_unique` →
-  `page_posts_impressions_unique`; gặp lỗi metric không hợp lệ (#100) thì thử metric kế,
-  nhớ metric dùng được theo Trang. Không metric nào dùng được, hoặc thiếu quyền (#10/#200)
-  → `unsupported` + lý do tiếng Việt (cần `read_insights` / Advanced Access).
-- **Không cộng dồn reach theo ngày.** Reach là số người duy nhất; cộng 7 giá trị ngày sẽ
-  đếm trùng người xem nhiều ngày. 7 ngày dùng `period=week`, 28 ngày dùng `period=days_28`,
-  Hôm nay dùng `period=day`. `prev` = giá trị cùng kỳ kết thúc đúng N ngày trước.
-- Ngày = `end_time` (nửa đêm giờ Thái Bình Dương) trừ 1 ngày. Hôm nay chưa có số →
-  hiện "—" + "Facebook chưa cập nhật số liệu hôm nay", không hiện 0.
-- **Token pool:** một Trang có thể được nhiều tài khoản quản lý → nhiều token. Server xoay
-  vòng token theo Trang (chia tải). Lỗi giới hạn #4/#17/#613 làm nguội cả tài khoản 5 phút;
-  #32/#368 (cấp Trang) chỉ làm nguội token của Trang đó. Client tải tối đa 6 Trang song song,
-  cache 3 phút, "Tải lại" bỏ qua cache.
-- Test với Graph giả: đặt `FB_GRAPH_BASE=http://127.0.0.1:<port>/v23.0` và `DB_PATH=<db tạm>`.
+- **Metric (đo trên Graph v23 thật, 10/2026):** `page_impressions_unique` và
+  `page_posts_impressions_unique` đã bị Meta khai tử (#100 "must be a valid insights metric");
+  `page_total_media_view_unique` ("Người xem") chạy cho day/week/days_28. Server thử theo thứ
+  tự `page_total_media_view_unique` → `page_impressions_unique` → `page_posts_impressions_unique`,
+  nhớ metric dùng được theo Trang. Không metric nào dùng được / thiếu quyền (#10/#200) →
+  `unsupported` + lý do tiếng Việt.
+- **Một lần gọi cho cả 3 kỳ:** bỏ tham số `period` thì Graph trả cùng lúc chuỗi day, week,
+  days_28 (31 ngày gần nhất) → đổi kỳ trên giao diện không gọi lại server.
+- **Không cộng dồn reach theo ngày.** Reach là số người duy nhất; cộng giá trị ngày sẽ đếm
+  trùng. 7 ngày = `week`, 28 ngày = `days_28`, Hôm nay = `day`. `prev` = giá trị cùng kỳ kết
+  thúc đúng N ngày trước.
+- Ngày = `end_time` (nửa đêm giờ Thái Bình Dương) trừ 1 ngày. Facebook báo ngày đang chạy là
+  0 cho tới khi xử lý xong → Hôm nay = 0 hiển thị "—" + "Facebook chưa cập nhật số liệu hôm nay".
+- **Token pool:** Trang đọc được qua nhiều token → xoay vòng token theo Trang (chia tải).
+  #4/#17/#613 làm nguội cả token 5 phút; #32/#368 (cấp Trang) chỉ làm nguội token của Trang
+  đó. Client tải tối đa 6 Trang song song, cache 3 phút, "Tải lại" bỏ qua cache.
+- Test với Graph giả: `FB_GRAPH_BASE=http://127.0.0.1:<port>/v23.0` và `DB_PATH=<db tạm>`.
 
 ## Stack
 

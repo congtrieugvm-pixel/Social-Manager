@@ -1,10 +1,11 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import Link from "next/link";
+import { encodeBodyHeader } from "@/lib/req-body";
 import { BarChart, Sparkline, ddmm, type DayPoint } from "./charts";
 
 type Range = "today" | "7d" | "28d";
+type Filter = "all" | "none" | number; // number = group id
 
 const RANGES: Array<{ key: Range; label: string }> = [
   { key: "today", label: "Hôm nay" },
@@ -12,10 +13,15 @@ const RANGES: Array<{ key: Range; label: string }> = [
   { key: "28d", label: "28 ngày" },
 ];
 
-interface Account {
+const GROUP_COLORS = ["#5e6ad2", "#3fb950", "#d29922", "#f85149", "#a371f7", "#39c5cf", "#db61a2", "#8a8a8a"];
+
+interface Token {
   id: number;
   label: string;
-  groupId: number | null;
+  kind: "user" | "page";
+  fbName: string | null;
+  preview: string | null;
+  lastError: string | null;
 }
 
 interface Group {
@@ -27,18 +33,20 @@ interface Group {
 interface Page {
   id: string;
   name: string;
-  accountIds: number[];
-  groupIds: number[];
+  tokenIds: number[];
 }
 
-interface Reach {
-  range: Range;
-  metric: string | null;
+interface RangeReach {
   reach: number | null;
   prev: number | null;
   daily: DayPoint[];
-  via: string | null;
   todayPending?: boolean;
+}
+
+interface Reach {
+  metric: string | null;
+  via: string | null;
+  ranges: Record<Range, RangeReach>;
   unsupported?: boolean;
   reason?: string;
 }
@@ -48,30 +56,34 @@ type RowState =
   | { status: "ok"; data: Reach }
   | { status: "error"; error: string; cooling?: boolean };
 
-type SortKey = "name" | "reach" | "change" | "metric" | "via" | "status";
+type SortKey = "name" | "group" | "reach" | "change" | "via" | "status";
 
 const PAGE_CONCURRENCY = 6;
-const ACCOUNT_CONCURRENCY = 4;
+const TOKEN_CONCURRENCY = 4;
 const CACHE_MS = 3 * 60_000;
 
-// Client cache of reach answers (per page + range), 3 minutes. "Tải lại"
+// Reach answers per page (all three ranges at once), 3 minutes. "Tải lại"
 // bypasses it. Module-level so it survives navigating away and back.
 const reachCache = new Map<string, { at: number; data: Reach }>();
 
 async function runPool<T>(items: T[], limit: number, fn: (item: T) => Promise<void>) {
   let next = 0;
-  const workers = Array.from({ length: Math.min(limit, items.length) }, async () => {
-    while (next < items.length) {
-      const item = items[next++];
-      await fn(item);
-    }
-  });
-  await Promise.all(workers);
+  await Promise.all(
+    Array.from({ length: Math.min(limit, items.length) }, async () => {
+      while (next < items.length) await fn(items[next++]);
+    }),
+  );
 }
 
-async function getJson<T>(url: string): Promise<{ ok: boolean; status: number; data: T & { error?: string } }> {
+type ApiResult<T> = { ok: boolean; status: number; data: T & { error?: string } };
+
+async function api<T>(url: string, init?: { method?: string; body?: unknown }): Promise<ApiResult<T>> {
   try {
-    const res = await fetch(url, { cache: "no-store" });
+    const res = await fetch(url, {
+      method: init?.method ?? "GET",
+      cache: "no-store",
+      headers: init?.body !== undefined ? { "X-Body": encodeBodyHeader(init.body) } : undefined,
+    });
     const text = await res.text();
     let data: T & { error?: string };
     try {
@@ -79,7 +91,7 @@ async function getJson<T>(url: string): Promise<{ ok: boolean; status: number; d
     } catch {
       data = { error: `HTTP ${res.status}: phản hồi không phải JSON` } as T & { error?: string };
     }
-    return { ok: res.ok, status: res.status, data };
+    return { ok: res.ok && !data.error, status: res.status, data };
   } catch (e) {
     return {
       ok: false,
@@ -100,20 +112,20 @@ function pct(cur: number | null, prev: number | null): number | null {
 function changeView(p: number | null): { text: string; color: string } {
   if (p == null) return { text: "—", color: "var(--dim)" };
   if (Math.abs(p) < 0.05) return { text: "0.0%", color: "var(--muted)" };
+  // Tiny previous periods make percentages absurd (+76193%) — show a ratio.
+  if (p >= 1000) return { text: `×${Math.round(p / 100 + 1).toLocaleString("vi-VN")}`, color: "var(--good)" };
   return p > 0
     ? { text: `+${p.toFixed(1)}%`, color: "var(--good)" }
     : { text: `−${Math.abs(p).toFixed(1)}%`, color: "var(--danger)" };
 }
 
-function statusOf(s: RowState | undefined): { label: string; tone: "ok" | "err" | "muted"; title?: string } {
+function statusOf(s: RowState | undefined, range: Range): { label: string; tone: "ok" | "err" | "muted"; title?: string } {
   if (!s || s.status === "loading") return { label: "Đang tải…", tone: "muted" };
   if (s.status === "error") {
-    return s.cooling
-      ? { label: "Bị giới hạn", tone: "err", title: s.error }
-      : { label: "Lỗi", tone: "err", title: s.error };
+    return s.cooling ? { label: "Bị giới hạn", tone: "err", title: s.error } : { label: "Lỗi", tone: "err", title: s.error };
   }
   if (s.data.unsupported) return { label: "Không hỗ trợ", tone: "err", title: s.data.reason };
-  if (s.data.todayPending) {
+  if (range === "today" && s.data.ranges.today.todayPending) {
     return { label: "Chưa có số", tone: "muted", title: "Facebook chưa cập nhật số liệu hôm nay" };
   }
   return { label: "OK", tone: "ok" };
@@ -153,7 +165,6 @@ function PageAvatar({ page, color }: { page: Page; color: string | null }) {
       )}
       {color && (
         <span
-          title="Màu nhóm"
           style={{
             position: "absolute",
             right: -2,
@@ -170,114 +181,157 @@ function PageAvatar({ page, color }: { page: Page; color: string | null }) {
   );
 }
 
+const smallBtn = { padding: "5px 10px", fontSize: 11 } as const;
+
 export default function InsightPage() {
   const [username, setUsername] = useState<string | null>(null);
-  const [accounts, setAccounts] = useState<Account[] | null>(null);
+  const [tokens, setTokens] = useState<Token[] | null>(null);
   const [groups, setGroups] = useState<Group[]>([]);
+  const [assignments, setAssignments] = useState<Record<string, number>>({});
   const [pages, setPages] = useState<Page[]>([]);
   const [pagesProgress, setPagesProgress] = useState<{ done: number; total: number } | null>(null);
-  const [accountErrors, setAccountErrors] = useState<Array<{ label: string; error: string }>>([]);
-  const [loadError, setLoadError] = useState<string | null>(null);
+  const [tokenPages, setTokenPages] = useState<Record<number, number>>({}); // token id → page count
+  const [notice, setNotice] = useState<{ tone: "ok" | "err" | "warn"; text: string } | null>(null);
 
-  const [scope, setScope] = useState<"all" | number>("all");
-  const [selected, setSelected] = useState<Set<string> | null>(null); // null = all in scope
   const [range, setRange] = useState<Range>("7d");
+  const [filter, setFilter] = useState<Filter>("all");
+  const [search, setSearch] = useState("");
   const [rows, setRows] = useState<Record<string, RowState>>({});
   const [progress, setProgress] = useState<{ done: number; total: number } | null>(null);
   const [reloadTick, setReloadTick] = useState(0);
+  const [pagesTick, setPagesTick] = useState(0);
   const [sort, setSort] = useState<{ key: SortKey; dir: "asc" | "desc" }>({ key: "reach", dir: "desc" });
+  const [checked, setChecked] = useState<Set<string>>(new Set());
+  const [showTokens, setShowTokens] = useState(false);
+  const [showGroups, setShowGroups] = useState(false);
   const freshRef = useRef(false);
   const runRef = useRef(0);
+  // Latest groups for callbacks that run right after creating a group (their
+  // render-time closure doesn't know the new group yet).
+  const groupsRef = useRef<Group[]>([]);
+  groupsRef.current = groups;
 
   const storageKey = username ? `rmf_insight_${username}` : null;
 
-  // --- bootstrap: user, accounts, then each account's pages -----------------
+  // --- bootstrap: user, tokens, groups --------------------------------------
   useEffect(() => {
+    (async () => {
+      const me = await api<{ user: { username: string } | null }>("/api/auth/me");
+      if (me.data.user) setUsername(me.data.user.username);
+      const [t, g] = await Promise.all([
+        api<{ tokens: Token[] }>("/api/insight/tokens"),
+        api<{ groups: Group[]; assignments: Record<string, number> }>("/api/insight/groups"),
+      ]);
+      if (!t.ok) setNotice({ tone: "err", text: t.data.error ?? "Không tải được token" });
+      setTokens(t.data.tokens ?? []);
+      if ((t.data.tokens ?? []).length === 0) setShowTokens(true);
+      if (g.ok) {
+        setGroups(g.data.groups);
+        setAssignments(g.data.assignments);
+      }
+    })();
+  }, []);
+
+  // --- pages of every token (re-run when tokens change) ----------------------
+  const tokenKey = (tokens ?? []).map((t) => t.id).join(",");
+  useEffect(() => {
+    if (!tokens) return;
     let alive = true;
     (async () => {
-      const me = await getJson<{ user: { username: string } | null }>("/api/auth/me");
-      if (alive && me.data.user) setUsername(me.data.user.username);
-      const acc = await getJson<{ accounts: Account[]; groups: Group[] }>("/api/insight/accounts");
-      if (!alive) return;
-      if (!acc.ok || acc.data.error) {
-        setLoadError(acc.data.error ?? `Lỗi ${acc.status}`);
-        setAccounts([]);
-        return;
-      }
-      setAccounts(acc.data.accounts);
-      setGroups(acc.data.groups);
-
       const byId = new Map<string, Page>();
-      const errors: Array<{ label: string; error: string }> = [];
+      const counts: Record<number, number> = {};
+      const errors: Record<number, string> = {};
       let done = 0;
-      setPagesProgress({ done: 0, total: acc.data.accounts.length });
-      await runPool(acc.data.accounts, ACCOUNT_CONCURRENCY, async (a) => {
-        const r = await getJson<{ pages: Array<{ id: string; name: string }> }>(
-          `/api/insight/accounts/${a.id}/pages`,
-        );
-        if (r.ok && r.data.pages) {
+      setPagesProgress({ done: 0, total: tokens.length });
+      await runPool(tokens, TOKEN_CONCURRENCY, async (t) => {
+        const r = await api<{ pages: Array<{ id: string; name: string }> }>(`/api/insight/tokens/${t.id}/pages`);
+        if (r.ok) {
+          counts[t.id] = r.data.pages.length;
           for (const p of r.data.pages) {
-            const cur = byId.get(p.id) ?? { id: p.id, name: p.name, accountIds: [], groupIds: [] };
-            if (!cur.accountIds.includes(a.id)) cur.accountIds.push(a.id);
-            if (a.groupId != null && !cur.groupIds.includes(a.groupId)) cur.groupIds.push(a.groupId);
+            const cur = byId.get(p.id) ?? { id: p.id, name: p.name, tokenIds: [] };
+            if (!cur.tokenIds.includes(t.id)) cur.tokenIds.push(t.id);
             byId.set(p.id, cur);
           }
         } else {
-          errors.push({ label: a.label, error: r.data.error ?? `Lỗi ${r.status}` });
+          errors[t.id] = r.data.error ?? `Lỗi ${r.status}`;
         }
         done++;
-        if (alive) setPagesProgress({ done, total: acc.data.accounts.length });
+        if (alive) setPagesProgress({ done, total: tokens.length });
       });
       if (!alive) return;
-      setPages([...byId.values()].sort((x, y) => x.name.localeCompare(y.name, "vi")));
-      setAccountErrors(errors);
+      setPages([...byId.values()].sort((a, b) => a.name.localeCompare(b.name, "vi")));
+      setTokenPages(counts);
+      setTokens((prev) => prev?.map((t) => (t.id in errors ? { ...t, lastError: errors[t.id] } : t.id in counts ? { ...t, lastError: null } : t)) ?? prev);
       setPagesProgress(null);
     })();
     return () => {
       alive = false;
     };
-  }, []);
+    // tokenKey stands in for tokens (ids only — label edits needn't refetch).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tokenKey, pagesTick]);
 
-  // --- remembered range, per user -------------------------------------------
+  // --- remembered range + group filter, per user -----------------------------
   useEffect(() => {
     if (!storageKey) return;
     try {
-      const saved = JSON.parse(localStorage.getItem(storageKey) ?? "{}") as { range?: Range };
+      const saved = JSON.parse(localStorage.getItem(storageKey) ?? "{}") as { range?: Range; filter?: Filter };
       if (saved.range && RANGES.some((r) => r.key === saved.range)) setRange(saved.range);
+      if (saved.filter !== undefined) setFilter(saved.filter);
     } catch {
-      // storage unavailable — keep default
+      // storage unavailable — keep defaults
     }
   }, [storageKey]);
 
-  function chooseRange(r: Range) {
-    setRange(r);
+  function remember(patch: { range?: Range; filter?: Filter }) {
     if (!storageKey) return;
     try {
-      localStorage.setItem(storageKey, JSON.stringify({ range: r }));
+      const saved = JSON.parse(localStorage.getItem(storageKey) ?? "{}");
+      localStorage.setItem(storageKey, JSON.stringify({ ...saved, ...patch }));
     } catch {
       // ignore
     }
   }
+  function chooseRange(r: Range) {
+    setRange(r);
+    remember({ range: r });
+  }
+  function chooseFilter(f: Filter) {
+    setFilter(f);
+    setChecked(new Set());
+    remember({ filter: f });
+  }
 
-  // --- scope + selection ----------------------------------------------------
+  // A remembered group that no longer exists falls back to "all".
   const groupById = useMemo(() => new Map(groups.map((g) => [g.id, g])), [groups]);
-  const scopeGroups = useMemo(
-    () => groups.filter((g) => pages.some((p) => p.groupIds.includes(g.id))),
-    [groups, pages],
-  );
-  const scopedPages = useMemo(
-    () => (scope === "all" ? pages : pages.filter((p) => p.groupIds.includes(scope))),
-    [pages, scope],
-  );
-  const chosenPages = useMemo(
-    () => (selected ? scopedPages.filter((p) => selected.has(p.id)) : scopedPages),
-    [scopedPages, selected],
-  );
-  const chosenKey = chosenPages.map((p) => p.id).join(",");
+  const effectiveFilter: Filter = typeof filter === "number" && !groupById.has(filter) && groups.length > 0 ? "all" : filter;
 
-  // --- load reach (≤ 6 pages in flight) -------------------------------------
+  const counts = useMemo(() => {
+    const byGroup: Record<number, number> = {};
+    let none = 0;
+    for (const p of pages) {
+      const gid = assignments[p.id];
+      if (gid && groupById.has(gid)) byGroup[gid] = (byGroup[gid] ?? 0) + 1;
+      else none++;
+    }
+    return { byGroup, none };
+  }, [pages, assignments, groupById]);
+
+  const visiblePages = useMemo(() => {
+    const term = search.trim().toLowerCase();
+    return pages.filter((p) => {
+      const gid = assignments[p.id];
+      const inGroup = gid !== undefined && groupById.has(gid);
+      if (effectiveFilter === "none" && inGroup) return false;
+      if (typeof effectiveFilter === "number" && gid !== effectiveFilter) return false;
+      return !term || p.name.toLowerCase().includes(term) || p.id.includes(term);
+    });
+  }, [pages, assignments, groupById, effectiveFilter, search]);
+  const visibleKey = visiblePages.map((p) => p.id).join(",");
+
+  // --- load reach for visible pages (≤ 6 in flight; all ranges per call) ----
   useEffect(() => {
-    if (chosenPages.length === 0) {
+    if (visiblePages.length === 0) {
       setProgress(null);
       return;
     }
@@ -285,17 +339,18 @@ export default function InsightPage() {
     const fresh = freshRef.current;
     freshRef.current = false;
     const now = Date.now();
-    const initial: Record<string, RowState> = {};
     const queue: Page[] = [];
-    for (const p of chosenPages) {
-      const hit = reachCache.get(`${p.id}:${range}`);
-      if (!fresh && hit && now - hit.at < CACHE_MS) initial[p.id] = { status: "ok", data: hit.data };
-      else {
-        initial[p.id] = { status: "loading" };
-        queue.push(p);
-      }
+    const ready: Record<string, RowState> = {};
+    for (const p of visiblePages) {
+      const hit = reachCache.get(p.id);
+      if (!fresh && hit && now - hit.at < CACHE_MS) ready[p.id] = { status: "ok", data: hit.data };
+      else queue.push(p);
     }
-    setRows(initial);
+    setRows((prev) => {
+      const next = { ...prev, ...ready };
+      for (const p of queue) next[p.id] = { status: "loading" };
+      return next;
+    });
     if (queue.length === 0) {
       setProgress(null);
       return;
@@ -304,98 +359,177 @@ export default function InsightPage() {
     setProgress({ done: 0, total: queue.length });
     runPool(queue, PAGE_CONCURRENCY, async (p) => {
       if (runRef.current !== run) return;
-      const r = await getJson<Reach & { cooling?: boolean }>(
-        `/api/insight/reach?pageId=${p.id}&range=${range}&accounts=${p.accountIds.join(",")}`,
-      );
-      if (runRef.current !== run) return;
+      const r = await api<Reach & { cooling?: boolean }>(`/api/insight/reach?pageId=${p.id}&tokens=${p.tokenIds.join(",")}`);
       let state: RowState;
-      if (r.ok && !r.data.error) {
-        reachCache.set(`${p.id}:${range}`, { at: Date.now(), data: r.data });
+      if (r.ok) {
+        reachCache.set(p.id, { at: Date.now(), data: r.data });
         state = { status: "ok", data: r.data };
       } else {
         state = { status: "error", error: r.data.error ?? `Lỗi ${r.status}`, cooling: !!r.data.cooling };
       }
-      done++;
       setRows((prev) => ({ ...prev, [p.id]: state }));
+      if (runRef.current !== run) return;
+      done++;
       setProgress({ done, total: queue.length });
     }).then(() => {
       if (runRef.current === run) setProgress(null);
     });
-    // chosenKey stands in for chosenPages (stable string identity).
+    // visibleKey stands in for visiblePages (stable string identity).
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [chosenKey, range, reloadTick]);
+  }, [visibleKey, reloadTick]);
 
   function reload() {
     freshRef.current = true;
     setReloadTick((t) => t + 1);
   }
 
-  // --- aggregates -----------------------------------------------------------
-  const okRows = chosenPages
-    .map((p) => ({ page: p, state: rows[p.id] }))
-    .filter((r): r is { page: Page; state: { status: "ok"; data: Reach } } => r.state?.status === "ok");
-  const withReach = okRows.filter((r) => r.state.data.reach != null);
-  const total = withReach.reduce((a, r) => a + (r.state.data.reach ?? 0), 0);
-  const both = withReach.filter((r) => r.state.data.prev != null);
+  // --- tokens ---------------------------------------------------------------
+  async function addToken(raw: string, label: string): Promise<boolean> {
+    const r = await api<{ token: Token; warning: string | null; replaced: boolean }>("/api/insight/tokens", {
+      method: "POST",
+      body: { token: raw, label },
+    });
+    if (!r.ok) {
+      setNotice({ tone: "err", text: r.data.error ?? "Không lưu được token" });
+      return false;
+    }
+    const t = r.data.token;
+    setTokens((prev) => [t, ...(prev ?? []).filter((x) => x.id !== t.id)]);
+    if (r.data.replaced) setPagesTick((n) => n + 1);
+    setNotice(
+      r.data.warning
+        ? { tone: "warn", text: `Đã lưu token “${t.label}”. ${r.data.warning}` }
+        : { tone: "ok", text: `${r.data.replaced ? "Đã cập nhật" : "Đã thêm"} token “${t.label}” (${t.kind === "page" ? "Page token" : "User token"}).` },
+    );
+    return true;
+  }
+
+  async function deleteToken(t: Token) {
+    if (!confirm(`Xóa token “${t.label}”? Các Trang chỉ đọc được qua token này sẽ biến mất khỏi Insight.`)) return;
+    const r = await api(`/api/insight/tokens/${t.id}`, { method: "DELETE" });
+    if (!r.ok) return setNotice({ tone: "err", text: r.data.error ?? "Không xóa được token" });
+    setTokens((prev) => prev?.filter((x) => x.id !== t.id) ?? prev);
+    setNotice({ tone: "ok", text: `Đã xóa token “${t.label}”.` });
+  }
+
+  // --- groups ---------------------------------------------------------------
+  async function createGroup(name: string, color: string): Promise<Group | null> {
+    const r = await api<{ group: Group }>("/api/insight/groups", { method: "POST", body: { name, color } });
+    if (!r.ok) {
+      setNotice({ tone: "err", text: r.data.error ?? "Không tạo được nhóm" });
+      return null;
+    }
+    const next = [...groupsRef.current, r.data.group].sort((a, b) => a.name.localeCompare(b.name, "vi"));
+    groupsRef.current = next;
+    setGroups(next);
+    return r.data.group;
+  }
+
+  async function updateGroup(id: number, patch: { name?: string; color?: string }) {
+    const r = await api<{ group: Group }>(`/api/insight/groups/${id}`, { method: "PATCH", body: patch });
+    if (!r.ok) return setNotice({ tone: "err", text: r.data.error ?? "Không sửa được nhóm" });
+    setGroups((prev) => prev.map((g) => (g.id === id ? r.data.group : g)));
+  }
+
+  async function deleteGroup(g: Group) {
+    const n = counts.byGroup[g.id] ?? 0;
+    if (!confirm(`Xóa nhóm “${g.name}”?${n ? ` ${n} Trang trong nhóm sẽ về “Chưa phân nhóm”.` : ""}`)) return;
+    const r = await api(`/api/insight/groups/${g.id}`, { method: "DELETE" });
+    if (!r.ok) return setNotice({ tone: "err", text: r.data.error ?? "Không xóa được nhóm" });
+    setGroups((prev) => prev.filter((x) => x.id !== g.id));
+    setAssignments((prev) => Object.fromEntries(Object.entries(prev).filter(([, gid]) => gid !== g.id)));
+    if (filter === g.id) chooseFilter("all");
+  }
+
+  async function assign(pageIds: string[], groupId: number | null) {
+    if (pageIds.length === 0) return;
+    const before = assignments;
+    setAssignments((prev) => {
+      const next = { ...prev };
+      for (const id of pageIds) {
+        if (groupId === null) delete next[id];
+        else next[id] = groupId;
+      }
+      return next;
+    });
+    const r = await api("/api/insight/assign", { method: "POST", body: { pageIds, groupId } });
+    if (!r.ok) {
+      setAssignments(before);
+      setNotice({ tone: "err", text: r.data.error ?? "Không gán được nhóm" });
+      return;
+    }
+    const g = groupId === null ? null : groupsRef.current.find((x) => x.id === groupId);
+    setNotice({ tone: "ok", text: `Đã chuyển ${pageIds.length} Trang vào ${g ? `nhóm “${g.name}”` : "“Chưa phân nhóm”"}.` });
+  }
+
+  // --- aggregates for the chosen range ---------------------------------------
+  const okRows = visiblePages.flatMap((p) => {
+    const s = rows[p.id];
+    return s?.status === "ok" && !s.data.unsupported ? [{ page: p, data: s.data, r: s.data.ranges[range] }] : [];
+  });
+  const withReach = okRows.filter((x) => x.r.reach != null);
+  const total = withReach.reduce((a, x) => a + (x.r.reach ?? 0), 0);
+  const both = withReach.filter((x) => x.r.prev != null);
   const totalChange = pct(
-    both.reduce((a, r) => a + (r.state.data.reach ?? 0), 0),
-    both.length ? both.reduce((a, r) => a + (r.state.data.prev ?? 0), 0) : null,
+    both.reduce((a, x) => a + (x.r.reach ?? 0), 0),
+    both.length ? both.reduce((a, x) => a + (x.r.prev ?? 0), 0) : null,
   );
   const top = withReach.reduce<(typeof withReach)[number] | null>(
-    (best, r) => (!best || (r.state.data.reach ?? 0) > (best.state.data.reach ?? 0) ? r : best),
+    (best, x) => (!best || (x.r.reach ?? 0) > (best.r.reach ?? 0) ? x : best),
     null,
   );
-  const pendingToday = range === "today" && okRows.some((r) => r.state.data.todayPending);
+  const pendingToday = range === "today" && okRows.some((x) => x.r.todayPending);
 
-  const chartPoints = useMemo<DayPoint[]>(() => {
+  const chartPoints: DayPoint[] = (() => {
     if (range === "today") return [];
     const byDate = new Map<string, number | null>();
-    for (const r of okRows) {
-      for (const d of r.state.data.daily) {
-        const cur = byDate.get(d.date);
+    for (const x of okRows) {
+      for (const d of x.r.daily) {
         if (d.value == null) {
           if (!byDate.has(d.date)) byDate.set(d.date, null);
-        } else byDate.set(d.date, (cur ?? 0) + d.value);
+        } else byDate.set(d.date, (byDate.get(d.date) ?? 0) + d.value);
       }
     }
-    const n = range === "7d" ? 7 : 28;
     return [...byDate.entries()]
       .sort(([a], [b]) => a.localeCompare(b))
-      .slice(-n)
+      .slice(range === "7d" ? -7 : -28)
       .map(([date, value]) => ({ date, value }));
-    // okRows is derived from rows + chosenPages
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [rows, chosenKey, range]);
+  })();
 
   // --- table ----------------------------------------------------------------
   const tableRows = useMemo(() => {
-    const list = chosenPages.map((p) => {
+    const list = visiblePages.map((p) => {
       const state = rows[p.id];
       const data = state?.status === "ok" ? state.data : null;
+      const r = data && !data.unsupported ? data.ranges[range] : null;
       return {
         page: p,
-        state,
+        group: (() => {
+          const gid = assignments[p.id];
+          return gid ? groupById.get(gid) ?? null : null;
+        })(),
         data,
-        reach: data?.reach ?? null,
-        change: data ? pct(data.reach, data.prev) : null,
-        status: statusOf(state),
+        r,
+        reach: r?.reach ?? null,
+        change: r ? pct(r.reach, r.prev) : null,
+        status: statusOf(state, range),
       };
     });
     const dir = sort.dir === "asc" ? 1 : -1;
-    const val = (r: (typeof list)[number]): string | number | null => {
+    const val = (x: (typeof list)[number]): string | number | null => {
       switch (sort.key) {
         case "name":
-          return r.page.name;
+          return x.page.name;
+        case "group":
+          return x.group?.name ?? null;
         case "reach":
-          return r.reach;
+          return x.reach;
         case "change":
-          return r.change;
-        case "metric":
-          return r.data?.metric ?? null;
+          return x.change;
         case "via":
-          return r.data?.via ?? null;
+          return x.data?.via ?? null;
         case "status":
-          return r.status.label;
+          return x.status.label;
       }
     };
     return list.sort((a, b) => {
@@ -407,12 +541,27 @@ export default function InsightPage() {
       if (typeof va === "number" && typeof vb === "number") return (va - vb) * dir;
       return String(va).localeCompare(String(vb), "vi") * dir;
     });
-  }, [chosenPages, rows, sort]);
+  }, [visiblePages, rows, range, sort, assignments, groupById]);
 
   function toggleSort(key: SortKey) {
     setSort((s) =>
-      s.key === key ? { key, dir: s.dir === "asc" ? "desc" : "asc" } : { key, dir: key === "name" ? "asc" : "desc" },
+      s.key === key
+        ? { key, dir: s.dir === "asc" ? "desc" : "asc" }
+        : { key, dir: key === "name" || key === "group" ? "asc" : "desc" },
     );
+  }
+
+  const allChecked = tableRows.length > 0 && tableRows.every((x) => checked.has(x.page.id));
+  function toggleAll() {
+    setChecked(allChecked ? new Set() : new Set(tableRows.map((x) => x.page.id)));
+  }
+  function toggleOne(id: string) {
+    setChecked((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
   }
 
   function exportCsv() {
@@ -420,25 +569,24 @@ export default function InsightPage() {
       const s = v == null ? "" : String(v);
       return /[",\n;]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
     };
-    const head = ["Trang", "Page ID", "Reach", "Kỳ trước", "Thay đổi %", "Metric", "Token phục vụ", "Trạng thái"];
-    const lines = tableRows.map((r) =>
+    const head = ["Trang", "Page ID", "Nhóm", "Reach", "Kỳ trước", "Thay đổi %", "Metric", "Token", "Trạng thái"];
+    const lines = tableRows.map((x) =>
       [
-        r.page.name,
-        r.page.id,
-        r.reach,
-        r.data?.prev ?? null,
-        r.change == null ? null : r.change.toFixed(1),
-        r.data?.metric ?? null,
-        r.data?.via ?? null,
-        r.status.label,
+        x.page.name,
+        x.page.id,
+        x.group?.name ?? "",
+        x.reach,
+        x.r?.prev ?? null,
+        x.change == null ? null : x.change.toFixed(1),
+        x.data?.metric ?? null,
+        x.data?.via ?? null,
+        x.status.label,
       ]
         .map(esc)
         .join(","),
     );
     // BOM so Excel opens the UTF-8 file with Vietnamese intact.
-    const blob = new Blob(["﻿" + [head.join(","), ...lines].join("\r\n")], {
-      type: "text/csv;charset=utf-8",
-    });
+    const blob = new Blob(["﻿" + [head.join(","), ...lines].join("\r\n")], { type: "text/csv;charset=utf-8" });
     const a = document.createElement("a");
     a.href = URL.createObjectURL(blob);
     a.download = `insight-reach-${range}-${new Date().toISOString().slice(0, 10)}.csv`;
@@ -446,8 +594,9 @@ export default function InsightPage() {
     setTimeout(() => URL.revokeObjectURL(a.href), 1000);
   }
 
-  const scopeName = scope === "all" ? "Tất cả nhóm" : groupById.get(scope)?.name ?? "Nhóm";
-  const loadingPages = accounts === null || pagesProgress !== null;
+  const filterName =
+    effectiveFilter === "all" ? "Tất cả" : effectiveFilter === "none" ? "Chưa phân nhóm" : groupById.get(effectiveFilter)?.name ?? "Nhóm";
+  const rangeDays = range === "7d" ? 7 : 28;
 
   // --- render ---------------------------------------------------------------
   return (
@@ -460,9 +609,9 @@ export default function InsightPage() {
           </h1>
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
-          <span className="chip" title="Nhóm đang làm việc">
-            {scopeName} · {chosenPages.length}/{scopedPages.length} Trang
-          </span>
+          <button className="btn" style={smallBtn} onClick={() => setShowTokens((v) => !v)} aria-expanded={showTokens}>
+            Token ({tokens?.length ?? 0}) {showTokens ? "▴" : "▾"}
+          </button>
           <div className="btn-group" role="tablist" aria-label="Chọn kỳ">
             {RANGES.map((r) => (
               <button
@@ -479,113 +628,108 @@ export default function InsightPage() {
         </div>
       </header>
 
-      {loadError && (
-        <div className="card" style={{ marginBottom: 24, color: "var(--danger)" }}>
-          {loadError}
+      {notice && (
+        <div
+          role="status"
+          className="card"
+          style={{
+            marginBottom: 16,
+            padding: "10px 14px",
+            fontSize: 12,
+            display: "flex",
+            gap: 12,
+            alignItems: "center",
+            color: notice.tone === "err" ? "var(--danger)" : notice.tone === "warn" ? "var(--warn)" : "var(--good)",
+          }}
+        >
+          <span style={{ flex: 1 }}>{notice.text}</span>
+          <button className="btn" style={{ padding: "2px 8px", fontSize: 10 }} onClick={() => setNotice(null)} aria-label="Đóng">
+            ✕
+          </button>
         </div>
       )}
 
-      {loadingPages ? (
+      {showTokens && tokens && (
+        <TokenPanel tokens={tokens} pageCounts={tokenPages} onAdd={addToken} onDelete={deleteToken} />
+      )}
+
+      {tokens === null || pagesProgress ? (
         <div className="card mono" style={{ color: "var(--muted)", fontSize: 12 }}>
-          {pagesProgress
-            ? `Đang tải danh sách Trang ${pagesProgress.done}/${pagesProgress.total} tài khoản…`
-            : "Đang tải…"}
+          {pagesProgress ? `Đang tải danh sách Trang ${pagesProgress.done}/${pagesProgress.total} token…` : "Đang tải…"}
         </div>
-      ) : accounts && accounts.length === 0 ? (
-        <div className="card" style={{ color: "var(--muted)", lineHeight: 1.6 }}>
-          Chưa có tài khoản Facebook nào có token. Thêm token ở{" "}
-          <Link href="/facebook" style={{ color: "var(--accent)" }}>
-            Tài khoản Facebook
-          </Link>{" "}
-          để xem Reach các Trang mà tài khoản đó quản lý.
+      ) : tokens.length === 0 ? null : pages.length === 0 ? (
+        <div className="card" style={{ color: "var(--muted)" }}>
+          Token chưa đọc được Trang nào (cần quyền pages_show_list). Xem lỗi ở danh sách token phía trên.
         </div>
       ) : (
         <>
-          <section className="section">
+          {/* Group filter */}
+          <section className="section" style={{ marginBottom: 20 }}>
             <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
               <span className="section-label" style={{ marginRight: 4 }}>
                 Nhóm
               </span>
-              <button
-                className={`btn${scope === "all" ? " btn-primary" : ""}`}
-                style={{ padding: "5px 10px", fontSize: 11 }}
-                onClick={() => {
-                  setScope("all");
-                  setSelected(null);
-                }}
-              >
-                Tất cả ({pages.length})
-              </button>
-              {scopeGroups.map((g) => (
-                <button
+              <FilterChip active={effectiveFilter === "all"} onClick={() => chooseFilter("all")} label={`Tất cả (${pages.length})`} />
+              {groups.map((g) => (
+                <FilterChip
                   key={g.id}
-                  className={`btn${scope === g.id ? " btn-primary" : ""}`}
-                  style={{ padding: "5px 10px", fontSize: 11, display: "inline-flex", gap: 6, alignItems: "center" }}
-                  onClick={() => {
-                    setScope(g.id);
-                    setSelected(null);
-                  }}
-                >
-                  <span style={{ width: 8, height: 8, borderRadius: "50%", background: g.color }} />
-                  {g.name} ({pages.filter((p) => p.groupIds.includes(g.id)).length})
-                </button>
+                  active={effectiveFilter === g.id}
+                  onClick={() => chooseFilter(g.id)}
+                  label={`${g.name} (${counts.byGroup[g.id] ?? 0})`}
+                  color={g.color}
+                />
               ))}
-              <span style={{ flex: 1 }} />
-              <PageMultiselect
-                pages={scopedPages}
-                groups={scopeGroups}
-                selected={selected}
-                onChange={setSelected}
+              <FilterChip
+                active={effectiveFilter === "none"}
+                onClick={() => chooseFilter("none")}
+                label={`Chưa phân nhóm (${counts.none})`}
+                color="var(--dim)"
               />
-              <button className="btn" style={{ padding: "5px 10px", fontSize: 11 }} onClick={reload} disabled={!!progress}>
-                ↻ Tải lại
-              </button>
-              <button
-                className="btn"
-                style={{ padding: "5px 10px", fontSize: 11 }}
-                onClick={exportCsv}
-                disabled={tableRows.length === 0}
-              >
-                Xuất CSV
+              <button className="btn" style={smallBtn} onClick={() => setShowGroups((v) => !v)} aria-expanded={showGroups}>
+                {showGroups ? "Đóng quản lý nhóm" : "＋ / ✎ Nhóm"}
               </button>
             </div>
-            {accountErrors.length > 0 && (
-              <details style={{ marginTop: 10, fontSize: 12, color: "var(--warn)" }}>
-                <summary style={{ cursor: "pointer" }}>
-                  {accountErrors.length} tài khoản không tải được danh sách Trang
-                </summary>
-                <ul style={{ margin: "6px 0 0 18px", color: "var(--muted)" }}>
-                  {accountErrors.map((e) => (
-                    <li key={e.label}>
-                      <b style={{ color: "var(--ink-soft)" }}>{e.label}</b>: {e.error}
-                    </li>
-                  ))}
-                </ul>
-              </details>
+            {showGroups && (
+              <GroupManager groups={groups} counts={counts.byGroup} onCreate={createGroup} onUpdate={updateGroup} onDelete={deleteGroup} />
             )}
           </section>
 
-          {scopedPages.length === 0 ? (
+          {/* Toolbar */}
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", marginBottom: 14 }}>
+            <input
+              className="input"
+              placeholder="Tìm Trang theo tên hoặc ID…"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              style={{ flex: "1 1 220px", maxWidth: 340 }}
+            />
+            <span className="mono" style={{ fontSize: 11, color: "var(--muted)" }}>
+              {filterName} · {visiblePages.length} Trang
+              {progress ? ` · Đang tải ${progress.done}/${progress.total} Trang…` : ""}
+            </span>
+            <span style={{ flex: 1 }} />
+            <button className="btn" style={smallBtn} onClick={reload} disabled={!!progress || visiblePages.length === 0}>
+              ↻ Tải lại
+            </button>
+            <button className="btn" style={smallBtn} onClick={() => setPagesTick((n) => n + 1)} title="Đọc lại danh sách Trang từ token">
+              ↻ Danh sách Trang
+            </button>
+            <button className="btn" style={smallBtn} onClick={exportCsv} disabled={tableRows.length === 0}>
+              Xuất CSV
+            </button>
+          </div>
+
+          {visiblePages.length === 0 ? (
             <div className="card" style={{ color: "var(--muted)" }}>
-              {pages.length === 0
-                ? "Các tài khoản Facebook chưa quản lý Trang nào (hoặc token thiếu quyền pages_show_list)."
-                : "Nhóm này chưa có Trang nào."}
+              {search ? "Không có Trang khớp từ khóa." : effectiveFilter === "none" ? "Mọi Trang đều đã được phân nhóm." : "Nhóm này chưa có Trang nào — chọn Trang ở “Tất cả” rồi gán vào nhóm."}
             </div>
-          ) : chosenPages.length === 0 ? (
-            <div className="card" style={{ color: "var(--muted)" }}>Chưa chọn Trang nào.</div>
           ) : (
             <>
-              {progress && (
-                <div className="mono" style={{ fontSize: 11, color: "var(--muted)", marginBottom: 10 }}>
-                  Đang tải {progress.done}/{progress.total} Trang…
-                </div>
-              )}
-
               <div className="kpi-grid insight-kpis">
                 <div className="kpi">
                   <span className="kpi-label">Tổng reach</span>
                   <span className="kpi-num insight-num">{withReach.length ? fmt(total) : "—"}</span>
-                  <span className="kpi-sub" style={{ textTransform: "none", letterSpacing: 0 }}>
+                  <span className="kpi-sub insight-sub">
                     {pendingToday && withReach.length === 0
                       ? "Facebook chưa cập nhật số liệu hôm nay"
                       : "Cộng các Trang — người xem nhiều Trang có thể bị tính nhiều lần"}
@@ -595,33 +739,26 @@ export default function InsightPage() {
                   <span className="kpi-label">Trang có dữ liệu</span>
                   <span className="kpi-num insight-num">
                     {withReach.length}
-                    <span style={{ color: "var(--muted)", fontSize: "0.6em" }}>/{chosenPages.length}</span>
+                    <span style={{ color: "var(--muted)", fontSize: "0.6em" }}>/{visiblePages.length}</span>
                   </span>
-                  <span className="kpi-sub" style={{ textTransform: "none", letterSpacing: 0 }}>
+                  <span className="kpi-sub insight-sub">
                     {pendingToday ? "Có Trang Facebook chưa cập nhật số hôm nay" : "Trang trả về số reach"}
                   </span>
                 </div>
                 <div className="kpi">
                   <span className="kpi-label">Reach cao nhất</span>
-                  <span className="kpi-num insight-num">{top ? fmt(top.state.data.reach) : "—"}</span>
-                  <span
-                    className="kpi-sub"
-                    style={{ textTransform: "none", letterSpacing: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}
-                    title={top?.page.name}
-                  >
+                  <span className="kpi-num insight-num">{top ? fmt(top.r.reach) : "—"}</span>
+                  <span className="kpi-sub insight-sub insight-ellipsis" style={{ maxWidth: "100%" }} title={top?.page.name}>
                     {top?.page.name ?? "—"}
                   </span>
                 </div>
                 <div className="kpi">
                   <span className="kpi-label">So với kỳ trước</span>
-                  <span
-                    className="kpi-num insight-num"
-                    style={{ color: totalChange == null ? undefined : changeView(totalChange).color }}
-                  >
+                  <span className="kpi-num insight-num" style={{ color: totalChange == null ? undefined : changeView(totalChange).color }}>
                     {changeView(totalChange).text}
                   </span>
-                  <span className="kpi-sub" style={{ textTransform: "none", letterSpacing: 0 }}>
-                    {range === "today" ? "so với hôm qua" : `so với ${range === "7d" ? "7" : "28"} ngày liền trước`}
+                  <span className="kpi-sub insight-sub">
+                    {range === "today" ? "so với hôm qua" : `so với ${rangeDays} ngày liền trước`}
                   </span>
                 </div>
               </div>
@@ -634,7 +771,7 @@ export default function InsightPage() {
                         Reach <em>theo ngày</em>
                       </h2>
                       <div className="section-label" style={{ marginTop: 4 }}>
-                        Tổng reach trong ngày của các Trang đã chọn · ngày theo giờ Thái Bình Dương
+                        Tổng reach trong ngày · {filterName} · ngày theo giờ Thái Bình Dương
                       </div>
                     </div>
                   </div>
@@ -650,18 +787,42 @@ export default function InsightPage() {
                 </section>
               )}
 
+              {checked.size > 0 && (
+                <div className="card insight-bulk">
+                  <span className="mono" style={{ fontSize: 11, color: "var(--accent)" }}>
+                    Đã chọn {checked.size} Trang
+                  </span>
+                  <GroupSelect
+                    groups={groups}
+                    value={undefined}
+                    placeholder="Chuyển vào nhóm…"
+                    onChange={async (gid) => {
+                      await assign([...checked], gid);
+                      setChecked(new Set());
+                    }}
+                    onCreate={createGroup}
+                  />
+                  <button className="btn" style={smallBtn} onClick={() => setChecked(new Set())}>
+                    Bỏ chọn
+                  </button>
+                </div>
+              )}
+
               <section className="section">
-                <div className="table-wrap">
+                <div className="table-wrap insight-table-wrap">
                   <table className="table insight-table">
                     <thead>
                       <tr>
+                        <th style={{ width: 28 }}>
+                          <input type="checkbox" checked={allChecked} onChange={toggleAll} aria-label="Chọn tất cả Trang" />
+                        </th>
                         {(
                           [
                             ["name", "Trang", ""],
+                            ["group", "Nhóm", ""],
                             ["reach", "Reach", "right"],
                             ["change", "Thay đổi", "right"],
                             [null, "Xu hướng", ""],
-                            ["metric", "Metric", ""],
                             ["via", "Token", ""],
                             ["status", "Trạng thái", ""],
                           ] as Array<[SortKey | null, string, string]>
@@ -671,9 +832,7 @@ export default function InsightPage() {
                             className={align}
                             onClick={key ? () => toggleSort(key) : undefined}
                             style={{ cursor: key ? "pointer" : "default", userSelect: "none", whiteSpace: "nowrap" }}
-                            aria-sort={
-                              key && sort.key === key ? (sort.dir === "asc" ? "ascending" : "descending") : undefined
-                            }
+                            aria-sort={key && sort.key === key ? (sort.dir === "asc" ? "ascending" : "descending") : undefined}
                           >
                             {label}
                             {key && sort.key === key ? (sort.dir === "asc" ? " ↑" : " ↓") : ""}
@@ -682,51 +841,68 @@ export default function InsightPage() {
                       </tr>
                     </thead>
                     <tbody>
-                      {tableRows.map((r) => {
-                        const color = r.page.groupIds.length ? groupById.get(r.page.groupIds[0])?.color ?? null : null;
+                      {tableRows.map((x) => {
+                        const ch = changeView(x.change);
                         return (
-                          <tr key={r.page.id}>
-                            <td style={{ maxWidth: 260 }}>
+                          <tr key={x.page.id} className={checked.has(x.page.id) ? "selected" : ""}>
+                            <td>
+                              <input
+                                type="checkbox"
+                                checked={checked.has(x.page.id)}
+                                onChange={() => toggleOne(x.page.id)}
+                                aria-label={`Chọn ${x.page.name}`}
+                              />
+                            </td>
+                            <td style={{ maxWidth: 240 }}>
                               <span style={{ display: "flex", gap: 10, alignItems: "center", minWidth: 0 }}>
-                                <PageAvatar page={r.page} color={color} />
+                                <PageAvatar page={x.page} color={x.group?.color ?? null} />
                                 <span style={{ minWidth: 0 }}>
-                                  <span
-                                    style={{ display: "block", color: "var(--ink)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}
-                                    title={r.page.name}
+                                  <a
+                                    href={`https://facebook.com/${x.page.id}`}
+                                    target="_blank"
+                                    rel="noreferrer"
+                                    className="insight-ellipsis"
+                                    style={{ display: "block", maxWidth: 190, color: "var(--ink)", textDecoration: "none" }}
+                                    title={x.page.name}
                                   >
-                                    {r.page.name}
-                                  </span>
+                                    {x.page.name}
+                                  </a>
                                   <span className="mono" style={{ fontSize: 10, color: "var(--dim)" }}>
-                                    {r.page.id}
+                                    {x.page.id}
                                   </span>
                                 </span>
                               </span>
                             </td>
+                            <td>
+                              <GroupSelect
+                                groups={groups}
+                                value={x.group?.id ?? null}
+                                onChange={(gid) => assign([x.page.id], gid)}
+                                onCreate={createGroup}
+                                compact
+                              />
+                            </td>
                             <td className="right insight-num">
-                              {r.data?.todayPending ? (
+                              {range === "today" && x.r?.todayPending ? (
                                 <span title="Facebook chưa cập nhật số liệu hôm nay" style={{ color: "var(--muted)" }}>
                                   —
                                 </span>
                               ) : (
-                                fmt(r.reach)
+                                fmt(x.reach)
                               )}
                             </td>
-                            <td
-                              className="right insight-num"
-                              style={{ color: changeView(r.change).color }}
-                            >
-                              {changeView(r.change).text}
-                            </td>
-                            <td>{r.data && range !== "today" ? <Sparkline points={r.data.daily} /> : <span style={{ color: "var(--dim)" }}>—</span>}</td>
-                            <td className="mono insight-ellipsis" style={{ fontSize: 10, color: "var(--muted)" }} title={r.data?.metric ?? ""}>
-                              {r.data?.metric ?? "—"}
-                            </td>
-                            <td className="insight-ellipsis" style={{ fontSize: 12, color: "var(--muted)" }} title={r.data?.via ?? ""}>
-                              {r.data?.via ?? "—"}
+                            <td className="right insight-num" style={{ color: ch.color }}>
+                              {ch.text}
                             </td>
                             <td>
-                              <span className={`pill${r.status.tone === "ok" ? " ok" : r.status.tone === "err" ? " err" : ""}`} title={r.status.title}>
-                                {r.status.label}
+                              {x.r && range !== "today" ? <Sparkline points={x.r.daily} /> : <span style={{ color: "var(--dim)" }}>—</span>}
+                            </td>
+                            <td className="insight-ellipsis" style={{ fontSize: 12, color: "var(--muted)", maxWidth: 120 }} title={x.data ? `${x.data.via ?? ""} · ${x.data.metric ?? ""}` : ""}>
+                              {x.data?.via ?? "—"}
+                            </td>
+                            <td>
+                              <span className={`pill${x.status.tone === "ok" ? " ok" : x.status.tone === "err" ? " err" : ""}`} title={x.status.title}>
+                                {x.status.label}
                               </span>
                             </td>
                           </tr>
@@ -736,10 +912,10 @@ export default function InsightPage() {
                   </table>
                 </div>
                 {range !== "today" && (
-                  <div className="section-label" style={{ marginTop: 10 }}>
-                    Reach {range === "7d" ? "7" : "28"} ngày là giá trị theo kỳ do Facebook tính (period=
-                    {range === "7d" ? "week" : "days_28"}), không cộng dồn theo ngày — một người xem nhiều ngày chỉ
-                    tính một lần. Điểm cuối: {chartPoints.length ? ddmm(chartPoints[chartPoints.length - 1].date) : "—"}.
+                  <div className="section-label" style={{ marginTop: 10, lineHeight: 1.6 }}>
+                    Reach {rangeDays} ngày là giá trị theo kỳ do Facebook tính (period={range === "7d" ? "week" : "days_28"}), không
+                    cộng dồn theo ngày — một người xem nhiều ngày chỉ tính một lần. Điểm cuối:{" "}
+                    {chartPoints.length ? ddmm(chartPoints[chartPoints.length - 1].date) : "—"}.
                   </div>
                 )}
               </section>
@@ -751,112 +927,220 @@ export default function InsightPage() {
   );
 }
 
-// Dropdown checklist of pages with search + quick-select by group.
-function PageMultiselect({
-  pages,
-  groups,
-  selected,
-  onChange,
-}: {
-  pages: Page[];
-  groups: Group[];
-  selected: Set<string> | null;
-  onChange: (s: Set<string> | null) => void;
-}) {
-  const [open, setOpen] = useState(false);
-  const [q, setQ] = useState("");
-  const ref = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    if (!open) return;
-    const onDoc = (e: MouseEvent) => {
-      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
-    };
-    const onKey = (e: KeyboardEvent) => e.key === "Escape" && setOpen(false);
-    document.addEventListener("mousedown", onDoc);
-    document.addEventListener("keydown", onKey);
-    return () => {
-      document.removeEventListener("mousedown", onDoc);
-      document.removeEventListener("keydown", onKey);
-    };
-  }, [open]);
-
-  const isOn = (id: string) => (selected ? selected.has(id) : true);
-  const count = selected ? pages.filter((p) => selected.has(p.id)).length : pages.length;
-  const term = q.trim().toLowerCase();
-  const visible = term ? pages.filter((p) => p.name.toLowerCase().includes(term) || p.id.includes(term)) : pages;
-
-  function toggle(id: string) {
-    const next = new Set(selected ?? pages.map((p) => p.id));
-    if (next.has(id)) next.delete(id);
-    else next.add(id);
-    onChange(next.size === pages.length ? null : next);
-  }
-
+function FilterChip({ active, onClick, label, color }: { active: boolean; onClick: () => void; label: string; color?: string }) {
   return (
-    <div ref={ref} style={{ position: "relative" }}>
-      <button className="btn" style={{ padding: "5px 10px", fontSize: 11 }} onClick={() => setOpen((o) => !o)} aria-expanded={open}>
-        Trang: {count}/{pages.length} ▾
-      </button>
-      {open && (
-        <div
-          style={{
-            position: "absolute",
-            right: 0,
-            top: "calc(100% + 6px)",
-            width: 320,
-            maxWidth: "calc(100vw - 32px)",
-            background: "var(--paper)",
-            border: "1px solid var(--line-strong)",
-            borderRadius: 8,
-            zIndex: 30,
-            padding: 10,
-          }}
-        >
-          <input
-            className="input"
-            placeholder="Tìm Trang theo tên hoặc ID…"
-            value={q}
-            onChange={(e) => setQ(e.target.value)}
-            autoFocus
-            style={{ width: "100%", marginBottom: 8 }}
-          />
-          <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 8 }}>
-            <button className="btn" style={{ padding: "3px 8px", fontSize: 10 }} onClick={() => onChange(null)}>
-              Chọn tất cả
-            </button>
-            <button className="btn" style={{ padding: "3px 8px", fontSize: 10 }} onClick={() => onChange(new Set())}>
-              Bỏ chọn
-            </button>
-            {groups.map((g) => (
-              <button
-                key={g.id}
-                className="btn"
-                style={{ padding: "3px 8px", fontSize: 10, display: "inline-flex", gap: 5, alignItems: "center" }}
-                title={`Chỉ chọn các Trang thuộc nhóm ${g.name}`}
-                onClick={() => onChange(new Set(pages.filter((p) => p.groupIds.includes(g.id)).map((p) => p.id)))}
-              >
-                <span style={{ width: 7, height: 7, borderRadius: "50%", background: g.color }} />
-                {g.name}
+    <button
+      className={`btn${active ? " btn-primary" : ""}`}
+      style={{ ...smallBtn, display: "inline-flex", gap: 6, alignItems: "center" }}
+      onClick={onClick}
+      aria-pressed={active}
+    >
+      {color && <span style={{ width: 8, height: 8, borderRadius: "50%", background: color }} />}
+      {label}
+    </button>
+  );
+}
+
+// <select> of groups for one page or a bulk selection; last option creates a group.
+function GroupSelect({
+  groups,
+  value,
+  onChange,
+  onCreate,
+  placeholder,
+  compact,
+}: {
+  groups: Group[];
+  value: number | null | undefined; // undefined = no current value (bulk)
+  onChange: (groupId: number | null) => void;
+  onCreate: (name: string, color: string) => Promise<Group | null>;
+  placeholder?: string;
+  compact?: boolean;
+}) {
+  return (
+    <select
+      className="input"
+      value={value === undefined ? "" : value === null ? "none" : String(value)}
+      style={compact ? { padding: "3px 6px", fontSize: 11, width: 140 } : { padding: "4px 8px", fontSize: 12 }}
+      onChange={async (e) => {
+        const v = e.target.value;
+        if (v === "") return;
+        if (v === "new") {
+          const name = prompt("Tên nhóm mới:")?.trim();
+          if (!name) return;
+          const g = await onCreate(name, GROUP_COLORS[groups.length % GROUP_COLORS.length]);
+          if (g) onChange(g.id);
+          return;
+        }
+        onChange(v === "none" ? null : Number(v));
+      }}
+    >
+      {value === undefined && <option value="">{placeholder ?? "Chọn nhóm…"}</option>}
+      <option value="none">Chưa phân nhóm</option>
+      {groups.map((g) => (
+        <option key={g.id} value={g.id}>
+          {g.name}
+        </option>
+      ))}
+      <option value="new">＋ Nhóm mới…</option>
+    </select>
+  );
+}
+
+function GroupManager({
+  groups,
+  counts,
+  onCreate,
+  onUpdate,
+  onDelete,
+}: {
+  groups: Group[];
+  counts: Record<number, number>;
+  onCreate: (name: string, color: string) => Promise<Group | null>;
+  onUpdate: (id: number, patch: { name?: string; color?: string }) => void;
+  onDelete: (g: Group) => void;
+}) {
+  const [name, setName] = useState("");
+  const [color, setColor] = useState(GROUP_COLORS[groups.length % GROUP_COLORS.length]);
+  const [busy, setBusy] = useState(false);
+  return (
+    <div className="card" style={{ marginTop: 12, padding: 14 }}>
+      <form
+        style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}
+        onSubmit={async (e) => {
+          e.preventDefault();
+          if (!name.trim() || busy) return;
+          setBusy(true);
+          const g = await onCreate(name.trim(), color);
+          setBusy(false);
+          if (g) {
+            setName("");
+            setColor(GROUP_COLORS[(groups.length + 1) % GROUP_COLORS.length]);
+          }
+        }}
+      >
+        <input className="input" placeholder="Tên nhóm mới…" value={name} onChange={(e) => setName(e.target.value)} maxLength={60} style={{ flex: "1 1 180px", maxWidth: 260 }} />
+        <input type="color" value={color} onChange={(e) => setColor(e.target.value)} aria-label="Màu nhóm" style={{ width: 34, height: 30, border: 0, background: "transparent", padding: 0 }} />
+        <button className="btn btn-primary" style={smallBtn} disabled={!name.trim() || busy}>
+          Tạo nhóm
+        </button>
+      </form>
+      {groups.length > 0 && (
+        <div style={{ marginTop: 12, display: "grid", gap: 6 }}>
+          {groups.map((g) => (
+            <div key={g.id} style={{ display: "flex", gap: 8, alignItems: "center" }}>
+              <input
+                type="color"
+                defaultValue={g.color}
+                aria-label={`Màu nhóm ${g.name}`}
+                onBlur={(e) => e.target.value !== g.color && onUpdate(g.id, { color: e.target.value })}
+                style={{ width: 28, height: 26, border: 0, background: "transparent", padding: 0 }}
+              />
+              <input
+                className="input"
+                defaultValue={g.name}
+                maxLength={60}
+                aria-label="Tên nhóm"
+                onBlur={(e) => {
+                  const v = e.target.value.trim();
+                  if (v && v !== g.name) onUpdate(g.id, { name: v });
+                  else e.target.value = g.name;
+                }}
+                onKeyDown={(e) => e.key === "Enter" && (e.target as HTMLInputElement).blur()}
+                style={{ flex: "1 1 160px", maxWidth: 260, padding: "4px 8px", fontSize: 12 }}
+              />
+              <span className="mono" style={{ fontSize: 11, color: "var(--muted)", minWidth: 60 }}>
+                {counts[g.id] ?? 0} Trang
+              </span>
+              <button className="btn btn-danger" style={{ padding: "3px 8px", fontSize: 10 }} onClick={() => onDelete(g)}>
+                Xóa
               </button>
-            ))}
-          </div>
-          <div style={{ maxHeight: 280, overflowY: "auto", borderTop: "1px solid var(--line)" }}>
-            {visible.map((p) => (
-              <label
-                key={p.id}
-                style={{ display: "flex", gap: 8, alignItems: "center", padding: "6px 2px", fontSize: 12, cursor: "pointer" }}
-              >
-                <input type="checkbox" checked={isOn(p.id)} onChange={() => toggle(p.id)} />
-                <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{p.name}</span>
-              </label>
-            ))}
-            {visible.length === 0 && (
-              <div style={{ color: "var(--muted)", fontSize: 12, padding: 8 }}>Không có Trang khớp.</div>
-            )}
-          </div>
+            </div>
+          ))}
         </div>
       )}
     </div>
+  );
+}
+
+function TokenPanel({
+  tokens,
+  pageCounts,
+  onAdd,
+  onDelete,
+}: {
+  tokens: Token[];
+  pageCounts: Record<number, number>;
+  onAdd: (raw: string, label: string) => Promise<boolean>;
+  onDelete: (t: Token) => void;
+}) {
+  const [raw, setRaw] = useState("");
+  const [label, setLabel] = useState("");
+  const [busy, setBusy] = useState(false);
+  return (
+    <section className="card" style={{ marginBottom: 24 }}>
+      <div className="section-label" style={{ marginBottom: 10 }}>
+        Token đọc Insight — dán User Access Token (đọc mọi Trang tài khoản quản lý) hoặc Page Token. Token được mã hóa khi lưu.
+      </div>
+      <form
+        style={{ display: "flex", gap: 8, flexWrap: "wrap" }}
+        onSubmit={async (e) => {
+          e.preventDefault();
+          if (!raw.trim() || busy) return;
+          setBusy(true);
+          const ok = await onAdd(raw.trim(), label.trim());
+          setBusy(false);
+          if (ok) {
+            setRaw("");
+            setLabel("");
+          }
+        }}
+      >
+        <input
+          className="input mono"
+          placeholder="EAA…"
+          value={raw}
+          onChange={(e) => setRaw(e.target.value)}
+          autoComplete="off"
+          spellCheck={false}
+          style={{ flex: "3 1 260px", fontSize: 12 }}
+        />
+        <input className="input" placeholder="Tên gợi nhớ (tùy chọn)" value={label} onChange={(e) => setLabel(e.target.value)} style={{ flex: "1 1 140px" }} />
+        <button className="btn btn-primary" style={smallBtn} disabled={!raw.trim() || busy}>
+          {busy ? "Đang kiểm tra…" : "Thêm token"}
+        </button>
+      </form>
+      {tokens.length > 0 && (
+        <div className="table-wrap" style={{ marginTop: 14 }}>
+          <table className="table">
+            <tbody>
+              {tokens.map((t) => (
+                <tr key={t.id}>
+                  <td>
+                    <div style={{ color: "var(--ink)" }}>{t.label}</div>
+                    <div className="mono" style={{ fontSize: 10, color: "var(--dim)" }}>
+                      {t.fbName && t.fbName !== t.label ? `${t.fbName} · ` : ""}
+                      {t.preview}
+                    </div>
+                  </td>
+                  <td>
+                    <span className="chip">{t.kind === "page" ? "Page token" : "User token"}</span>
+                  </td>
+                  <td className="mono" style={{ fontSize: 11, color: "var(--muted)", whiteSpace: "nowrap" }}>
+                    {pageCounts[t.id] !== undefined ? `${pageCounts[t.id]} Trang` : ""}
+                  </td>
+                  <td style={{ fontSize: 11, color: "var(--danger)", maxWidth: 280 }}>{t.lastError ?? ""}</td>
+                  <td className="right">
+                    <button className="btn btn-danger" style={{ padding: "3px 8px", fontSize: 10 }} onClick={() => onDelete(t)}>
+                      Xóa
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </section>
   );
 }

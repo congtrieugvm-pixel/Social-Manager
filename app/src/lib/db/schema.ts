@@ -177,6 +177,52 @@ export const appSessions = sqliteTable("app_sessions", {
   expiresAt: integer("expires_at").notNull(),
 });
 
+// ---------------------------------------------------------------------------
+// Insight (Page Reach) — independent of facebook_accounts. Pages themselves
+// are never stored: they are listed live from Graph with these tokens.
+// ---------------------------------------------------------------------------
+
+export const insightTokens = sqliteTable("insight_tokens", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  ownerUserId: integer("owner_user_id").references(() => appUsers.id, { onDelete: "cascade" }),
+  label: text("label"),
+  // 'user' (lists /me/accounts) or 'page' (the token IS one page's token).
+  kind: text("kind").notNull().default("user"),
+  encToken: text("enc_token").notNull(),
+  fbId: text("fb_id"), // user id or page id behind the token
+  fbName: text("fb_name"),
+  tokenPreview: text("token_preview"),
+  lastError: text("last_error"),
+  createdAt: integer("created_at", { mode: "timestamp" })
+    .notNull()
+    .default(sql`(unixepoch())`),
+});
+
+export const insightPageGroups = sqliteTable("insight_page_groups", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  ownerUserId: integer("owner_user_id").references(() => appUsers.id, { onDelete: "cascade" }),
+  name: text("name").notNull(),
+  color: text("color").notNull().default("#5e6ad2"),
+  sortOrder: integer("sort_order").notNull().default(0),
+  createdAt: integer("created_at", { mode: "timestamp" })
+    .notNull()
+    .default(sql`(unixepoch())`),
+});
+
+// One group per page (per owner). Composite PK (owner_user_id, page_id).
+export const insightPageAssignments = sqliteTable("insight_page_assignments", {
+  ownerUserId: integer("owner_user_id")
+    .notNull()
+    .references(() => appUsers.id, { onDelete: "cascade" }),
+  pageId: text("page_id").notNull(),
+  groupId: integer("group_id")
+    .notNull()
+    .references(() => insightPageGroups.id, { onDelete: "cascade" }),
+});
+
+export type InsightToken = typeof insightTokens.$inferSelect;
+export type InsightPageGroup = typeof insightPageGroups.$inferSelect;
+
 export type Account = typeof accounts.$inferSelect;
 export type NewAccount = typeof accounts.$inferInsert;
 export type FacebookAccount = typeof facebookAccounts.$inferSelect;

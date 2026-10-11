@@ -1062,3 +1062,31 @@ input[type="checkbox"] {
     grid-template-columns: repeat(2, 1fr);
   }
 }
+
+.kpi-sub.insight-sub {
+  text-transform: none;
+  letter-spacing: 0;
+}
+
+/* Scroll inside the table so the header can stay put. */
+.insight-table-wrap {
+  max-height: 72vh;
+  overflow: auto;
+}
+
+.insight-table-wrap thead th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--paper);
+}
+
+.insight-bulk {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  flex-wrap: wrap;
+  padding: 10px 14px;
+  margin-bottom: 12px;
+  border-color: var(--accent-strong);
+}

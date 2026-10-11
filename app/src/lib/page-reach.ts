@@ -1,22 +1,25 @@
 // Page Reach for the Insight screen.
 //
-// Pages are not stored in the DB (fanpage management was removed). They are
-// listed live from Graph with each Facebook account's user token; a page
-// managed by several accounts has several candidate tokens. Every Graph call
-// for a page goes through `fetchPageReach()`, which:
+// Pages are never stored: they are listed live from Graph with the tokens the
+// owner pasted into Insight (table insight_tokens). A page reachable through
+// several tokens has several candidates. Every Graph call for a page goes
+// through `fetchPageReach()`, which:
 //   - rotates the starting candidate per page (load-balances tokens),
-//   - "cools" an account for COOL_MS after a rate-limit error and moves on to
-//     the next candidate,
+//   - "cools" a token for COOL_MS after a rate-limit error and moves on to the
+//     next candidate (whole token for #4/#17/#613, just that page for #32/#368),
 //   - tries reach metrics in order, skipping ones Graph rejects as invalid,
 //     and remembers the working metric per page.
 //
-// State lives in module memory (per Worker isolate / Node process): it is a
-// best-effort cache, losing it only costs a few extra Graph calls.
+// ONE Graph call per page answers all three ranges: omitting `period` makes
+// Graph return the day, week and days_28 series together, so switching
+// Hôm nay / 7 ngày / 28 ngày in the UI needs no new request.
 //
-// Reach is a count of UNIQUE people, so 7d / 28d values are NEVER summed from
-// daily values (that double-counts people seen on several days). We read the
-// period value Graph computes itself: period=week for 7 days, period=days_28
-// for 28 days, period=day for today. Daily bars use period=day values.
+// Reach counts UNIQUE people, so 7d / 28d are NEVER summed from daily values
+// (that double-counts people seen on several days). We read Graph's own
+// period values: week for 7 days, days_28 for 28 days, day for today.
+//
+// State lives in module memory (per Worker isolate / Node process) — a
+// best-effort cache; losing it only costs a few extra Graph calls.
 
 import { graphFetch, isAbuseError, parseGraphError } from "@/lib/facebook";
 
@@ -24,29 +27,29 @@ export type ReachRange = "today" | "7d" | "28d";
 
 export const REACH_RANGES: ReachRange[] = ["today", "7d", "28d"];
 
-// Tried in order. Meta deprecated many Page Insights metrics in 2025, so no
-// single metric is assumed: page_impressions_unique was verified live on
-// Graph v23 (Apr 2026); the other two are its documented replacements.
+// Tried in order. Verified on live Graph v23 (2026-10): page_impressions_unique
+// and page_posts_impressions_unique now fail with #100 "must be a valid
+// insights metric"; page_total_media_view_unique ("Người xem", Meta's
+// replacement) works for day/week/days_28. Older apps/pages may still serve
+// the legacy ones, so they stay as fallbacks.
 export const REACH_METRICS = [
-  "page_impressions_unique", // Page reach
-  "page_total_media_view_unique", // "Viewers" — newer replacement
-  "page_posts_impressions_unique", // reach of the page's posts
+  "page_total_media_view_unique",
+  "page_impressions_unique",
+  "page_posts_impressions_unique",
 ] as const;
-
-const RANGE_DAYS: Record<ReachRange, number> = { today: 1, "7d": 7, "28d": 28 };
-const RANGE_PERIOD: Record<ReachRange, string> = {
-  today: "day",
-  "7d": "week",
-  "28d": "days_28",
-};
 
 const COOL_MS = 5 * 60 * 1000;
 const DAY = 86_400;
+// 28 daily points + the 28d value 28 days before the latest one, with slack.
+const WINDOW_DAYS = 31;
 
 export interface ReachCandidate {
-  accountId: number;
+  tokenId: number;
   label: string;
-  userToken: string;
+  kind: "user" | "page";
+  /** For kind="page": the page id the token belongs to. */
+  fbId: string | null;
+  token: string;
 }
 
 export interface DailyPoint {
@@ -54,15 +57,18 @@ export interface DailyPoint {
   value: number | null;
 }
 
-export interface ReachResult {
-  range: ReachRange;
-  metric: string | null;
+export interface RangeReach {
   reach: number | null;
   prev: number | null;
   daily: DailyPoint[];
-  via: string | null;
-  /** Today's number isn't published by Facebook yet. */
+  /** Hôm nay: Facebook hasn't published today's number yet. */
   todayPending?: boolean;
+}
+
+export interface ReachResult {
+  metric: string | null;
+  via: string | null;
+  ranges: Record<ReachRange, RangeReach>;
   unsupported?: boolean;
   reason?: string;
 }
@@ -78,10 +84,9 @@ export class CoolingError extends Error {
   }
 }
 
-const pageTokens = new Map<string, string>(); // `${accountId}:${pageId}` → page token
-// Cooled until (ms). Key "a:<accountId>" for app/user-level limits (#4, #17,
-// #613 — every page of that account is affected) or "p:<accountId>:<pageId>"
-// for page-level limits (#32, #368 — only that page's token).
+const pageTokens = new Map<string, string>(); // `${tokenId}:${pageId}` → page token
+// Cooled until (ms): "a:<tokenId>" (every page of that token) or
+// "p:<tokenId>:<pageId>" (page-level limit, only that page's token).
 const cooling = new Map<string, number>();
 const reachMetric = new Map<string, string>(); // pageId → working metric
 const rotation = new Map<string, number>(); // pageId → round-robin counter
@@ -95,8 +100,16 @@ export function resetReachState() {
 }
 
 /** Seed the page-token cache from a page listing (saves one call later). */
-export function rememberPageToken(accountId: number, pageId: string, token: string) {
-  pageTokens.set(`${accountId}:${pageId}`, token);
+export function rememberPageToken(tokenId: number, pageId: string, token: string) {
+  pageTokens.set(`${tokenId}:${pageId}`, token);
+}
+
+/** Drop everything cached for a token (it was deleted or replaced). */
+export function forgetToken(tokenId: number) {
+  for (const key of [...pageTokens.keys()]) if (key.startsWith(`${tokenId}:`)) pageTokens.delete(key);
+  for (const key of [...cooling.keys()]) {
+    if (key === `a:${tokenId}` || key.startsWith(`p:${tokenId}:`)) cooling.delete(key);
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -126,7 +139,7 @@ function shiftDay(date: string, days: number): string {
 // Graph helpers
 // ---------------------------------------------------------------------------
 
-interface InsightValues {
+interface InsightResponse {
   data?: Array<{
     name: string;
     period: string;
@@ -134,25 +147,26 @@ interface InsightValues {
   }>;
 }
 
-async function fetchValues(
+type Series = Map<string, number>; // day → value
+
+async function fetchAllPeriods(
   pageId: string,
   metric: string,
-  period: string,
-  sinceSec: number,
-  untilSec: number,
   pageToken: string,
-): Promise<Map<string, number>> {
-  const data = await graphFetch<InsightValues>(
-    `/${pageId}/insights?metric=${metric}&period=${period}&since=${sinceSec}&until=${untilSec}`,
+  now: Date,
+): Promise<Record<string, Series>> {
+  const nowSec = Math.floor(now.getTime() / 1000);
+  const data = await graphFetch<InsightResponse>(
+    `/${pageId}/insights?metric=${metric}&since=${nowSec - WINDOW_DAYS * DAY}&until=${nowSec + DAY}`,
     pageToken,
   );
-  const out = new Map<string, number>();
-  for (const series of data.data ?? []) {
-    for (const v of series.values ?? []) {
-      if (typeof v.value === "number" && Number.isFinite(v.value)) {
-        out.set(dayOf(v.end_time), v.value);
-      }
+  const out: Record<string, Series> = {};
+  for (const s of data.data ?? []) {
+    const series: Series = out[s.period] ?? new Map();
+    for (const v of s.values ?? []) {
+      if (typeof v.value === "number" && Number.isFinite(v.value)) series.set(dayOf(v.end_time), v.value);
     }
+    out[s.period] = series;
   }
   return out;
 }
@@ -173,78 +187,74 @@ function isTokenError(e: unknown): boolean {
   return kind === "invalid" || kind === "expired";
 }
 
+function permissionError(message: string): Error {
+  const err = new Error(message);
+  (err as Error & { graph?: unknown }).graph = { code: 10, message };
+  return err;
+}
+
 async function pageTokenFor(c: ReachCandidate, pageId: string): Promise<string> {
-  const key = `${c.accountId}:${pageId}`;
+  if (c.kind === "page") {
+    if (c.fbId === pageId) return c.token;
+    throw permissionError("Page token này thuộc Trang khác");
+  }
+  const key = `${c.tokenId}:${pageId}`;
   const cached = pageTokens.get(key);
   if (cached) return cached;
-  const page = await graphFetch<{ access_token?: string }>(
-    `/${pageId}?fields=access_token`,
-    c.userToken,
-  );
-  if (!page.access_token) {
-    const err = new Error("Tài khoản không có quyền quản trị Trang này");
-    (err as Error & { graph?: unknown }).graph = { code: 10, message: err.message };
-    throw err;
-  }
+  const page = await graphFetch<{ access_token?: string }>(`/${pageId}?fields=access_token`, c.token);
+  if (!page.access_token) throw permissionError("Token không có quyền quản trị Trang này");
   pageTokens.set(key, page.access_token);
   return page.access_token;
 }
 
 // ---------------------------------------------------------------------------
-// Reach for one page with one token
+// Turn the three series into the three ranges
 // ---------------------------------------------------------------------------
 
-async function computeReach(
-  pageId: string,
-  metric: string,
-  range: ReachRange,
-  pageToken: string,
-  now: Date,
-): Promise<Omit<ReachResult, "via" | "metric">> {
-  const n = RANGE_DAYS[range];
-  const nowSec = Math.floor(now.getTime() / 1000);
-  const until = nowSec + DAY; // include today's (partial) end_time
-  const today = pacificDate.format(now);
-
-  const daily = await fetchValues(pageId, metric, "day", nowSec - (n + 2) * DAY, until, pageToken);
-
-  if (range === "today") {
-    const reach = daily.get(today) ?? null;
-    return {
-      range,
-      reach,
-      prev: daily.get(shiftDay(today, -1)) ?? null,
-      daily: [{ date: today, value: reach }],
-      ...(reach === null ? { todayPending: true } : {}),
-    };
-  }
-
-  const period = await fetchValues(
-    pageId,
-    metric,
-    RANGE_PERIOD[range],
-    nowSec - (n + 3) * DAY,
-    until,
-    pageToken,
-  );
-  const days = [...period.keys()].sort();
+function periodRange(period: Series | undefined, daily: Series | undefined, n: number, today: string): RangeReach {
+  const days = [...(period?.keys() ?? [])].filter((d) => d <= today).sort();
   const last = days[days.length - 1];
-  if (!last) return { range, reach: null, prev: null, daily: [] };
+  if (!period || !last) return { reach: null, prev: null, daily: [] };
   return {
-    range,
     reach: period.get(last) ?? null,
     // Same-length window ending exactly n days earlier.
     prev: period.get(shiftDay(last, -n)) ?? null,
     daily: Array.from({ length: n }, (_, i) => {
       const date = shiftDay(last, i - n + 1);
-      return { date, value: daily.get(date) ?? null };
+      return { date, value: daily?.get(date) ?? null };
     }),
+  };
+}
+
+export function buildRanges(series: Record<string, Series>, now: Date): Record<ReachRange, RangeReach> {
+  const today = pacificDate.format(now);
+  const day = series.day;
+  // Facebook reports the running day as 0 (or not at all) until it has
+  // processed it, so today's 0 is "not published yet", not a real zero.
+  const todayValue = day?.get(today);
+  const todayReach = todayValue ? todayValue : null;
+  return {
+    today: {
+      reach: todayReach,
+      prev: day?.get(shiftDay(today, -1)) ?? null,
+      daily: [{ date: today, value: todayReach }],
+      ...(todayReach === null ? { todayPending: true } : {}),
+    },
+    "7d": periodRange(series.week, day, 7, today),
+    "28d": periodRange(series.days_28, day, 28, today),
+  };
+}
+
+function emptyRanges(): Record<ReachRange, RangeReach> {
+  return {
+    today: { reach: null, prev: null, daily: [] },
+    "7d": { reach: null, prev: null, daily: [] },
+    "28d": { reach: null, prev: null, daily: [] },
   };
 }
 
 async function reachWithMetricFallback(
   pageId: string,
-  range: ReachRange,
   pageToken: string,
   now: Date,
 ): Promise<Omit<ReachResult, "via">> {
@@ -254,20 +264,17 @@ async function reachWithMetricFallback(
     : [...REACH_METRICS];
   for (const metric of order) {
     try {
-      const r = await computeReach(pageId, metric, range, pageToken, now);
+      const series = await fetchAllPeriods(pageId, metric, pageToken, now);
       reachMetric.set(pageId, metric);
-      return { ...r, metric };
+      return { metric, ranges: buildRanges(series, now) };
     } catch (e) {
       if (!isInvalidMetric(e)) throw e;
       if (metric === remembered) reachMetric.delete(pageId);
     }
   }
   return {
-    range,
     metric: null,
-    reach: null,
-    prev: null,
-    daily: [],
+    ranges: emptyRanges(),
     unsupported: true,
     reason:
       `Facebook không trả metric Reach nào cho Trang này (đã thử ${REACH_METRICS.join(", ")}). ` +
@@ -281,13 +288,12 @@ async function reachWithMetricFallback(
 
 export async function fetchPageReach(
   pageId: string,
-  range: ReachRange,
   candidates: ReachCandidate[],
   now: Date = new Date(),
 ): Promise<ReachResult> {
   const nowMs = Date.now();
   const cooledUntil = (c: ReachCandidate) =>
-    Math.max(cooling.get(`a:${c.accountId}`) ?? 0, cooling.get(`p:${c.accountId}:${pageId}`) ?? 0);
+    Math.max(cooling.get(`a:${c.tokenId}`) ?? 0, cooling.get(`p:${c.tokenId}:${pageId}`) ?? 0);
   const ready = candidates.filter((c) => cooledUntil(c) <= nowMs);
   if (ready.length === 0) {
     const soonest = Math.min(...candidates.map(cooledUntil));
@@ -304,24 +310,24 @@ export async function fetchPageReach(
   for (const c of order) {
     try {
       const token = await pageTokenFor(c, pageId);
-      const r = await reachWithMetricFallback(pageId, range, token, now);
+      const r = await reachWithMetricFallback(pageId, token, now);
       return { ...r, via: c.label };
     } catch (e) {
       lastErr = e;
       if (isAbuseError(e)) {
         const code = parseGraphError(e).code;
         const pageLevel = code === 32 || code === 368;
-        cooling.set(pageLevel ? `p:${c.accountId}:${pageId}` : `a:${c.accountId}`, Date.now() + COOL_MS);
+        cooling.set(pageLevel ? `p:${c.tokenId}:${pageId}` : `a:${c.tokenId}`, Date.now() + COOL_MS);
         continue;
       }
       cooledAll = false;
       if (isTokenError(e)) {
-        pageTokens.delete(`${c.accountId}:${pageId}`);
+        pageTokens.delete(`${c.tokenId}:${pageId}`);
         continue;
       }
       if (isPermissionError(e)) {
         permissionErr = e;
-        continue; // another account may have the permission
+        continue; // another token may have the permission
       }
       throw e;
     }
@@ -329,12 +335,9 @@ export async function fetchPageReach(
   if (cooledAll) throw new CoolingError(COOL_MS / 1000);
   if (permissionErr) {
     return {
-      range,
       metric: null,
-      reach: null,
-      prev: null,
-      daily: [],
       via: null,
+      ranges: emptyRanges(),
       unsupported: true,
       reason:
         "Thiếu quyền đọc Insights của Trang (read_insights / pages_read_engagement), " +
