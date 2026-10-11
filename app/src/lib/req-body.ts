@@ -32,6 +32,20 @@ export async function readBody<T = unknown>(req: Request): Promise<T> {
   }
 }
 
+/**
+ * JSON-encode a body for the X-Body header. Header values must be ByteStrings
+ * (chars ≤ 0xFF) — any Vietnamese character or emoji makes `fetch()` throw
+ * "Cannot convert argument to a ByteString" before the request is sent. We
+ * escape every non-ASCII char as `\uXXXX`; `JSON.parse` in `readBody()`
+ * restores the original text, so the server side needs no change.
+ */
+export function encodeBodyHeader(body: unknown): string {
+  return JSON.stringify(body ?? {}).replace(
+    /[\u007f-￿]/g,
+    (c) => "\\u" + c.charCodeAt(0).toString(16).padStart(4, "0"),
+  );
+}
+
 /** Client helper for POST + JSON body via X-Body header. */
 export async function postJson(
   url: string,
@@ -43,7 +57,7 @@ export async function postJson(
     method: "POST",
     headers: {
       ...(init.headers ?? {}),
-      "X-Body": JSON.stringify(body ?? {}),
+      "X-Body": encodeBodyHeader(body),
     },
   });
 }
@@ -99,7 +113,7 @@ export async function patchJson(
     method: "PATCH",
     headers: {
       ...(init.headers ?? {}),
-      "X-Body": JSON.stringify(body ?? {}),
+      "X-Body": encodeBodyHeader(body),
     },
   });
 }

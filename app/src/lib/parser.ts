@@ -59,7 +59,11 @@ export function parseBulkImport(
     const line = raw.trim();
     if (!line || line.startsWith("#")) continue;
 
-    const parts = line.split(delimiter).map((p) => p.trim());
+    // Strip invisible chars (zero-width space/joiner, BOM, NBSP) that sneak in
+    // when copying from Excel / Telegram / web pages — `trim()` misses most.
+    const parts = line
+      .split(delimiter)
+      .map((p) => p.replace(/[​-‍⁠﻿]/g, "").replace(/ /g, " ").trim());
 
     const fields: Record<Exclude<FieldKey, "skip">, string> = {
       username: "",
@@ -90,7 +94,7 @@ export function parseBulkImport(
     rows.push({
       lineNumber: i + 1,
       raw,
-      username: fields.username.replace(/^@/, ""),
+      username: normalizeUsername(fields.username),
       password: fields.password,
       email: fields.email,
       twofa: fields.twofa,
@@ -102,6 +106,13 @@ export function parseBulkImport(
     });
   }
   return rows;
+}
+
+/** Accepts `user`, `@user` or a profile link `https://www.tiktok.com/@user?…`. */
+function normalizeUsername(raw: string): string {
+  const fromUrl = raw.match(/tiktok\.com\/@([^/?#\s]+)/i);
+  if (fromUrl) return fromUrl[1];
+  return raw.replace(/^@/, "");
 }
 
 export function dedupByUsername(rows: ParsedRow[]): { rows: ParsedRow[]; duplicates: string[] } {

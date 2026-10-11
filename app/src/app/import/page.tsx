@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
+import { encodeBodyHeader, safeJson } from "@/lib/req-body";
 
 type FieldKey =
   | "username"
@@ -69,6 +70,7 @@ interface ParsedRow {
   note: string;
   valid: boolean;
   error?: string;
+  status?: "inserted" | "existing" | "conflict" | "error" | "invalid";
 }
 
 interface PreviewResponse {
@@ -77,11 +79,98 @@ interface PreviewResponse {
 }
 
 interface ImportResponse {
-  totalParsed: number;
-  validCount: number;
   inserted: number;
   skippedExisting: number;
+  conflict: number;
+  failed: number;
   invalid: number;
+  rows: ParsedRow[];
+}
+
+// The payload travels in the X-Body header (CF Workers body-read workaround,
+// see lib/req-body.ts), so big pastes must be split: headers have a size cap,
+// and one request per ~40 rows also keeps each Worker call far below the CPU
+// limit. Failed chunks are retried; one bad chunk never sinks the others.
+const CHUNK_LINES = 40;
+const CHUNK_BYTES = 12_000;
+const MAX_ATTEMPTS = 3;
+
+interface Chunk {
+  offset: number; // 0-based index of the chunk's first line in the full text
+  text: string;
+}
+
+function splitChunks(text: string): Chunk[] {
+  const lines = text.split(/\r?\n/);
+  const chunks: Chunk[] = [];
+  let start = 0;
+  let cur: string[] = [];
+  let bytes = 0;
+  const flush = () => {
+    // Skip chunks with nothing importable (blank / # comment lines only).
+    if (cur.some((l) => l.trim() && !l.trim().startsWith("#"))) {
+      chunks.push({ offset: start, text: cur.join("\n") });
+    }
+  };
+  lines.forEach((line, i) => {
+    const len = encodeBodyHeader(line).length;
+    if (cur.length > 0 && (cur.length >= CHUNK_LINES || bytes + len > CHUNK_BYTES)) {
+      flush();
+      start = i;
+      cur = [];
+      bytes = 0;
+    }
+    cur.push(line);
+    bytes += len;
+  });
+  flush();
+  return chunks;
+}
+
+async function sendChunk<T>(method: "PUT" | "POST", payload: unknown): Promise<T> {
+  let lastErr = "";
+  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+    try {
+      const res = await fetch("/api/accounts/import", {
+        method,
+        headers: { "X-Body": encodeBodyHeader(payload) },
+      });
+      const data = await safeJson<T>(res);
+      if (res.ok && !data.error) return data;
+      lastErr = data.error ?? `HTTP ${res.status}`;
+      // 4xx (not logged in, bad input…) won't fix itself on retry.
+      if (res.status >= 400 && res.status < 500) break;
+    } catch (e) {
+      lastErr = e instanceof Error ? e.message : String(e);
+    }
+    if (attempt < MAX_ATTEMPTS) {
+      await new Promise((r) => setTimeout(r, 800 * attempt));
+    }
+  }
+  throw new Error(lastErr || "Không rõ lỗi");
+}
+
+/** Rows of a chunk that never got a server answer — mark them as failed. */
+function failedChunkRows(chunk: Chunk, message: string): ParsedRow[] {
+  return chunk.text.split("\n").flatMap((raw, i) => {
+    const line = raw.trim();
+    if (!line || line.startsWith("#")) return [];
+    return [
+      {
+        lineNumber: chunk.offset + i + 1,
+        raw,
+        username: "",
+        password: "",
+        email: "",
+        twofa: "",
+        emailPassword: "",
+        note: "",
+        valid: false,
+        status: "error" as const,
+        error: `Lỗi kết nối: ${message}`,
+      },
+    ];
+  });
 }
 
 interface GroupRow {
@@ -100,6 +189,8 @@ export default function ImportPage() {
   const [preview, setPreview] = useState<PreviewResponse | null>(null);
   const [result, setResult] = useState<ImportResponse | null>(null);
   const [loading, setLoading] = useState(false);
+  const [progress, setProgress] = useState<{ done: number; total: number } | null>(null);
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
   useEffect(() => {
     fetch("/api/groups", { cache: "no-store" })
@@ -173,31 +264,114 @@ ${SHORT_EXAMPLE}`;
     }
     setLoading(true);
     setResult(null);
+    setErrorMsg(null);
+    const chunks = splitChunks(text);
+    setProgress({ done: 0, total: chunks.length });
     try {
-      const res = await fetch("/api/accounts/import", {
-        method: "PUT",
-        headers: { "X-Body": JSON.stringify({ text, delimiter, order }) },
+      const rows: ParsedRow[] = [];
+      for (const [i, chunk] of chunks.entries()) {
+        try {
+          const data = await sendChunk<PreviewResponse>("PUT", {
+            text: chunk.text,
+            delimiter,
+            order,
+          });
+          for (const r of data.rows ?? []) {
+            rows.push({ ...r, lineNumber: r.lineNumber + chunk.offset });
+          }
+        } catch (e) {
+          rows.push(...failedChunkRows(chunk, e instanceof Error ? e.message : String(e)));
+        }
+        setProgress({ done: i + 1, total: chunks.length });
+      }
+      // The server dedups within one chunk only — redo it across chunks.
+      const seen = new Set<string>();
+      const duplicatesInInput: string[] = [];
+      const merged = rows.map((r) => {
+        if (!r.username) return r;
+        const key = r.username.toLowerCase();
+        if (!seen.has(key)) {
+          seen.add(key);
+          return r;
+        }
+        if (!r.valid) return r;
+        duplicatesInInput.push(r.username);
+        return { ...r, valid: false, status: "invalid" as const, error: "Trùng username trong input" };
       });
-      const data = (await res.json()) as PreviewResponse;
-      setPreview(data);
+      setPreview({ rows: merged, duplicatesInInput });
     } finally {
       setLoading(false);
+      setProgress(null);
     }
   }
 
   async function handleImport() {
     setLoading(true);
+    setErrorMsg(null);
+    // Only lines the preview judged importable are sent — duplicates and
+    // invalid lines stay out, and line numbers keep pointing at the textarea.
+    const allLines = text.split(/\r?\n/);
+    const wanted = new Set(
+      (preview?.rows ?? []).filter((r) => r.valid).map((r) => r.lineNumber),
+    );
+    const keptText = allLines
+      .map((l, i) => (wanted.has(i + 1) ? l : ""))
+      .join("\n");
+    const chunks = splitChunks(keptText);
+    setProgress({ done: 0, total: chunks.length });
     try {
-      const res = await fetch("/api/accounts/import", {
-        method: "POST",
-        headers: { "X-Body": JSON.stringify({ text, delimiter, order, groupId }) },
+      const rows: ParsedRow[] = [];
+      for (const [i, chunk] of chunks.entries()) {
+        try {
+          const data = await sendChunk<ImportResponse>("POST", {
+            text: chunk.text,
+            delimiter,
+            order,
+            groupId,
+          });
+          for (const r of data.rows ?? []) {
+            // A retried chunk may report rows saved by the attempt that timed
+            // out as "existing" — the preview said they were new, so they are ours.
+            const saved = r.status === "existing" && wanted.has(r.lineNumber + chunk.offset);
+            rows.push({
+              ...r,
+              lineNumber: r.lineNumber + chunk.offset,
+              ...(saved ? { status: "inserted" as const, valid: true, error: undefined } : {}),
+            });
+          }
+        } catch (e) {
+          rows.push(...failedChunkRows(chunk, e instanceof Error ? e.message : String(e)));
+        }
+        setProgress({ done: i + 1, total: chunks.length });
+      }
+      const count = (s: NonNullable<ParsedRow["status"]>) =>
+        rows.filter((r) => r.status === s).length;
+      setResult({
+        inserted: count("inserted"),
+        skippedExisting: count("existing"),
+        conflict: count("conflict"),
+        failed: count("error"),
+        invalid: count("invalid"),
+        rows,
       });
-      const data = (await res.json()) as ImportResponse;
-      setResult(data);
       setPreview(null);
+    } catch (e) {
+      setErrorMsg(e instanceof Error ? e.message : String(e));
     } finally {
       setLoading(false);
+      setProgress(null);
     }
+  }
+
+  /** Put the rows that didn't save back into the textarea for a retry. */
+  function retryFailed() {
+    if (!result) return;
+    const failed = result.rows.filter(
+      (r) => r.status === "error" || r.status === "conflict",
+    );
+    setText(failed.map((r) => r.raw).join("\n"));
+    setResult(null);
+    setPreview(null);
   }
 
   const validCount = preview?.rows.filter((r) => r.valid).length ?? 0;
@@ -504,7 +678,11 @@ ${SHORT_EXAMPLE}`;
             disabled={loading || !text.trim() || !hasUsername}
             className="btn btn-primary"
           >
-            {loading ? "Đang xử lý…" : "Xem trước"}
+            {loading
+              ? progress && progress.total > 1
+                ? `Đang xử lý ${progress.done}/${progress.total}…`
+                : "Đang xử lý…"
+              : "Xem trước"}
           </button>
           {preview && validCount > 0 && (
             <button
@@ -518,6 +696,11 @@ ${SHORT_EXAMPLE}`;
             </button>
           )}
         </div>
+        {errorMsg && (
+          <div className="pill err" style={{ marginTop: 12 }}>
+            <span className="dot err" /> {errorMsg}
+          </div>
+        )}
       </section>
 
       {result && (
@@ -535,7 +718,7 @@ ${SHORT_EXAMPLE}`;
           <div
             style={{
               display: "grid",
-              gridTemplateColumns: "repeat(3, 1fr)",
+              gridTemplateColumns: "repeat(auto-fit, minmax(120px, 1fr))",
               gap: 24,
               marginTop: 8,
             }}
@@ -550,14 +733,76 @@ ${SHORT_EXAMPLE}`;
               <div className="section-label">Trùng (bỏ qua)</div>
               <div className="kpi-num">{result.skippedExisting}</div>
             </div>
-            <div>
-              <div className="section-label">Không hợp lệ</div>
-              <div className="kpi-num" style={{ color: "var(--accent)" }}>
-                {result.invalid}
+            {result.conflict > 0 && (
+              <div>
+                <div className="section-label">Thuộc người dùng khác</div>
+                <div className="kpi-num" style={{ color: "var(--accent)" }}>
+                  {result.conflict}
+                </div>
               </div>
-            </div>
+            )}
+            {result.failed > 0 && (
+              <div>
+                <div className="section-label">Lỗi lưu</div>
+                <div className="kpi-num" style={{ color: "var(--accent)" }}>
+                  {result.failed}
+                </div>
+              </div>
+            )}
+            {result.invalid > 0 && (
+              <div>
+                <div className="section-label">Không hợp lệ</div>
+                <div className="kpi-num" style={{ color: "var(--accent)" }}>
+                  {result.invalid}
+                </div>
+              </div>
+            )}
           </div>
-          <div style={{ marginTop: 20 }}>
+
+          {result.rows.some((r) => r.status !== "inserted") && (
+            <div className="table-wrap" style={{ marginTop: 20 }}>
+              <table className="table">
+                <thead>
+                  <tr>
+                    <th style={{ width: 60 }}>Line</th>
+                    <th>Username / dòng gốc</th>
+                    <th>Lý do chưa lưu</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {result.rows
+                    .filter((r) => r.status !== "inserted")
+                    .map((r) => (
+                      <tr key={r.lineNumber}>
+                        <td>
+                          <span className="mono-num text-muted">#{r.lineNumber}</span>
+                        </td>
+                        <td>
+                          <span className="mono" style={{ color: "var(--ink)" }}>
+                            {r.username || r.raw}
+                          </span>
+                        </td>
+                        <td>
+                          <span
+                            className={r.status === "existing" ? "pill" : "pill err"}
+                            title={r.error}
+                          >
+                            {r.error ?? "—"}
+                          </span>
+                        </td>
+                      </tr>
+                    ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+
+          <div style={{ marginTop: 20, display: "flex", gap: 16, alignItems: "center" }}>
+            {result.failed + result.conflict > 0 && (
+              <button onClick={retryFailed} className="btn btn-primary">
+                Đưa {result.failed + result.conflict} dòng lỗi vào ô nhập để sửa / thử lại
+              </button>
+            )}
             <Link
               href="/"
               className="mono"
