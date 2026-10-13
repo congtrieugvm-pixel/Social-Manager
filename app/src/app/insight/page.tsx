@@ -204,6 +204,7 @@ export default function InsightPage() {
   const [checked, setChecked] = useState<Set<string>>(new Set());
   const [tab, setTab] = useState<"reach" | "tokens">("reach");
   const [showGroups, setShowGroups] = useState(false);
+  const [pickerGroupId, setPickerGroupId] = useState<number | null>(null);
   const freshRef = useRef(false);
   const runRef = useRef(0);
   // Latest groups for callbacks that run right after creating a group (their
@@ -722,7 +723,7 @@ export default function InsightPage() {
               </button>
             </div>
             {showGroups && (
-              <GroupManager groups={groups} counts={counts.byGroup} onCreate={createGroup} onUpdate={updateGroup} onDelete={deleteGroup} />
+              <GroupManager groups={groups} counts={counts.byGroup} pages={pages} assignments={assignments} onCreate={createGroup} onUpdate={updateGroup} onDelete={deleteGroup} onAssign={assign} />
             )}
           </section>
 
@@ -743,6 +744,11 @@ export default function InsightPage() {
             <button className="btn" style={smallBtn} onClick={reload} disabled={!!progress || visiblePages.length === 0}>
               ↻ Tải lại
             </button>
+            {typeof effectiveFilter === "number" && (
+              <button className="btn btn-primary" style={smallBtn} onClick={() => setPickerGroupId(effectiveFilter)}>
+                ＋ Thêm Trang vào nhóm
+              </button>
+            )}
             <button className="btn" style={smallBtn} onClick={() => setPagesTick((n) => n + 1)} title="Đọc lại danh sách Trang từ token">
               ↻ Danh sách Trang
             </button>
@@ -752,8 +758,15 @@ export default function InsightPage() {
           </div>
 
           {visiblePages.length === 0 ? (
-            <div className="card" style={{ color: "var(--muted)" }}>
-              {search ? "Không có Trang khớp từ khóa." : effectiveFilter === "none" ? "Mọi Trang đều đã được phân nhóm." : "Nhóm này chưa có Trang nào — chọn Trang ở “Tất cả” rồi gán vào nhóm."}
+            <div className="card" style={{ color: "var(--muted)", display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
+              <span>
+                {search ? "Không có Trang khớp từ khóa." : effectiveFilter === "none" ? "Mọi Trang đều đã được phân nhóm." : "Nhóm này chưa có Trang nào."}
+              </span>
+              {typeof effectiveFilter === "number" && !search && (
+                <button className="btn btn-primary" style={smallBtn} onClick={() => setPickerGroupId(effectiveFilter)}>
+                  ＋ Thêm Trang vào nhóm này
+                </button>
+              )}
             </div>
           ) : (
             <>
@@ -955,6 +968,18 @@ export default function InsightPage() {
           )}
         </>
       )}
+      {pickerGroupId !== null && groupById.has(pickerGroupId) && (
+        <PagePicker
+          title={`Thêm Trang vào nhóm “${groupById.get(pickerGroupId)!.name}”`}
+          pages={pages}
+          groups={groups}
+          assignments={assignments}
+          excludeGroupId={pickerGroupId}
+          confirmLabel={(n) => `Thêm ${n} Trang`}
+          onConfirm={(ids) => assign(ids, pickerGroupId)}
+          onClose={() => setPickerGroupId(null)}
+        />
+      )}
     </>
   );
 }
@@ -1019,77 +1044,331 @@ function GroupSelect({
   );
 }
 
+// Modal checklist of pages: search, "only ungrouped" toggle, select-all of
+// what's shown. Shows each page's current group (choosing it moves the page).
+function PagePicker({
+  title,
+  pages,
+  groups,
+  assignments,
+  excludeGroupId,
+  initial,
+  confirmLabel,
+  onConfirm,
+  onClose,
+}: {
+  title: string;
+  pages: Page[];
+  groups: Group[];
+  assignments: Record<string, number>;
+  /** Hide pages already in this group (adding to an existing group). */
+  excludeGroupId?: number;
+  initial?: string[];
+  confirmLabel: (n: number) => string;
+  onConfirm: (pageIds: string[]) => void | Promise<void>;
+  onClose: () => void;
+}) {
+  const [q, setQ] = useState("");
+  const [onlyUngrouped, setOnlyUngrouped] = useState(false);
+  const [sel, setSel] = useState<Set<string>>(new Set(initial ?? []));
+  const [busy, setBusy] = useState(false);
+  const groupById = new Map(groups.map((g) => [g.id, g]));
+  const groupOf = (id: string) => (assignments[id] ? groupById.get(assignments[id]) ?? null : null);
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose();
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [onClose]);
+
+  const term = q.trim().toLowerCase();
+  const candidates = pages
+    .filter((p) => excludeGroupId === undefined || assignments[p.id] !== excludeGroupId)
+    // Ungrouped pages first — they are what you usually want to file.
+    .sort((a, b) => Number(!!groupOf(a.id)) - Number(!!groupOf(b.id)) || a.name.localeCompare(b.name, "vi"));
+  const shown = candidates.filter(
+    (p) => (!onlyUngrouped || !groupOf(p.id)) && (!term || p.name.toLowerCase().includes(term) || p.id.includes(term)),
+  );
+  const allShownOn = shown.length > 0 && shown.every((p) => sel.has(p.id));
+
+  function toggle(id: string) {
+    setSel((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+  function toggleShown() {
+    setSel((prev) => {
+      const next = new Set(prev);
+      for (const p of shown) {
+        if (allShownOn) next.delete(p.id);
+        else next.add(p.id);
+      }
+      return next;
+    });
+  }
+
+  return (
+    <div className="modal-overlay" onClick={onClose}>
+      <div
+        className="modal insight-picker"
+        role="dialog"
+        aria-label={title}
+        onClick={(e) => e.stopPropagation()}
+        style={{ maxWidth: 560, width: "92%", display: "flex", flexDirection: "column", maxHeight: "86vh" }}
+      >
+        <h2 className="h2-serif" style={{ fontSize: 18, marginBottom: 12 }}>
+          {title}
+        </h2>
+        <input
+          className="input"
+          placeholder="Tìm Trang theo tên hoặc ID…"
+          value={q}
+          onChange={(e) => setQ(e.target.value)}
+          autoFocus
+          style={{ width: "100%", marginBottom: 8 }}
+        />
+        <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap", marginBottom: 8, fontSize: 12 }}>
+          <label style={{ display: "flex", gap: 6, alignItems: "center", cursor: "pointer" }}>
+            <input type="checkbox" checked={allShownOn} onChange={toggleShown} />
+            Chọn tất cả ({shown.length})
+          </label>
+          <label style={{ display: "flex", gap: 6, alignItems: "center", cursor: "pointer", color: "var(--muted)" }}>
+            <input type="checkbox" checked={onlyUngrouped} onChange={(e) => setOnlyUngrouped(e.target.checked)} />
+            Chỉ Trang chưa phân nhóm
+          </label>
+        </div>
+        <div style={{ flex: 1, minHeight: 120, overflowY: "auto", border: "1px solid var(--line)", borderRadius: 8 }}>
+          {shown.length === 0 ? (
+            <div style={{ padding: 16, fontSize: 12, color: "var(--muted)" }}>
+              {candidates.length === 0 ? "Không còn Trang nào để thêm." : "Không có Trang khớp."}
+            </div>
+          ) : (
+            shown.map((p) => {
+              const g = groupOf(p.id);
+              return (
+                <label
+                  key={p.id}
+                  className="insight-picker-row"
+                  style={{ display: "flex", gap: 10, alignItems: "center", padding: "7px 10px", cursor: "pointer", borderBottom: "1px solid var(--line)" }}
+                >
+                  <input type="checkbox" checked={sel.has(p.id)} onChange={() => toggle(p.id)} aria-label={`Chọn ${p.name}`} />
+                  <PageAvatar page={p} color={g?.color ?? null} />
+                  <span style={{ minWidth: 0, flex: 1 }}>
+                    <span className="insight-ellipsis" style={{ display: "block", maxWidth: "100%", fontSize: 13, color: "var(--ink)" }}>
+                      {p.name}
+                    </span>
+                    <span className="mono" style={{ fontSize: 10, color: "var(--dim)" }}>
+                      {p.id}
+                    </span>
+                  </span>
+                  {g && (
+                    <span className="chip" title="Chọn Trang này sẽ chuyển nó sang nhóm mới" style={{ display: "inline-flex", gap: 5, alignItems: "center", flex: "none" }}>
+                      <span style={{ width: 7, height: 7, borderRadius: "50%", background: g.color }} />
+                      {g.name}
+                    </span>
+                  )}
+                </label>
+              );
+            })
+          )}
+        </div>
+        <div style={{ display: "flex", gap: 8, alignItems: "center", marginTop: 12 }}>
+          <span className="mono" style={{ fontSize: 11, color: "var(--accent)", flex: 1 }}>
+            Đã chọn {sel.size} Trang
+          </span>
+          <button className="btn" style={smallBtn} onClick={onClose}>
+            Hủy
+          </button>
+          <button
+            className="btn btn-primary"
+            style={smallBtn}
+            disabled={busy || (sel.size === 0 && !initial)}
+            onClick={async () => {
+              setBusy(true);
+              await onConfirm([...sel]);
+              setBusy(false);
+              onClose();
+            }}
+          >
+            {busy ? "Đang lưu…" : confirmLabel(sel.size)}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function GroupManager({
   groups,
   counts,
+  pages,
+  assignments,
   onCreate,
   onUpdate,
   onDelete,
+  onAssign,
 }: {
   groups: Group[];
   counts: Record<number, number>;
+  pages: Page[];
+  assignments: Record<string, number>;
   onCreate: (name: string, color: string) => Promise<Group | null>;
   onUpdate: (id: number, patch: { name?: string; color?: string }) => void;
   onDelete: (g: Group) => void;
+  onAssign: (pageIds: string[], groupId: number | null) => Promise<void>;
 }) {
   const [name, setName] = useState("");
   const [color, setColor] = useState(GROUP_COLORS[groups.length % GROUP_COLORS.length]);
   const [busy, setBusy] = useState(false);
+  const [newPages, setNewPages] = useState<string[]>([]); // pages for the group being created
+  const [picker, setPicker] = useState<"new" | number | null>(null); // "new" or group id
+  const [openGroup, setOpenGroup] = useState<number | null>(null); // group whose members are listed
+  const pageById = new Map(pages.map((p) => [p.id, p]));
+  const pickerGroup = typeof picker === "number" ? groups.find((g) => g.id === picker) : null;
+
+  async function create() {
+    if (!name.trim() || busy) return;
+    setBusy(true);
+    const g = await onCreate(name.trim(), color);
+    if (g && newPages.length) await onAssign(newPages, g.id);
+    setBusy(false);
+    if (g) {
+      setName("");
+      setNewPages([]);
+      setColor(GROUP_COLORS[(groups.length + 1) % GROUP_COLORS.length]);
+    }
+  }
+
   return (
     <div className="card" style={{ marginTop: 12, padding: 14 }}>
       <form
         style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}
-        onSubmit={async (e) => {
+        onSubmit={(e) => {
           e.preventDefault();
-          if (!name.trim() || busy) return;
-          setBusy(true);
-          const g = await onCreate(name.trim(), color);
-          setBusy(false);
-          if (g) {
-            setName("");
-            setColor(GROUP_COLORS[(groups.length + 1) % GROUP_COLORS.length]);
-          }
+          create();
         }}
       >
-        <input className="input" placeholder="Tên nhóm mới…" value={name} onChange={(e) => setName(e.target.value)} maxLength={60} style={{ flex: "1 1 180px", maxWidth: 260 }} />
-        <input type="color" value={color} onChange={(e) => setColor(e.target.value)} aria-label="Màu nhóm" style={{ width: 34, height: 30, border: 0, background: "transparent", padding: 0 }} />
+        <input
+          className="input"
+          placeholder="Tên nhóm mới…"
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          maxLength={60}
+          style={{ flex: "1 1 180px", maxWidth: 260 }}
+        />
+        <input
+          type="color"
+          value={color}
+          onChange={(e) => setColor(e.target.value)}
+          aria-label="Màu nhóm"
+          style={{ width: 34, height: 30, border: 0, background: "transparent", padding: 0 }}
+        />
+        <button type="button" className="btn" style={smallBtn} onClick={() => setPicker("new")}>
+          {newPages.length ? `Đã chọn ${newPages.length} Trang ✎` : "＋ Chọn Trang"}
+        </button>
         <button className="btn btn-primary" style={smallBtn} disabled={!name.trim() || busy}>
-          Tạo nhóm
+          {busy ? "Đang tạo…" : newPages.length ? `Tạo nhóm + gán ${newPages.length} Trang` : "Tạo nhóm"}
         </button>
       </form>
+
       {groups.length > 0 && (
         <div style={{ marginTop: 12, display: "grid", gap: 6 }}>
-          {groups.map((g) => (
-            <div key={g.id} style={{ display: "flex", gap: 8, alignItems: "center" }}>
-              <input
-                type="color"
-                defaultValue={g.color}
-                aria-label={`Màu nhóm ${g.name}`}
-                onBlur={(e) => e.target.value !== g.color && onUpdate(g.id, { color: e.target.value })}
-                style={{ width: 28, height: 26, border: 0, background: "transparent", padding: 0 }}
-              />
-              <input
-                className="input"
-                defaultValue={g.name}
-                maxLength={60}
-                aria-label="Tên nhóm"
-                onBlur={(e) => {
-                  const v = e.target.value.trim();
-                  if (v && v !== g.name) onUpdate(g.id, { name: v });
-                  else e.target.value = g.name;
-                }}
-                onKeyDown={(e) => e.key === "Enter" && (e.target as HTMLInputElement).blur()}
-                style={{ flex: "1 1 160px", maxWidth: 260, padding: "4px 8px", fontSize: 12 }}
-              />
-              <span className="mono" style={{ fontSize: 11, color: "var(--muted)", minWidth: 60 }}>
-                {counts[g.id] ?? 0} Trang
-              </span>
-              <button className="btn btn-danger" style={{ padding: "3px 8px", fontSize: 10 }} onClick={() => onDelete(g)}>
-                Xóa
-              </button>
-            </div>
-          ))}
+          {groups.map((g) => {
+            const n = counts[g.id] ?? 0;
+            const members = openGroup === g.id
+              ? Object.entries(assignments)
+                  .filter(([, gid]) => gid === g.id)
+                  .map(([pid]) => pageById.get(pid))
+                  .filter((p): p is Page => !!p)
+                  .sort((a, b) => a.name.localeCompare(b.name, "vi"))
+              : [];
+            return (
+              <div key={g.id} className="insight-group-row">
+                <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+                  <input
+                    type="color"
+                    defaultValue={g.color}
+                    aria-label={`Màu nhóm ${g.name}`}
+                    onBlur={(e) => e.target.value !== g.color && onUpdate(g.id, { color: e.target.value })}
+                    style={{ width: 28, height: 26, border: 0, background: "transparent", padding: 0 }}
+                  />
+                  <input
+                    className="input"
+                    defaultValue={g.name}
+                    maxLength={60}
+                    aria-label="Tên nhóm"
+                    onBlur={(e) => {
+                      const v = e.target.value.trim();
+                      if (v && v !== g.name) onUpdate(g.id, { name: v });
+                      else e.target.value = g.name;
+                    }}
+                    onKeyDown={(e) => e.key === "Enter" && (e.target as HTMLInputElement).blur()}
+                    style={{ flex: "1 1 160px", maxWidth: 260, padding: "4px 8px", fontSize: 12 }}
+                  />
+                  <button
+                    className="btn"
+                    style={{ padding: "3px 8px", fontSize: 11 }}
+                    onClick={() => setOpenGroup(openGroup === g.id ? null : g.id)}
+                    aria-expanded={openGroup === g.id}
+                    disabled={n === 0}
+                    title={n === 0 ? "Nhóm chưa có Trang" : "Xem / bỏ Trang trong nhóm"}
+                  >
+                    {n} Trang {n > 0 ? (openGroup === g.id ? "▴" : "▾") : ""}
+                  </button>
+                  <button className="btn btn-primary" style={{ padding: "3px 8px", fontSize: 11 }} onClick={() => setPicker(g.id)}>
+                    ＋ Thêm Trang
+                  </button>
+                  <button className="btn btn-danger" style={{ padding: "3px 8px", fontSize: 10 }} onClick={() => onDelete(g)}>
+                    Xóa
+                  </button>
+                </div>
+                {openGroup === g.id && members.length > 0 && (
+                  <div style={{ margin: "8px 0 4px 36px", border: "1px solid var(--line)", borderRadius: 8, maxHeight: 240, overflowY: "auto" }}>
+                    {members.map((p) => (
+                      <div key={p.id} style={{ display: "flex", gap: 10, alignItems: "center", padding: "6px 10px", borderBottom: "1px solid var(--line)" }}>
+                        <PageAvatar page={p} color={g.color} />
+                        <span className="insight-ellipsis" style={{ flex: 1, maxWidth: "100%", fontSize: 12 }} title={p.name}>
+                          {p.name}
+                        </span>
+                        <button className="btn" style={{ padding: "2px 8px", fontSize: 10 }} onClick={() => onAssign([p.id], null)}>
+                          Bỏ khỏi nhóm
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            );
+          })}
         </div>
+      )}
+
+      {picker === "new" && (
+        <PagePicker
+          title={`Chọn Trang cho nhóm mới${name.trim() ? ` “${name.trim()}”` : ""}`}
+          pages={pages}
+          groups={groups}
+          assignments={assignments}
+          initial={newPages}
+          confirmLabel={(n) => `Xong (${n} Trang)`}
+          onConfirm={(ids) => setNewPages(ids)}
+          onClose={() => setPicker(null)}
+        />
+      )}
+      {pickerGroup && (
+        <PagePicker
+          title={`Thêm Trang vào nhóm “${pickerGroup.name}”`}
+          pages={pages}
+          groups={groups}
+          assignments={assignments}
+          excludeGroupId={pickerGroup.id}
+          confirmLabel={(n) => `Thêm ${n} Trang`}
+          onConfirm={(ids) => onAssign(ids, pickerGroup.id)}
+          onClose={() => setPicker(null)}
+        />
       )}
     </div>
   );

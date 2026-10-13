@@ -1090,3 +1090,12 @@ input[type="checkbox"] {
   margin-bottom: 12px;
   border-color: var(--accent-strong);
 }
+
+.insight-picker-row:hover {
+  background: var(--bg-2);
+}
+
+.insight-group-row + .insight-group-row {
+  border-top: 1px solid var(--line);
+  padding-top: 6px;
+}
