@@ -227,6 +227,15 @@ export function MonetizationTab({
     if (queue.length === 0) return setProgress(null);
     let done = 0;
     setProgress({ done: 0, total: queue.length });
+    const pending: Record<string, RowState> = {};
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const flush = () => {
+      timer = null;
+      const batch = { ...pending };
+      for (const k of Object.keys(pending)) delete pending[k];
+      if (Object.keys(batch).length) setRows((prev) => ({ ...prev, ...batch }));
+      if (runRef.current === run) setProgress({ done, total: queue.length });
+    };
     runPool(queue, CONCURRENCY, async (p) => {
       if (runRef.current !== run) return;
       let state: RowState;
@@ -240,11 +249,14 @@ export function MonetizationTab({
       } catch (e) {
         state = { status: "error", error: e instanceof Error ? e.message : String(e) };
       }
-      setRows((prev) => ({ ...prev, [p.id]: state }));
-      if (runRef.current !== run) return;
-      done++;
-      setProgress({ done, total: queue.length });
+      // Buffer results and repaint at most every 150 ms: one table render per
+      // answer (157 pages → 157 full re-renders) is what made phones stutter.
+      pending[p.id] = state;
+      if (runRef.current === run) done++;
+      if (!timer) timer = setTimeout(flush, 150);
     }).then(() => {
+      if (timer) clearTimeout(timer);
+      flush();
       if (runRef.current === run) setProgress(null);
     });
     // scopedKey stands in for scoped.

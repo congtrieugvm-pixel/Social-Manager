@@ -272,7 +272,6 @@ export default function Dashboard() {
       return { top, left };
     });
   }, [ctxMenu]);
-  const [totpTick, setTotpTick] = useState(0);
   const [edit, setEdit] = useState<EditState | null>(null);
 
   const load = useCallback(async () => {
@@ -331,12 +330,6 @@ export default function Dashboard() {
       setSortDir(key === "createdAt" || key === "follower" || key === "video" ? "desc" : "asc");
     }
   }
-
-  useEffect(() => {
-    if (!ctxMenu?.detail?.twofa) return;
-    const id = setInterval(() => setTotpTick((n) => n + 1), 1000);
-    return () => clearInterval(id);
-  }, [ctxMenu?.detail?.twofa]);
 
   useEffect(() => {
     if (!ctxMenu) return;
@@ -2865,11 +2858,6 @@ export default function Dashboard() {
           )}
           {ctxMenu.detail && (() => {
             const d = ctxMenu.detail;
-            void totpTick; // subscribe to tick so countdown refreshes
-            const totp = d.twofa ? generateTotpCode(d.twofa) : null;
-            const totpRemaining = totp
-              ? Math.max(1, Math.ceil(totp.remainingMs / 1000))
-              : 0;
             const items: Array<{
               label: string;
               value: string | null;
@@ -3052,90 +3040,11 @@ export default function Dashboard() {
                     </button>
                   );
                 })}
-                <button
-                  disabled={!totp}
-                  onClick={() => {
-                    if (totp) copyText(totp.code, `ctx-${ctxMenu.id}-totp`);
-                  }}
-                  title={
-                    d.twofa && !totp
-                      ? "Secret 2FA không hợp lệ (không phải Base32 / otpauth URI)"
-                      : totp
-                      ? `Mã còn hiệu lực ${totpRemaining}s`
-                      : "Tài khoản chưa có secret 2FA"
-                  }
-                  style={{
-                    display: "flex",
-                    justifyContent: "space-between",
-                    alignItems: "center",
-                    gap: 12,
-                    width: "100%",
-                    textAlign: "left",
-                    padding: "7px 10px",
-                    background: "transparent",
-                    border: 0,
-                    color: totp ? "var(--ink)" : "var(--muted)",
-                    cursor: totp ? "pointer" : "not-allowed",
-                    fontSize: 12,
-                    fontFamily: "var(--font-sans)",
-                    borderRadius: 4,
-                  }}
-                  onMouseEnter={(e) => {
-                    if (totp) e.currentTarget.style.background = "var(--bg-1)";
-                  }}
-                  onMouseLeave={(e) => {
-                    e.currentTarget.style.background = "transparent";
-                  }}
-                >
-                  <span>Copy 2FA code</span>
-                  <span
-                    style={{
-                      display: "inline-flex",
-                      alignItems: "center",
-                      gap: 8,
-                    }}
-                  >
-                    {totp && (
-                      <>
-                        <span
-                          className="mono"
-                          style={{
-                            fontSize: 11,
-                            letterSpacing: "0.1em",
-                            color: "var(--accent)",
-                          }}
-                        >
-                          {totp.code.replace(/(\d{3})(\d{3})/, "$1 $2")}
-                        </span>
-                        <span
-                          className="mono"
-                          style={{
-                            fontSize: 10,
-                            color: totpRemaining <= 5 ? "#e05b5b" : "var(--muted)",
-                          }}
-                        >
-                          {totpRemaining}s
-                        </span>
-                      </>
-                    )}
-                    <span
-                      className="mono"
-                      style={{
-                        fontSize: 10,
-                        color:
-                          copiedLabel === `ctx-${ctxMenu.id}-totp`
-                            ? "var(--accent)"
-                            : "var(--muted)",
-                      }}
-                    >
-                      {copiedLabel === `ctx-${ctxMenu.id}-totp`
-                        ? "✓"
-                        : totp
-                        ? ""
-                        : "—"}
-                    </span>
-                  </span>
-                </button>
+                <TotpMenuButton
+                  secret={d.twofa}
+                  copied={copiedLabel === `ctx-${ctxMenu.id}-totp`}
+                  onCopy={(code) => copyText(code, `ctx-${ctxMenu.id}-totp`)}
+                />
                 <div style={{ padding: "4px 4px 0" }}>
                   <button
                     disabled={ctxMenu.browserLogin === "loading" || !d.email}
@@ -3790,5 +3699,81 @@ function TransferModal({
         )}
       </div>
     </div>
+  );
+}
+
+// "Copy 2FA code" row of the account context menu. Owns its 1-second tick so
+// the countdown repaints only this row — the tick used to live in the page
+// and re-rendered the whole account list every second while the menu was open.
+function TotpMenuButton({
+  secret,
+  copied,
+  onCopy,
+}: {
+  secret: string | null;
+  copied: boolean;
+  onCopy: (code: string) => void;
+}) {
+  const [, setTick] = useState(0);
+  useEffect(() => {
+    if (!secret) return;
+    const id = setInterval(() => setTick((n) => n + 1), 1000);
+    return () => clearInterval(id);
+  }, [secret]);
+  const totp = secret ? generateTotpCode(secret) : null;
+  const remaining = totp ? Math.max(1, Math.ceil(totp.remainingMs / 1000)) : 0;
+  return (
+    <button
+      disabled={!totp}
+      onClick={() => {
+        if (totp) onCopy(totp.code);
+      }}
+      title={
+        secret && !totp
+          ? "Secret 2FA không hợp lệ (không phải Base32 / otpauth URI)"
+          : totp
+          ? `Mã còn hiệu lực ${remaining}s`
+          : "Tài khoản chưa có secret 2FA"
+      }
+      style={{
+        display: "flex",
+        justifyContent: "space-between",
+        alignItems: "center",
+        gap: 12,
+        width: "100%",
+        textAlign: "left",
+        padding: "7px 10px",
+        background: "transparent",
+        border: 0,
+        color: totp ? "var(--ink)" : "var(--muted)",
+        cursor: totp ? "pointer" : "not-allowed",
+        fontSize: 12,
+        fontFamily: "var(--font-sans)",
+        borderRadius: 4,
+      }}
+      onMouseEnter={(e) => {
+        if (totp) e.currentTarget.style.background = "var(--bg-1)";
+      }}
+      onMouseLeave={(e) => {
+        e.currentTarget.style.background = "transparent";
+      }}
+    >
+      <span>Copy 2FA code</span>
+      <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
+        {totp && (
+          <>
+            <span className="mono" style={{ fontSize: 11, letterSpacing: "0.1em", color: "var(--accent)" }}>
+              {totp.code.replace(/(\d{3})(\d{3})/, "$1 $2")}
+            </span>
+            <span className="mono" style={{ fontSize: 10, color: remaining <= 5 ? "#e05b5b" : "var(--muted)" }}>
+              {remaining}s
+            </span>
+          </>
+        )}
+        <span className="mono" style={{ fontSize: 10, color: copied ? "var(--accent)" : "var(--muted)" }}>
+          {copied ? "✓" : totp ? "" : "—"}
+        </span>
+      </span>
+    </button>
   );
 }

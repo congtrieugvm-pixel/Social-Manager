@@ -1240,3 +1240,191 @@ input[type="checkbox"] {
 @media (max-width: 1024px) {
   .monet-card { max-width: calc(100vw - 80px); }
 }
+
+/* =======================  Mobile / touch polish  ======================= */
+
+html {
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+}
+
+/* No grey flash on tap; no 300 ms double-tap-zoom delay on controls. */
+button,
+a,
+input,
+select,
+textarea,
+label,
+summary {
+  -webkit-tap-highlight-color: transparent;
+  touch-action: manipulation;
+}
+
+/* Link-styled buttons (<Link className="btn">) must not look like links. */
+a.btn {
+  text-decoration: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* Button labels stay on one line; their row wraps instead. */
+.btn,
+.btn-seg {
+  white-space: nowrap;
+}
+.page-header > div {
+  flex-wrap: wrap;
+}
+
+/* Smooth, contained horizontal scrolling for wide tables. */
+.table-wrap {
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior-x: contain;
+}
+
+@media (max-width: 768px) {
+  /* iOS zooms the page when a focused field is < 16px — the main source of
+     the "jumpy" feel. 16px keeps the viewport still. */
+  .input,
+  .textarea,
+  .select,
+  input:not([type="checkbox"]):not([type="radio"]):not([type="color"]),
+  select,
+  textarea {
+    font-size: 16px !important;
+  }
+
+  /* Room for the dropdown arrow at the larger font size. */
+  select,
+  select.input {
+    padding-right: 30px !important;
+    text-overflow: ellipsis;
+  }
+
+  .page-header {
+    gap: 12px;
+    padding-bottom: 14px;
+    margin-bottom: 16px;
+  }
+
+  /* Segmented tabs scroll sideways instead of squeezing. */
+  .btn-group {
+    max-width: 100%;
+    overflow-x: auto;
+    scrollbar-width: none;
+    -webkit-overflow-scrolling: touch;
+  }
+  .btn-group::-webkit-scrollbar {
+    display: none;
+  }
+
+  .kpi {
+    padding: 14px;
+    gap: 6px;
+  }
+  .kpi-num,
+  .kpi-num.insight-num {
+    font-size: 22px;
+  }
+  .kpi-label {
+    letter-spacing: 0.08em;
+  }
+  .insight-kpis,
+  .insight-monet-kpis {
+    grid-template-columns: repeat(2, 1fr);
+  }
+
+  /* One scroll surface on phones: no nested 72vh scroll box. */
+  .insight-table-wrap {
+    max-height: none;
+    overflow-y: visible;
+  }
+  .insight-table-wrap thead th {
+    position: static;
+  }
+
+  /* Modals become bottom sheets; blur is expensive on phones. */
+  .modal-overlay {
+    backdrop-filter: none;
+    align-items: flex-end;
+    padding: 0;
+  }
+  .modal {
+    max-width: 100% !important;
+    width: 100% !important;
+    max-height: 88vh;
+    border-radius: 14px 14px 0 0;
+    padding: 20px 16px calc(20px + env(safe-area-inset-bottom));
+    box-shadow: none;
+  }
+
+  /* Section title above its controls instead of squeezed beside them. */
+  .section-head {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .section-label {
+    letter-spacing: 0.06em;
+    line-height: 1.6;
+  }
+  .input-inline {
+    width: 72px !important;
+    text-align: center;
+  }
+
+  .monet-card {
+    max-width: calc(100vw - 48px);
+  }
+  .monet-card-side {
+    min-width: 0;
+  }
+  .monet-card-icon {
+    display: none;
+  }
+}
+
+/* Finger-sized targets on touch screens. */
+@media (pointer: coarse) {
+  .btn,
+  .btn-seg {
+    min-height: 36px;
+  }
+  .input,
+  .select,
+  select {
+    min-height: 40px;
+  }
+  input[type="checkbox"],
+  input[type="radio"] {
+    width: 18px;
+    height: 18px;
+  }
+}
+
+/* Hover styles stick after a tap on touch screens — keep them neutral. */
+@media (hover: none) {
+  .btn:hover:not(:disabled) {
+    background: var(--bg-2);
+    border-color: var(--line-strong);
+  }
+  .btn-primary:hover:not(:disabled) {
+    background: var(--ink);
+    border-color: var(--ink);
+  }
+  .table tbody tr:hover {
+    background: transparent;
+  }
+  .kpi:hover {
+    background: var(--paper);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
+  }
+}

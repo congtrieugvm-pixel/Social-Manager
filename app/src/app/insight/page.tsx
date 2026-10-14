@@ -359,6 +359,15 @@ export default function InsightPage() {
     }
     let done = 0;
     setProgress({ done: 0, total: queue.length });
+    const pending: Record<string, RowState> = {};
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const flush = () => {
+      timer = null;
+      const batch = { ...pending };
+      for (const k of Object.keys(pending)) delete pending[k];
+      if (Object.keys(batch).length) setRows((prev) => ({ ...prev, ...batch }));
+      if (runRef.current === run) setProgress({ done, total: queue.length });
+    };
     runPool(queue, PAGE_CONCURRENCY, async (p) => {
       if (runRef.current !== run) return;
       const r = await api<Reach & { cooling?: boolean }>(`/api/insight/reach?pageId=${p.id}&tokens=${p.tokenIds.join(",")}`);
@@ -369,11 +378,14 @@ export default function InsightPage() {
       } else {
         state = { status: "error", error: r.data.error ?? `Lỗi ${r.status}`, cooling: !!r.data.cooling };
       }
-      setRows((prev) => ({ ...prev, [p.id]: state }));
-      if (runRef.current !== run) return;
-      done++;
-      setProgress({ done, total: queue.length });
+      // Buffer results and repaint at most every 150 ms: one table render per
+      // answer (157 pages → 157 full re-renders) is what made phones stutter.
+      pending[p.id] = state;
+      if (runRef.current === run) done++;
+      if (!timer) timer = setTimeout(flush, 150);
     }).then(() => {
+      if (timer) clearTimeout(timer);
+      flush();
       if (runRef.current === run) setProgress(null);
     });
     // visibleKey stands in for visiblePages (stable string identity).
