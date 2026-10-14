@@ -286,11 +286,19 @@ async function reachWithMetricFallback(
 // Public entry: token pool around the metric fallback
 // ---------------------------------------------------------------------------
 
-export async function fetchPageReach(
+/**
+ * Run `fn` with a page token from the candidate pool: rotates the starting
+ * token per page, cools rate-limited tokens and moves on, drops tokens that
+ * became invalid, and tries the next token on permission errors. Returns the
+ * value + label of the token that served it, or `{ permissionError }` when
+ * every usable token lacked permission. Throws CoolingError when every token
+ * is cooling; rethrows other errors.
+ */
+export async function withPageToken<T>(
   pageId: string,
   candidates: ReachCandidate[],
-  now: Date = new Date(),
-): Promise<ReachResult> {
+  fn: (pageToken: string) => Promise<T>,
+): Promise<{ value: T; via: string } | { permissionError: string }> {
   const nowMs = Date.now();
   const cooledUntil = (c: ReachCandidate) =>
     Math.max(cooling.get(`a:${c.tokenId}`) ?? 0, cooling.get(`p:${c.tokenId}:${pageId}`) ?? 0);
@@ -310,8 +318,15 @@ export async function fetchPageReach(
   for (const c of order) {
     try {
       const token = await pageTokenFor(c, pageId);
-      const r = await reachWithMetricFallback(pageId, token, now);
-      return { ...r, via: c.label };
+      try {
+        return { value: await fn(token), via: c.label };
+      } catch (e) {
+        // #1 / #2 = Graph's transient "unexpected error, please retry" —
+        // seen live (2026-10); one retry usually succeeds.
+        const code = parseGraphError(e).code;
+        if (code !== 1 && code !== 2) throw e;
+        return { value: await fn(token), via: c.label };
+      }
     } catch (e) {
       lastErr = e;
       if (isAbuseError(e)) {
@@ -333,16 +348,24 @@ export async function fetchPageReach(
     }
   }
   if (cooledAll) throw new CoolingError(COOL_MS / 1000);
-  if (permissionErr) {
-    return {
-      metric: null,
-      via: null,
-      ranges: emptyRanges(),
-      unsupported: true,
-      reason:
-        "Thiếu quyền đọc Insights của Trang (read_insights / pages_read_engagement), " +
-        `hoặc app chưa được Meta duyệt Advanced Access. Chi tiết: ${parseGraphError(permissionErr).message}`,
-    };
-  }
+  if (permissionErr) return { permissionError: parseGraphError(permissionErr).message };
   throw lastErr;
+}
+
+export async function fetchPageReach(
+  pageId: string,
+  candidates: ReachCandidate[],
+  now: Date = new Date(),
+): Promise<ReachResult> {
+  const r = await withPageToken(pageId, candidates, (token) => reachWithMetricFallback(pageId, token, now));
+  if ("value" in r) return { ...r.value, via: r.via };
+  return {
+    metric: null,
+    via: null,
+    ranges: emptyRanges(),
+    unsupported: true,
+    reason:
+      "Thiếu quyền đọc Insights của Trang (read_insights / pages_read_engagement), " +
+      `hoặc app chưa được Meta duyệt Advanced Access. Chi tiết: ${r.permissionError}`,
+  };
 }

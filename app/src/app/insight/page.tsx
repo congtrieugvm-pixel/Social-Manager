@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { encodeBodyHeader } from "@/lib/req-body";
 import { BarChart, Sparkline, ddmm, type DayPoint } from "./charts";
+import { MonetizationTab } from "./monetization-tab";
 
 type Range = "today" | "7d" | "28d";
 type Filter = "all" | "none" | number; // number = group id
@@ -202,7 +203,7 @@ export default function InsightPage() {
   const [pagesTick, setPagesTick] = useState(0);
   const [sort, setSort] = useState<{ key: SortKey; dir: "asc" | "desc" }>({ key: "reach", dir: "desc" });
   const [checked, setChecked] = useState<Set<string>>(new Set());
-  const [tab, setTab] = useState<"reach" | "tokens">("reach");
+  const [tab, setTab] = useState<"reach" | "monet" | "tokens">("reach");
   const [showGroups, setShowGroups] = useState(false);
   const [pickerGroupId, setPickerGroupId] = useState<number | null>(null);
   const freshRef = useRef(false);
@@ -621,6 +622,9 @@ export default function InsightPage() {
             <button role="tab" aria-selected={tab === "reach"} className={`btn-seg${tab === "reach" ? " active" : ""}`} onClick={() => setTab("reach")}>
               Reach
             </button>
+            <button role="tab" aria-selected={tab === "monet"} className={`btn-seg${tab === "monet" ? " active" : ""}`} onClick={() => setTab("monet")}>
+              Kiếm tiền
+            </button>
             <button role="tab" aria-selected={tab === "tokens"} className={`btn-seg${tab === "tokens" ? " active" : ""}`} onClick={() => setTab("tokens")}>
               Quản lý token ({tokens?.length ?? 0})
             </button>
@@ -677,6 +681,14 @@ export default function InsightPage() {
             onCreateGroup={createGroup}
             onReloadPages={() => setPagesTick((n) => n + 1)}
           />
+        )
+      ) : tab === "monet" ? (
+        tokens === null || pagesProgress ? (
+          <div className="card mono" style={{ color: "var(--muted)", fontSize: 12 }}>
+            {pagesProgress ? `Đang tải danh sách Trang ${pagesProgress.done}/${pagesProgress.total} token…` : "Đang tải…"}
+          </div>
+        ) : (
+          <MonetizationTab pages={pages} groups={groups} assignments={assignments} username={username} />
         )
       ) : tokens === null || pagesProgress ? (
         <div className="card mono" style={{ color: "var(--muted)", fontSize: 12 }}>
