@@ -1130,3 +1130,113 @@ input[type="checkbox"] {
 .insight-monet-table .pill {
   white-space: nowrap;
 }
+
+/* Insight · Kiếm tiền — Meta waitlist checklist */
+.monet-mark {
+  display: inline-flex;
+  width: 16px;
+  justify-content: center;
+  font-weight: 700;
+  font-size: 13px;
+  flex: none;
+}
+.monet-mark.ok { color: var(--good); }
+.monet-mark.no { color: var(--muted); }
+.monet-mark.unk { color: var(--warn); }
+
+.monet-detail > td {
+  background: var(--bg-1);
+  padding: 14px 18px !important;
+}
+
+.monet-card-head {
+  display: flex;
+  gap: 16px;
+  align-items: flex-start;
+  flex-wrap: wrap;
+}
+.monet-card-icon {
+  width: 64px;
+  height: 64px;
+  border-radius: 50%;
+  background: var(--accent-soft);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+}
+.monet-card-icon span {
+  width: 30px;
+  height: 22px;
+  border-radius: 3px;
+  background: var(--accent);
+  box-shadow: -6px 6px 0 -1px var(--accent-strong);
+}
+.monet-card-title {
+  font-weight: 600;
+  font-size: 15px;
+  color: var(--ink);
+}
+.monet-card-text {
+  margin-top: 4px;
+  font-size: 13px;
+  color: var(--ink-soft);
+  line-height: 1.5;
+  max-width: 560px;
+}
+.monet-card-toggle {
+  appearance: none;
+  background: none;
+  border: 0;
+  padding: 0;
+  margin-top: 8px;
+  color: var(--accent-hover);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.monet-criteria {
+  list-style: none;
+  margin: 10px 0 0;
+  padding: 0;
+  display: grid;
+  gap: 8px;
+}
+.monet-criteria li {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  font-size: 13px;
+  line-height: 1.4;
+}
+.monet-crit-label { color: var(--ink-soft); }
+.monet-crit-label.miss { color: var(--muted); }
+.monet-crit-value {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--muted);
+}
+.monet-crit-note {
+  display: block;
+  font-size: 11px;
+  color: var(--warn);
+  margin-top: 2px;
+}
+.monet-card-side {
+  font-size: 13px;
+  color: var(--ink-soft);
+  min-width: 200px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+}
+/* Keep the card inside the visible part of a horizontally scrolling table. */
+.monet-card {
+  position: sticky;
+  left: 18px;
+  max-width: min(920px, calc(100vw - 110px));
+}
+@media (max-width: 1024px) {
+  .monet-card { max-width: calc(100vw - 80px); }
+}

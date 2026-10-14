@@ -1,13 +1,12 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 
-// "Kiếm tiền" tab of Insight: per-page monetization progress read with the
-// Insight tokens. Graph has no field for Content Monetization status or
-// invitations (see lib/page-monetization.ts), so pages are classified from
-// what IS readable — earnings > 0, followers, 60-day watch time — against
-// thresholds the user sets, and each row links to Business Suite where the
-// invitation itself is shown.
+// "Kiếm tiền" tab of Insight: Meta's "Kiếm tiền từ nội dung — Tiêu chí của
+// danh sách chờ" checklist for every page, read with the Insight tokens (see
+// lib/page-monetization.ts for what each criterion maps to). Country and age
+// can't be read through the API, and neither can the invitation itself —
+// each row links to Business Suite for that.
 
 interface Page {
   id: string;
@@ -21,12 +20,28 @@ interface Group {
   color: string;
 }
 
+type CriterionKey = "reels" | "country" | "followers" | "pageAge" | "views" | "age18";
+
+interface Criterion {
+  key: CriterionKey;
+  label: string;
+  met: boolean | null;
+  value: string | null;
+  note?: string;
+}
+
 interface Monet {
   via: string | null;
   followers: number | null;
+  reels90: number | null;
+  views28: number | null;
+  pageOlderThan30: boolean | null;
+  country: string | null;
+  criteria: Criterion[];
+  met: number;
+  measurable: number;
   earnings90: { micros: number; currency: string | null; days: number } | null;
   watchMinutes60: number | null;
-  videoViews60: number | null;
   newFollowers28: number | null;
   missing: string[];
   unsupported?: boolean;
@@ -35,17 +50,24 @@ interface Monet {
 
 type RowState = { status: "loading" } | { status: "ok"; data: Monet } | { status: "error"; error: string; cooling?: boolean };
 
-type Category = "earning" | "reached" | "near" | "below" | "error" | "loading";
+type Category = "earning" | "full" | "miss1" | "miss2" | "error" | "loading";
 
 const CATS: Array<{ key: Category; label: string; color: string; hint: string }> = [
-  { key: "earning", label: "Đang kiếm tiền", color: "var(--good)", hint: "Có thu nhập Content Monetization trong 90 ngày" },
-  { key: "reached", label: "Đạt ngưỡng", color: "var(--accent)", hint: "Đạt cả ngưỡng người theo dõi và phút xem — nên vào Business Suite xem lời mời" },
-  { key: "near", label: "Gần đạt", color: "var(--warn)", hint: "Đạt ít nhất 50% cả hai ngưỡng" },
-  { key: "below", label: "Chưa đạt", color: "var(--muted)", hint: "Dưới 50% một trong hai ngưỡng" },
+  { key: "earning", label: "Đang kiếm tiền", color: "var(--good)", hint: "Có thu nhập Kiếm tiền từ nội dung trong 90 ngày" },
+  { key: "full", label: "Đủ 4/4 tiêu chí", color: "var(--accent)", hint: "Đạt cả 4 tiêu chí đo được của danh sách chờ — vào Business Suite xem lời mời" },
+  { key: "miss1", label: "Thiếu 1 tiêu chí", color: "var(--warn)", hint: "Đạt 3/4 tiêu chí đo được" },
+  { key: "miss2", label: "Thiếu 2+ tiêu chí", color: "var(--muted)", hint: "Đạt 2/4 tiêu chí trở xuống" },
   { key: "error", label: "Không đọc được", color: "var(--danger)", hint: "Thiếu quyền, token bị giới hạn hoặc lỗi Graph" },
 ];
 
-const DEFAULT_THRESHOLDS = { followers: 10_000, minutes: 600_000 };
+const MISSING_FILTERS: Array<{ key: CriterionKey; label: string }> = [
+  { key: "followers", label: "Thiếu người theo dõi" },
+  { key: "views", label: "Thiếu lượt xem 28 ngày" },
+  { key: "reels", label: "Thiếu thước phim 90 ngày" },
+  { key: "pageAge", label: "Trang chưa đủ 30 ngày" },
+];
+
+const TARGET = { followers: 10_000, views28: 150_000, reels90: 3 };
 const CONCURRENCY = 6;
 const CACHE_MS = 10 * 60_000;
 const cache = new Map<string, { at: number; data: Monet }>();
@@ -73,20 +95,76 @@ async function runPool<T>(items: T[], limit: number, fn: (item: T) => Promise<vo
   );
 }
 
-function Bar({ value, target, color }: { value: number | null; target: number; color: string }) {
-  const ratio = value == null || target <= 0 ? 0 : Math.min(1, value / target);
+/** ✓ / ✗ / ? mark in the waitlist style. */
+function Mark({ met }: { met: boolean | null }) {
+  if (met === true) return <span className="monet-mark ok" aria-label="Đạt">✓</span>;
+  if (met === false) return <span className="monet-mark no" aria-label="Chưa đạt">✗</span>;
+  return <span className="monet-mark unk" aria-label="Không đọc được">?</span>;
+}
+
+function Bar({ value, target }: { value: number | null; target: number }) {
+  const ratio = value == null ? 0 : Math.min(1, value / target);
+  const met = value != null && value >= target;
   return (
-    <span style={{ display: "flex", flexDirection: "column", gap: 3, alignItems: "flex-end" }}>
-      <span className="insight-num" style={{ fontSize: 12 }}>
-        {fmt(value)}
+    <span style={{ display: "inline-flex", flexDirection: "column", gap: 3, alignItems: "flex-end" }}>
+      <span style={{ display: "inline-flex", gap: 6, alignItems: "center" }}>
+        <span className="insight-num" style={{ fontSize: 12 }}>
+          {fmt(value)}
+        </span>
+        {value != null && <Mark met={met} />}
       </span>
       <span
-        title={`${Math.round(ratio * 100)}% ngưỡng ${target.toLocaleString("vi-VN")}`}
+        title={`${Math.round(ratio * 100)}% của ${target.toLocaleString("vi-VN")}`}
         style={{ width: 84, height: 4, borderRadius: 2, background: "var(--bg-3)", overflow: "hidden" }}
       >
-        <span style={{ display: "block", width: `${ratio * 100}%`, height: "100%", background: color }} />
+        <span style={{ display: "block", width: `${ratio * 100}%`, height: "100%", background: met ? "var(--good)" : "var(--accent)" }} />
       </span>
     </span>
+  );
+}
+
+/** The expanded row: Meta's "Kiếm tiền từ nội dung" waitlist card. */
+function WaitlistCard({ page, data }: { page: Page; data: Monet }) {
+  const [open, setOpen] = useState(true);
+  return (
+    <div className="monet-card">
+      <div className="monet-card-head">
+        <div className="monet-card-icon" aria-hidden>
+          <span />
+        </div>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div className="monet-card-title">Kiếm tiền từ nội dung</div>
+          <div className="monet-card-text">
+            {(data.earnings90?.micros ?? 0) > 0
+              ? `Trang đang có thu nhập: ${money(data.earnings90)} trong 90 ngày (${data.earnings90!.days} ngày có tiền).`
+              : "Chương trình này hiện chỉ dành cho người được mời. Việc đáp ứng tiêu chí của danh sách chờ không đảm bảo quyền tham gia chương trình."}
+          </div>
+          <button className="monet-card-toggle" onClick={() => setOpen((o) => !o)} aria-expanded={open}>
+            Tiêu chí của danh sách chờ {open ? "▼" : "▶"}
+          </button>
+          {open && (
+            <ul className="monet-criteria">
+              {data.criteria.map((c) => (
+                <li key={c.key}>
+                  <Mark met={c.met} />
+                  <span>
+                    <span className={c.met === false ? "monet-crit-label miss" : "monet-crit-label"}>{c.label}</span>
+                    {c.value && <span className="monet-crit-value"> — {c.value}</span>}
+                    {c.met === null && c.note && <span className="monet-crit-note">{c.note}</span>}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+        <div className="monet-card-side">
+          <div>{(data.earnings90?.micros ?? 0) > 0 ? "Đang kiếm tiền" : "Chỉ dành cho người được mời"}</div>
+          <a href={monetizationUrl(page.id)} target="_blank" rel="noreferrer" className="btn" style={{ ...smallBtn, textDecoration: "none", marginTop: 8 }}>
+            Xem lời mời trong Business Suite ↗
+          </a>
+        </div>
+      </div>
+    </div>
   );
 }
 
@@ -94,43 +172,23 @@ export function MonetizationTab({
   pages,
   groups,
   assignments,
-  username,
 }: {
   pages: Page[];
   groups: Group[];
   assignments: Record<string, number>;
-  username: string | null;
+  username?: string | null;
 }) {
   const [rows, setRows] = useState<Record<string, RowState>>({});
   const [progress, setProgress] = useState<{ done: number; total: number } | null>(null);
   const [tick, setTick] = useState(0);
   const freshRef = useRef(false);
   const runRef = useRef(0);
-  const [thresholds, setThresholds] = useState(DEFAULT_THRESHOLDS);
   const [cat, setCat] = useState<Category | "all">("all");
+  const [missingKey, setMissingKey] = useState<CriterionKey | "">("");
   const [group, setGroup] = useState<"all" | "none" | number>("all");
   const [search, setSearch] = useState("");
-  const [sort, setSort] = useState<{ key: "name" | "followers" | "minutes" | "earn" | "new"; dir: 1 | -1 }>({ key: "earn", dir: -1 });
-
-  const storageKey = username ? `rmf_insight_monet_${username}` : null;
-  useEffect(() => {
-    if (!storageKey) return;
-    try {
-      const saved = JSON.parse(localStorage.getItem(storageKey) ?? "{}");
-      if (saved.thresholds?.followers > 0 && saved.thresholds?.minutes > 0) setThresholds(saved.thresholds);
-    } catch {
-      // storage unavailable — keep defaults
-    }
-  }, [storageKey]);
-  function saveThresholds(t: typeof thresholds) {
-    setThresholds(t);
-    if (!storageKey) return;
-    try {
-      localStorage.setItem(storageKey, JSON.stringify({ thresholds: t }));
-    } catch {
-      // ignore
-    }
-  }
+  const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  const [sort, setSort] = useState<{ key: "name" | "met" | "followers" | "views" | "reels" | "earn"; dir: 1 | -1 }>({ key: "met", dir: -1 });
 
   const groupById = useMemo(() => new Map(groups.map((g) => [g.id, g])), [groups]);
   const groupOf = (id: string) => (assignments[id] ? groupById.get(assignments[id]) ?? null : null);
@@ -196,13 +254,11 @@ export function MonetizationTab({
   function categorize(s: RowState | undefined): Category {
     if (!s || s.status === "loading") return "loading";
     if (s.status === "error" || s.data.unsupported) return "error";
-    const d = s.data;
-    if ((d.earnings90?.micros ?? 0) > 0) return "earning";
-    const f = (d.followers ?? 0) / thresholds.followers;
-    const m = (d.watchMinutes60 ?? 0) / thresholds.minutes;
-    if (f >= 1 && m >= 1) return "reached";
-    if (f >= 0.5 && m >= 0.5) return "near";
-    return "below";
+    if ((s.data.earnings90?.micros ?? 0) > 0) return "earning";
+    const missingCount = s.data.measurable - s.data.met;
+    if (missingCount <= 0) return "full";
+    if (missingCount === 1) return "miss1";
+    return "miss2";
   }
 
   const all = scoped.map((p) => {
@@ -211,23 +267,32 @@ export function MonetizationTab({
   });
   const counts: Record<string, number> = {};
   for (const r of all) counts[r.cat] = (counts[r.cat] ?? 0) + 1;
+  const missingCounts: Record<string, number> = {};
+  for (const r of all) for (const c of r.data?.criteria ?? []) if (c.met === false) missingCounts[c.key] = (missingCounts[c.key] ?? 0) + 1;
 
   const term = search.trim().toLowerCase();
   const list = all
-    .filter((r) => (cat === "all" || r.cat === cat) && (!term || r.page.name.toLowerCase().includes(term) || r.page.id.includes(term)))
+    .filter(
+      (r) =>
+        (cat === "all" || r.cat === cat) &&
+        (!missingKey || r.data?.criteria.some((c) => c.key === missingKey && c.met === false)) &&
+        (!term || r.page.name.toLowerCase().includes(term) || r.page.id.includes(term)),
+    )
     .sort((a, b) => {
       const v = (r: (typeof all)[number]): number | string | null => {
         switch (sort.key) {
           case "name":
             return r.page.name;
+          case "met":
+            return r.data && !r.data.unsupported ? r.data.met * 1e12 + (r.data.views28 ?? 0) : null;
           case "followers":
             return r.data?.followers ?? null;
-          case "minutes":
-            return r.data?.watchMinutes60 ?? null;
+          case "views":
+            return r.data?.views28 ?? null;
+          case "reels":
+            return r.data?.reels90 ?? null;
           case "earn":
             return r.data?.earnings90?.micros ?? null;
-          case "new":
-            return r.data?.newFollowers28 ?? null;
         }
       };
       const va = v(a);
@@ -235,17 +300,15 @@ export function MonetizationTab({
       if (va == null && vb == null) return a.page.name.localeCompare(b.page.name, "vi");
       if (va == null) return 1;
       if (vb == null) return -1;
-      if (typeof va === "number" && typeof vb === "number") {
-        return (va - vb) * sort.dir || (b.data?.followers ?? 0) - (a.data?.followers ?? 0);
-      }
+      if (typeof va === "number" && typeof vb === "number") return (va - vb) * sort.dir;
       return String(va).localeCompare(String(vb), "vi") * sort.dir;
     });
 
-  function th(key: typeof sort.key, label: string) {
+  function th(key: typeof sort.key, label: string, right = true) {
     const active = sort.key === key;
     return (
       <th
-        className={key === "name" ? "" : "right"}
+        className={right ? "right" : ""}
         style={{ cursor: "pointer", userSelect: "none", whiteSpace: "nowrap" }}
         onClick={() => setSort((s) => (s.key === key ? { key, dir: s.dir === 1 ? -1 : 1 } : { key, dir: key === "name" ? 1 : -1 }))}
         aria-sort={active ? (sort.dir === 1 ? "ascending" : "descending") : undefined}
@@ -256,25 +319,43 @@ export function MonetizationTab({
     );
   }
 
+  function toggleRow(id: string) {
+    setExpanded((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
   function exportCsv() {
     const esc = (v: string | number | null) => {
       const s = v == null ? "" : String(v);
       return /[",\n;]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
     };
-    const head = ["Trang", "Page ID", "Nhóm", "Phân loại", "Người theo dõi", "Phút xem 60 ngày", "Lượt xem video 60 ngày", "Theo dõi mới 28 ngày", "Thu nhập 90 ngày", "Tiền tệ", "Token"];
+    const yn = (m: boolean | null | undefined) => (m === true ? "Đạt" : m === false ? "Chưa đạt" : "Tự kiểm tra");
+    const crit = (r: (typeof all)[number], k: CriterionKey) => yn(r.data?.criteria.find((c) => c.key === k)?.met);
+    const head = [
+      "Trang", "Page ID", "Nhóm", "Phân loại", "Đạt tiêu chí", "Thước phim 90 ngày", "TC thước phim", "Người theo dõi", "TC người theo dõi",
+      "Lượt xem riêng biệt 28 ngày", "TC lượt xem", "TC Trang ≥30 ngày", "Quốc gia (địa chỉ Trang)", "Thu nhập 90 ngày", "Tiền tệ",
+    ];
     const lines = list.map((r) =>
       [
         r.page.name,
         r.page.id,
         r.group?.name ?? "",
         CATS.find((c) => c.key === r.cat)?.label ?? "Đang tải",
+        r.data && !r.data.unsupported ? `${r.data.met}/${r.data.measurable}` : null,
+        r.data?.reels90 ?? null,
+        crit(r, "reels"),
         r.data?.followers ?? null,
-        r.data?.watchMinutes60 ?? null,
-        r.data?.videoViews60 ?? null,
-        r.data?.newFollowers28 ?? null,
+        crit(r, "followers"),
+        r.data?.views28 ?? null,
+        crit(r, "views"),
+        crit(r, "pageAge"),
+        r.data?.country ?? null,
         r.data?.earnings90 ? (r.data.earnings90.micros / 1_000_000).toFixed(2) : null,
         r.data?.earnings90?.currency ?? null,
-        r.data?.via ?? null,
       ]
         .map(esc)
         .join(","),
@@ -298,62 +379,11 @@ export function MonetizationTab({
   return (
     <>
       <div className="card" style={{ marginBottom: 16, padding: "12px 14px", fontSize: 12, lineHeight: 1.6, color: "var(--muted)" }}>
-        Facebook <b style={{ color: "var(--ink-soft)" }}>không có API cho lời mời / trạng thái duyệt Content Monetization</b>. Trang được
-        phân loại từ số liệu đọc được: có thu nhập 90 ngày → <b style={{ color: "var(--good)" }}>Đang kiếm tiền</b>; còn lại so với ngưỡng
-        bên dưới (Meta không công bố ngưỡng cho Content Monetization — mặc định là ngưỡng In-stream cũ, sửa được). Bấm{" "}
-        <b style={{ color: "var(--ink-soft)" }}>Kiếm tiền ↗</b> ở từng Trang để xem lời mời trong Business Suite.
+        Kiểm tra theo <b style={{ color: "var(--ink-soft)" }}>Tiêu chí của danh sách chờ “Kiếm tiền từ nội dung”</b> của Meta. 4 tiêu chí đọc
+        được qua API (thước phim, người theo dõi, Trang ≥30 ngày, lượt xem 28 ngày); <b style={{ color: "var(--ink-soft)" }}>quốc gia cư trú, tuổi
+        và lời mời</b> không có trong API — bấm vào Trang để xem chi tiết, hoặc nút <b style={{ color: "var(--ink-soft)" }}>Kiếm tiền ↗</b> để mở
+        Business Suite.
       </div>
-
-      <section className="section" style={{ marginBottom: 16 }}>
-        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
-          <span className="section-label" style={{ marginRight: 4 }}>
-            Ngưỡng
-          </span>
-          <label style={{ fontSize: 12, display: "flex", gap: 6, alignItems: "center" }}>
-            Người theo dõi ≥
-            <input
-              className="input insight-num"
-              type="number"
-              min={1}
-              aria-label="Ngưỡng người theo dõi"
-              value={thresholds.followers}
-              onChange={(e) => saveThresholds({ ...thresholds, followers: Math.max(1, Number(e.target.value) || 1) })}
-              style={{ width: 100, padding: "4px 8px", fontSize: 12 }}
-            />
-          </label>
-          <label style={{ fontSize: 12, display: "flex", gap: 6, alignItems: "center" }}>
-            Phút xem 60 ngày ≥
-            <input
-              className="input insight-num"
-              type="number"
-              min={1}
-              aria-label="Ngưỡng phút xem"
-              value={thresholds.minutes}
-              onChange={(e) => saveThresholds({ ...thresholds, minutes: Math.max(1, Number(e.target.value) || 1) })}
-              style={{ width: 110, padding: "4px 8px", fontSize: 12 }}
-            />
-          </label>
-          <button className="btn" style={{ padding: "3px 8px", fontSize: 10 }} onClick={() => saveThresholds(DEFAULT_THRESHOLDS)}>
-            Mặc định
-          </button>
-          <span style={{ flex: 1 }} />
-          <select
-            className="input"
-            aria-label="Lọc nhóm"
-            value={String(group)}
-            onChange={(e) => setGroup(e.target.value === "all" || e.target.value === "none" ? e.target.value : Number(e.target.value))}
-            style={{ padding: "4px 8px", fontSize: 12, width: "auto", maxWidth: 240 }}
-          >
-            <option value="all">Tất cả nhóm ({pages.length})</option>
-            {groups.map((g) => (
-              <option key={g.id} value={g.id}>
-                {g.name}
-              </option>
-            ))}
-            <option value="none">Chưa phân nhóm</option>
-          </select>
-        </div>
-      </section>
 
       <div className="kpi-grid insight-monet-kpis">
         {CATS.map((c) => (
@@ -379,11 +409,39 @@ export function MonetizationTab({
           placeholder="Tìm Trang theo tên hoặc ID…"
           value={search}
           onChange={(e) => setSearch(e.target.value)}
-          style={{ flex: "1 1 220px", maxWidth: 320 }}
+          style={{ flex: "1 1 200px", maxWidth: 280 }}
         />
+        <select
+          className="input"
+          aria-label="Lọc tiêu chí còn thiếu"
+          value={missingKey}
+          onChange={(e) => setMissingKey(e.target.value as CriterionKey | "")}
+          style={{ padding: "4px 8px", fontSize: 12, width: "auto" }}
+        >
+          <option value="">Mọi tiêu chí</option>
+          {MISSING_FILTERS.map((f) => (
+            <option key={f.key} value={f.key}>
+              {f.label} ({missingCounts[f.key] ?? 0})
+            </option>
+          ))}
+        </select>
+        <select
+          className="input"
+          aria-label="Lọc nhóm"
+          value={String(group)}
+          onChange={(e) => setGroup(e.target.value === "all" || e.target.value === "none" ? e.target.value : Number(e.target.value))}
+          style={{ padding: "4px 8px", fontSize: 12, width: "auto", maxWidth: 200 }}
+        >
+          <option value="all">Tất cả nhóm ({pages.length})</option>
+          {groups.map((g) => (
+            <option key={g.id} value={g.id}>
+              {g.name}
+            </option>
+          ))}
+          <option value="none">Chưa phân nhóm</option>
+        </select>
         <span className="mono" style={{ fontSize: 11, color: "var(--muted)" }}>
-          {cat === "all" ? "Tất cả" : CATS.find((c) => c.key === cat)?.label} · {list.length} Trang
-          {progress ? ` · Đang kiểm tra ${progress.done}/${progress.total} Trang…` : ""}
+          {list.length} Trang{progress ? ` · Đang kiểm tra ${progress.done}/${progress.total}…` : ""}
         </span>
         <span style={{ flex: 1 }} />
         <button
@@ -406,76 +464,99 @@ export function MonetizationTab({
         <table className="table insight-monet-table">
           <thead>
             <tr>
-              {th("name", "Trang")}
+              <th style={{ width: 26 }} />
+              {th("name", "Trang", false)}
+              {th("met", "Đạt")}
+              {th("reels", "Thước phim 90 ngày")}
               {th("followers", "Người theo dõi")}
-              {th("minutes", "Phút xem 60 ngày")}
-              <th className="right">Lượt xem 60 ngày</th>
-              {th("new", "Theo dõi mới 28 ngày")}
+              {th("views", "Lượt xem 28 ngày")}
+              <th className="right" style={{ whiteSpace: "nowrap" }}>
+                Trang ≥30 ngày
+              </th>
               {th("earn", "Thu nhập 90 ngày")}
-              <th>Phân loại</th>
               <th />
             </tr>
           </thead>
           <tbody>
             {list.map((r) => {
               const c = CATS.find((x) => x.key === r.cat);
-              const title =
-                r.state?.status === "error" ? r.state.error : r.data?.unsupported ? r.data.reason : c?.hint;
+              const isOpen = expanded.has(r.page.id);
+              const canOpen = !!r.data && !r.data.unsupported;
+              const title = r.state?.status === "error" ? r.state.error : r.data?.unsupported ? r.data.reason : c?.hint;
               return (
-                <tr key={r.page.id}>
-                  <td style={{ maxWidth: 240 }}>
-                    <span style={{ display: "flex", gap: 8, alignItems: "center", minWidth: 0 }}>
-                      {r.group && <span title={r.group.name} style={{ width: 8, height: 8, borderRadius: "50%", background: r.group.color, flex: "none" }} />}
-                      <span style={{ minWidth: 0 }}>
-                        <span className="insight-ellipsis" style={{ display: "block", maxWidth: 210, color: "var(--ink)" }} title={r.page.name}>
-                          {r.page.name}
-                        </span>
-                        <span className="mono" style={{ fontSize: 10, color: "var(--dim)" }}>
-                          {r.page.id}
+                <Fragment key={r.page.id}>
+                  <tr className={`monet-row${isOpen ? " selected" : ""}`} onClick={() => canOpen && toggleRow(r.page.id)} style={{ cursor: canOpen ? "pointer" : "default" }}>
+                    <td style={{ color: "var(--muted)", fontSize: 11 }}>{canOpen ? (isOpen ? "▾" : "▸") : ""}</td>
+                    <td style={{ maxWidth: 230 }}>
+                      <span style={{ display: "flex", gap: 8, alignItems: "center", minWidth: 0 }}>
+                        {r.group && <span title={r.group.name} style={{ width: 8, height: 8, borderRadius: "50%", background: r.group.color, flex: "none" }} />}
+                        <span style={{ minWidth: 0 }}>
+                          <span className="insight-ellipsis" style={{ display: "block", maxWidth: 200, color: "var(--ink)" }} title={r.page.name}>
+                            {r.page.name}
+                          </span>
+                          <span className="mono" style={{ fontSize: 10, color: "var(--dim)" }}>
+                            {r.page.id}
+                          </span>
                         </span>
                       </span>
-                    </span>
-                  </td>
-                  <td className="right">
-                    <Bar value={r.data?.followers ?? null} target={thresholds.followers} color="var(--accent)" />
-                  </td>
-                  <td className="right">
-                    <Bar value={r.data?.watchMinutes60 ?? null} target={thresholds.minutes} color="var(--accent)" />
-                  </td>
-                  <td className="right insight-num" style={{ fontSize: 12 }}>
-                    {fmt(r.data?.videoViews60)}
-                  </td>
-                  <td className="right insight-num" style={{ fontSize: 12 }}>
-                    {fmt(r.data?.newFollowers28)}
-                  </td>
-                  <td className="right insight-num" style={{ fontSize: 12, color: (r.data?.earnings90?.micros ?? 0) > 0 ? "var(--good)" : undefined }}>
-                    {money(r.data?.earnings90 ?? null)}
-                    {(r.data?.earnings90?.days ?? 0) > 0 && (
-                      <div style={{ fontSize: 10, color: "var(--muted)" }}>{r.data!.earnings90!.days} ngày có tiền</div>
-                    )}
-                  </td>
-                  <td>
-                    {r.cat === "loading" ? (
-                      <span className="pill">Đang kiểm tra…</span>
-                    ) : (
-                      <span className="pill" title={title} style={{ color: c?.color, borderColor: "currentColor" }}>
-                        {c?.label}
-                      </span>
-                    )}
-                  </td>
-                  <td className="right">
-                    <a
-                      href={monetizationUrl(r.page.id)}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="btn"
-                      style={{ padding: "3px 8px", fontSize: 10, textDecoration: "none", whiteSpace: "nowrap" }}
-                      title="Mở mục Kiếm tiền của Trang trong Meta Business Suite (xem lời mời)"
-                    >
-                      Kiếm tiền ↗
-                    </a>
-                  </td>
-                </tr>
+                    </td>
+                    <td className="right">
+                      {r.cat === "loading" ? (
+                        <span className="pill">Đang kiểm tra…</span>
+                      ) : r.cat === "error" ? (
+                        <span className="pill" title={title} style={{ color: c?.color, borderColor: "currentColor" }}>
+                          {c?.label}
+                        </span>
+                      ) : (
+                        <span title={c?.hint} style={{ display: "inline-flex", flexDirection: "column", alignItems: "flex-end", gap: 3 }}>
+                          <span className="insight-num" style={{ fontSize: 13, color: c?.color, fontWeight: 600 }}>
+                            {r.data!.met}/{r.data!.measurable}
+                          </span>
+                          <span style={{ fontSize: 10, color: c?.color, whiteSpace: "nowrap" }}>{c?.label}</span>
+                        </span>
+                      )}
+                    </td>
+                    <td className="right">
+                      {r.data?.reels90 != null ? (
+                        <span style={{ display: "inline-flex", gap: 6, alignItems: "center" }}>
+                          <span className="insight-num" style={{ fontSize: 12 }}>
+                            {fmt(r.data.reels90)}
+                            <span style={{ color: "var(--dim)" }}>/{TARGET.reels90}</span>
+                          </span>
+                          <Mark met={r.data.reels90 >= TARGET.reels90} />
+                        </span>
+                      ) : (
+                        "—"
+                      )}
+                    </td>
+                    <td className="right">{r.data ? <Bar value={r.data.followers} target={TARGET.followers} /> : "—"}</td>
+                    <td className="right">{r.data ? <Bar value={r.data.views28} target={TARGET.views28} /> : "—"}</td>
+                    <td className="right">{r.data && r.data.pageOlderThan30 !== null ? <Mark met={r.data.pageOlderThan30} /> : "—"}</td>
+                    <td className="right insight-num" style={{ fontSize: 12, color: (r.data?.earnings90?.micros ?? 0) > 0 ? "var(--good)" : undefined }}>
+                      {money(r.data?.earnings90 ?? null)}
+                    </td>
+                    <td className="right">
+                      <a
+                        href={monetizationUrl(r.page.id)}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="btn"
+                        onClick={(e) => e.stopPropagation()}
+                        style={{ padding: "3px 8px", fontSize: 10, textDecoration: "none", whiteSpace: "nowrap" }}
+                        title="Mở mục Kiếm tiền của Trang trong Meta Business Suite (xem lời mời)"
+                      >
+                        Kiếm tiền ↗
+                      </a>
+                    </td>
+                  </tr>
+                  {isOpen && r.data && (
+                    <tr className="monet-detail">
+                      <td colSpan={9}>
+                        <WaitlistCard page={r.page} data={r.data} />
+                      </td>
+                    </tr>
+                  )}
+                </Fragment>
               );
             })}
           </tbody>

@@ -1,25 +1,31 @@
 // Monetization check for the Insight screen — user/System User tokens only,
 // through the same token pool as Reach (withPageToken).
 //
-// What Graph v23 actually exposes (probed live, 2026-10):
-//   - content_monetization_earnings (daily, { currency, microAmount }) is
-//     readable on EVERY page with VIEW_MONETIZATION_INSIGHTS — non-onboarded
-//     pages just return 0. So earnings > 0 proves "đang kiếm tiền", but 0
-//     can't tell "bật nhưng chưa có tiền" from "chưa bật".
-//   - There is NO field/edge for Content Monetization onboarding status or
-//     invitations (monetization_options, content_monetization_eligibility…
-//     all fail #100), and Meta's docs list none. Invitations are only visible
-//     in Professional Dashboard / Business Suite — the UI links there.
-//   - Progress signals: followers_count, page_video_view_time (ms/day),
-//     page_video_views, page_daily_follows_unique.
-//
-// One Page call + one insights call (all metrics, 90 days) per page.
+// Mirrors Meta's "Kiếm tiền từ nội dung — Tiêu chí của danh sách chờ"
+// checklist (Professional Dashboard, 2026-10), criterion by criterion, with
+// what Graph v23 exposes (probed live):
+//   ✓ readable  — ≥ 3 reels in 90 days       (/video_reels, by created_time)
+//               — ≥ 10,000 followers          (followers_count)
+//               — Page exists ≥ 30 days       (a published post older than 30
+//                                               days; Page has no created_time)
+//               — ≥ 150,000 unique views / 28 days
+//                                             (page_total_media_view_unique,
+//                                              period=days_28)
+//   ~ estimate  — eligible country            (Meta checks where the PERSON
+//                                               lives; we only see the Page's
+//                                               address)
+//   ✗ unreadable — age ≥ 18, and the invitation itself (no field or edge for
+//                  Content Monetization status/invites; monetization_options
+//                  etc. fail #100).
+// Plus content_monetization_earnings (90 days): > 0 proves "đang kiếm tiền";
+// Graph returns 0 for non-onboarded pages too, so 0 proves nothing.
 
 import { graphFetch, parseGraphError } from "@/lib/facebook";
 import { withPageToken, type ReachCandidate } from "@/lib/page-reach";
 
 const DAY = 86_400;
 const WINDOW_DAYS = 90; // Graph caps an insights range at ~93 days
+const REEL_PAGES_MAX = 3; // ≤ 300 reels scanned — plenty to count "≥ 3 in 90 days"
 
 const METRICS = [
   "content_monetization_earnings",
@@ -28,16 +34,36 @@ const METRICS = [
   "page_daily_follows_unique",
 ] as const;
 
+// Meta's waitlist thresholds as shown in Professional Dashboard.
+export const CRITERIA_TARGETS = { reels90: 3, followers: 10_000, pageAgeDays: 30, views28: 150_000 } as const;
+
+export type CriterionKey = "reels" | "country" | "followers" | "pageAge" | "views" | "age18";
+
+export interface Criterion {
+  key: CriterionKey;
+  label: string;
+  /** true / false = measured; null = can't be read through the API. */
+  met: boolean | null;
+  value: string | null;
+  note?: string;
+}
+
 export interface MonetizationResult {
   via: string | null;
   followers: number | null;
+  reels90: number | null;
+  views28: number | null;
+  pageOlderThan30: boolean | null;
+  country: string | null;
+  criteria: Criterion[];
+  /** Measurable criteria met, out of `measurable`. */
+  met: number;
+  measurable: number;
   /** Content Monetization earnings over the last 90 days. */
   earnings90: { micros: number; currency: string | null; days: number } | null;
-  /** Video watch time over the last 60 days, in minutes. */
   watchMinutes60: number | null;
-  videoViews60: number | null;
   newFollowers28: number | null;
-  /** Metrics Graph refused for this page (shown as "—"). */
+  /** Data points Graph refused for this page (shown as "—"). */
   missing: string[];
   unsupported?: boolean;
   reason?: string;
@@ -45,10 +71,20 @@ export interface MonetizationResult {
 
 type Values = Array<{ value: unknown; end_time: string }>;
 
-async function fetchSeries(pageId: string, pageToken: string, nowSec: number) {
+/** Run a Graph read; on #100 (field/metric not available) record it as missing. */
+async function optional<T>(name: string, missing: string[], fn: () => Promise<T>): Promise<T | null> {
+  try {
+    return await fn();
+  } catch (e) {
+    if (parseGraphError(e).code !== 100) throw e;
+    missing.push(name);
+    return null;
+  }
+}
+
+async function fetchSeries(pageId: string, pageToken: string, nowSec: number, missing: string[]) {
   const qs = `period=day&since=${nowSec - WINDOW_DAYS * DAY}&until=${nowSec}`;
   const out: Record<string, Values> = {};
-  const missing: string[] = [];
   try {
     const d = await graphFetch<{ data?: Array<{ name: string; values?: Values }> }>(
       `/${pageId}/insights?metric=${METRICS.join(",")}&${qs}`,
@@ -60,20 +96,34 @@ async function fetchSeries(pageId: string, pageToken: string, nowSec: number) {
     // the rest still show.
     if (parseGraphError(e).code !== 100) throw e;
     for (const m of METRICS) {
-      try {
-        const d = await graphFetch<{ data?: Array<{ name: string; values?: Values }> }>(
-          `/${pageId}/insights?metric=${m}&${qs}`,
-          pageToken,
-        );
-        out[m] = d.data?.[0]?.values ?? [];
-      } catch (inner) {
-        if (parseGraphError(inner).code !== 100) throw inner;
-        missing.push(m);
-      }
+      const d = await optional(m, missing, () =>
+        graphFetch<{ data?: Array<{ name: string; values?: Values }> }>(`/${pageId}/insights?metric=${m}&${qs}`, pageToken),
+      );
+      if (d) out[m] = d.data?.[0]?.values ?? [];
     }
   }
   for (const m of METRICS) if (!(m in out) && !missing.includes(m)) out[m] = [];
-  return { series: out, missing };
+  return out;
+}
+
+async function countReels90(pageId: string, pageToken: string, nowSec: number): Promise<number> {
+  const from = (nowSec - 90 * DAY) * 1000;
+  let count = 0;
+  let path: string | null = `/${pageId}/video_reels?fields=created_time&limit=100`;
+  for (let i = 0; path && i < REEL_PAGES_MAX; i++) {
+    const d: { data?: Array<{ created_time?: string }>; paging?: { next?: string } } = await graphFetch(path, pageToken);
+    let reachedOld = false;
+    for (const r of d.data ?? []) {
+      const t = r.created_time ? new Date(r.created_time).getTime() : 0;
+      if (t >= from) count++;
+      else reachedOld = true;
+    }
+    if (reachedOld || count >= 100 || !d.paging?.next) break;
+    const u = new URL(d.paging.next);
+    u.searchParams.delete("access_token");
+    path = `${u.pathname.replace(/^\/v\d+\.\d+/, "")}${u.search}`;
+  }
+  return count;
 }
 
 function sumLast(values: Values | undefined, days: number, nowSec: number): number | null {
@@ -85,6 +135,61 @@ function sumLast(values: Values | undefined, days: number, nowSec: number): numb
   );
 }
 
+const n = (v: number) => v.toLocaleString("vi-VN");
+
+function buildCriteria(d: {
+  reels90: number | null;
+  followers: number | null;
+  pageOlderThan30: boolean | null;
+  views28: number | null;
+  country: string | null;
+}): Criterion[] {
+  const T = CRITERIA_TARGETS;
+  return [
+    {
+      key: "reels",
+      label: `Đăng tối thiểu ${T.reels90} thước phim trong 90 ngày qua`,
+      met: d.reels90 === null ? null : d.reels90 >= T.reels90,
+      value: d.reels90 === null ? null : `${n(d.reels90)} thước phim`,
+    },
+    {
+      key: "country",
+      label: "Cư trú tại quốc gia đủ điều kiện",
+      met: null,
+      value: d.country,
+      note: d.country
+        ? `Địa chỉ Trang: ${d.country}. Meta xét nơi cư trú của bạn — tự kiểm tra trong Business Suite.`
+        : "Meta xét nơi cư trú của bạn — không đọc được qua API.",
+    },
+    {
+      key: "followers",
+      label: `Có tối thiểu ${n(T.followers)} người theo dõi`,
+      met: d.followers === null ? null : d.followers >= T.followers,
+      value: d.followers === null ? null : `${n(d.followers)} / ${n(T.followers)}`,
+    },
+    {
+      key: "pageAge",
+      label: `Có Trang hoặc trang cá nhân đã tồn tại được ít nhất ${T.pageAgeDays} ngày`,
+      met: d.pageOlderThan30,
+      value: d.pageOlderThan30 === null ? null : d.pageOlderThan30 ? "Có bài đăng cũ hơn 30 ngày" : "Chưa có bài đăng cũ hơn 30 ngày",
+      note: "Suy ra từ bài đăng cũ nhất (API không có ngày tạo Trang).",
+    },
+    {
+      key: "views",
+      label: `Nhận được tối thiểu ${n(T.views28)} riêng biệt lượt xem trong 28 ngày qua`,
+      met: d.views28 === null ? null : d.views28 >= T.views28,
+      value: d.views28 === null ? null : `${n(d.views28)} / ${n(T.views28)}`,
+    },
+    {
+      key: "age18",
+      label: "Phải tối thiểu 18 tuổi",
+      met: null,
+      value: null,
+      note: "Tuổi của bạn — không đọc được qua API, tự kiểm tra.",
+    },
+  ];
+}
+
 export async function fetchPageMonetization(
   pageId: string,
   candidates: ReachCandidate[],
@@ -92,20 +197,44 @@ export async function fetchPageMonetization(
 ): Promise<MonetizationResult> {
   const nowSec = Math.floor(now.getTime() / 1000);
   const r = await withPageToken(pageId, candidates, async (token) => {
-    const [page, { series, missing }] = await Promise.all([
-      graphFetch<{ followers_count?: number; fan_count?: number }>(`/${pageId}?fields=followers_count,fan_count`, token),
-      fetchSeries(pageId, token, nowSec),
+    const missing: string[] = [];
+    const [page, series, views, reels90, oldPost] = await Promise.all([
+      graphFetch<{ followers_count?: number; fan_count?: number; location?: { country?: string } }>(
+        `/${pageId}?fields=followers_count,fan_count,location`,
+        token,
+      ),
+      fetchSeries(pageId, token, nowSec, missing),
+      optional("page_total_media_view_unique", missing, () =>
+        graphFetch<{ data?: Array<{ values?: Values }> }>(
+          `/${pageId}/insights?metric=page_total_media_view_unique&period=days_28&since=${nowSec - 3 * DAY}&until=${nowSec}`,
+          token,
+        ),
+      ),
+      optional("video_reels", missing, () => countReels90(pageId, token, nowSec)),
+      optional("published_posts", missing, () =>
+        graphFetch<{ data?: unknown[] }>(
+          `/${pageId}/published_posts?fields=created_time&until=${nowSec - CRITERIA_TARGETS.pageAgeDays * DAY}&limit=1`,
+          token,
+        ),
+      ),
     ]);
-    return { page, series, missing };
+    return { page, series, views, reels90, oldPost, missing };
   });
 
   if ("permissionError" in r) {
+    const criteria = buildCriteria({ reels90: null, followers: null, pageOlderThan30: null, views28: null, country: null });
     return {
       via: null,
       followers: null,
+      reels90: null,
+      views28: null,
+      pageOlderThan30: null,
+      country: null,
+      criteria,
+      met: 0,
+      measurable: 4,
       earnings90: null,
       watchMinutes60: null,
-      videoViews60: null,
       newFollowers28: null,
       missing: [...METRICS],
       unsupported: true,
@@ -115,7 +244,7 @@ export async function fetchPageMonetization(
     };
   }
 
-  const { page, series, missing } = r.value;
+  const { page, series, views, reels90, oldPost, missing } = r.value;
   let earnings90: MonetizationResult["earnings90"] = null;
   if (!missing.includes("content_monetization_earnings")) {
     let micros = 0;
@@ -131,16 +260,27 @@ export async function fetchPageMonetization(
     earnings90 = { micros, currency, days };
   }
   const viewMs = missing.includes("page_video_view_time") ? null : sumLast(series.page_video_view_time, 60, nowSec);
+  const views28Raw = views?.data?.[0]?.values?.filter((v) => typeof v.value === "number").at(-1)?.value;
+
+  const data = {
+    followers: page.followers_count ?? page.fan_count ?? null,
+    reels90,
+    views28: typeof views28Raw === "number" ? views28Raw : null,
+    pageOlderThan30: oldPost ? (oldPost.data?.length ?? 0) > 0 : null,
+    country: page.location?.country ?? null,
+  };
+  const criteria = buildCriteria(data);
+  const measured = criteria.filter((c) => ["reels", "followers", "pageAge", "views"].includes(c.key));
 
   return {
     via: r.via,
-    followers: page.followers_count ?? page.fan_count ?? null,
+    ...data,
+    criteria,
+    met: measured.filter((c) => c.met === true).length,
+    measurable: measured.length,
     earnings90,
     watchMinutes60: viewMs === null ? null : Math.round(viewMs / 60_000),
-    videoViews60: missing.includes("page_video_views") ? null : sumLast(series.page_video_views, 60, nowSec),
-    newFollowers28: missing.includes("page_daily_follows_unique")
-      ? null
-      : sumLast(series.page_daily_follows_unique, 28, nowSec),
+    newFollowers28: missing.includes("page_daily_follows_unique") ? null : sumLast(series.page_daily_follows_unique, 28, nowSec),
     missing,
   };
 }
