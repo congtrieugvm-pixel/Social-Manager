@@ -5,6 +5,7 @@ import { insightTokens } from "@/lib/db/schema";
 import { getOwnerId } from "@/lib/scope";
 import { readBody } from "@/lib/req-body";
 import { forgetToken } from "@/lib/page-reach";
+import { deleteSnapshot } from "@/lib/insight-snapshots";
 import { errorResponse, parseId } from "../../_util";
 
 // PATCH { label } — rename a token.
@@ -37,6 +38,7 @@ export async function DELETE(_req: Request, ctx: { params: Promise<{ id: string 
       .returning({ id: insightTokens.id });
     if (!rows.length) return NextResponse.json({ error: "Không tìm thấy token" }, { status: 404 });
     forgetToken(id);
+    await deleteSnapshot(ownerId, "pages", `t:${id}`);
     return NextResponse.json({ ok: true });
   } catch (e) {
     return errorResponse(e);

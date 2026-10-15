@@ -9,6 +9,7 @@ import {
   type FbPage,
 } from "@/lib/facebook";
 import { rememberPageToken } from "@/lib/page-reach";
+import { saveSnapshots } from "@/lib/insight-snapshots";
 import { errorResponse, parseId } from "../../../_util";
 
 // GET → { pages: [{ id, name }] } — pages this token can read, live from
@@ -23,7 +24,9 @@ export async function GET(_req: Request, ctx: { params: Promise<{ id: string }> 
     if (!c) return NextResponse.json({ error: "Không tìm thấy token" }, { status: 404 });
 
     if (c.kind === "page") {
-      return NextResponse.json({ pages: [{ id: c.fbId, name: c.label }] });
+      const one = [{ id: c.fbId, name: c.label }];
+      await saveSnapshots(ownerId, "pages", [{ key: `t:${c.tokenId}`, data: one }]);
+      return NextResponse.json({ pages: one });
     }
 
     const byId = new Map<string, FbPage>();
@@ -36,6 +39,7 @@ export async function GET(_req: Request, ctx: { params: Promise<{ id: string }> 
       return { id: p.id, name: p.name };
     });
     await setTokenError(c.tokenId, null);
+    await saveSnapshots(ownerId, "pages", [{ key: `t:${c.tokenId}`, data: pages }]);
     return NextResponse.json({ pages });
   } catch (e) {
     const info = parseGraphError(e);

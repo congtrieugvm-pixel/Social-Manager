@@ -68,9 +68,9 @@ const MISSING_FILTERS: Array<{ key: CriterionKey; label: string }> = [
 ];
 
 const TARGET = { followers: 10_000, views28: 150_000, reels90: 3 };
-const CONCURRENCY = 6;
-const CACHE_MS = 10 * 60_000;
-const cache = new Map<string, { at: number; data: Monet }>();
+const CONCURRENCY = 8;
+// Saved results older than this are refreshed automatically.
+const STALE_MS = 2 * 60 * 60_000;
 
 const fmt = (n: number | null | undefined) => (n == null ? "—" : n.toLocaleString("vi-VN"));
 const smallBtn = { padding: "5px 10px", fontSize: 11 } as const;
@@ -180,8 +180,14 @@ export function MonetizationTab({
 }) {
   const [rows, setRows] = useState<Record<string, RowState>>({});
   const [progress, setProgress] = useState<{ done: number; total: number } | null>(null);
-  const [tick, setTick] = useState(0);
-  const freshRef = useRef(false);
+  const [savedAt, setSavedAt] = useState<Record<string, number>>({}); // page id → fetched (unix s)
+  const [booted, setBooted] = useState(false);
+  const savedAtRef = useRef(savedAt);
+  savedAtRef.current = savedAt;
+  const pagesRef = useRef(pages);
+  pagesRef.current = pages;
+  const loadingRef = useRef(false);
+  const lastFullRef = useRef(0);
   const runRef = useRef(0);
   const [cat, setCat] = useState<Category | "all">("all");
   const [missingKey, setMissingKey] = useState<CriterionKey | "">("");
@@ -203,65 +209,121 @@ export function MonetizationTab({
       }),
     [pages, assignments, groupById, group],
   );
-  const scopedKey = scoped.map((p) => p.id).join(",");
 
-  // Load the pages in scope (≤ 6 in flight, 10-minute cache).
-  useEffect(() => {
-    if (scoped.length === 0) return;
+  // Saved results show instantly (no Graph call). Graph is read for pages
+  // without a snapshot, when results are older than 2 hours (re-checked every
+  // 5 minutes while open), or on "Load kiếm tiền". Answers are saved server-side.
+  async function fetchMonet(list: Page[]) {
+    if (list.length === 0 || loadingRef.current) return;
+    loadingRef.current = true;
     const run = ++runRef.current;
-    const fresh = freshRef.current;
-    freshRef.current = false;
-    const now = Date.now();
-    const queue: Page[] = [];
-    const ready: Record<string, RowState> = {};
-    for (const p of scoped) {
-      const hit = cache.get(p.id);
-      if (!fresh && hit && now - hit.at < CACHE_MS) ready[p.id] = { status: "ok", data: hit.data };
-      else queue.push(p);
-    }
     setRows((prev) => {
-      const next = { ...prev, ...ready };
-      for (const p of queue) next[p.id] = { status: "loading" };
+      const next = { ...prev };
+      for (const p of list) if (next[p.id]?.status !== "ok") next[p.id] = { status: "loading" };
       return next;
     });
-    if (queue.length === 0) return setProgress(null);
     let done = 0;
-    setProgress({ done: 0, total: queue.length });
+    setProgress({ done: 0, total: list.length });
     const pending: Record<string, RowState> = {};
+    const pendingAt: Record<string, number> = {};
     let timer: ReturnType<typeof setTimeout> | null = null;
     const flush = () => {
       timer = null;
       const batch = { ...pending };
+      const at = { ...pendingAt };
       for (const k of Object.keys(pending)) delete pending[k];
-      if (Object.keys(batch).length) setRows((prev) => ({ ...prev, ...batch }));
-      if (runRef.current === run) setProgress({ done, total: queue.length });
-    };
-    runPool(queue, CONCURRENCY, async (p) => {
-      if (runRef.current !== run) return;
-      let state: RowState;
-      try {
-        const res = await fetch(`/api/insight/monetization?pageId=${p.id}&tokens=${p.tokenIds.join(",")}`, { cache: "no-store" });
-        const data = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
-        if (res.ok && !data.error) {
-          cache.set(p.id, { at: Date.now(), data });
-          state = { status: "ok", data };
-        } else state = { status: "error", error: data.error ?? `HTTP ${res.status}`, cooling: !!data.cooling };
-      } catch (e) {
-        state = { status: "error", error: e instanceof Error ? e.message : String(e) };
+      for (const k of Object.keys(pendingAt)) delete pendingAt[k];
+      // A failed refresh keeps the last good numbers.
+      if (Object.keys(batch).length) {
+        setRows((prev) => {
+          const next = { ...prev };
+          for (const [k, v] of Object.entries(batch)) if (!(v.status === "error" && prev[k]?.status === "ok")) next[k] = v;
+          return next;
+        });
       }
-      // Buffer results and repaint at most every 150 ms: one table render per
-      // answer (157 pages → 157 full re-renders) is what made phones stutter.
-      pending[p.id] = state;
-      if (runRef.current === run) done++;
-      if (!timer) timer = setTimeout(flush, 150);
-    }).then(() => {
+      if (Object.keys(at).length) setSavedAt((prev) => ({ ...prev, ...at }));
+      if (runRef.current === run) setProgress({ done, total: list.length });
+    };
+    try {
+      await runPool(list, CONCURRENCY, async (p) => {
+        let state: RowState;
+        try {
+          const res = await fetch(`/api/insight/monetization?pageId=${p.id}&tokens=${p.tokenIds.join(",")}`, { cache: "no-store" });
+          const data = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
+          if (res.ok && !data.error) {
+            state = { status: "ok", data };
+            pendingAt[p.id] = Math.floor(Date.now() / 1000);
+          } else state = { status: "error", error: data.error ?? `HTTP ${res.status}`, cooling: !!data.cooling };
+        } catch (e) {
+          state = { status: "error", error: e instanceof Error ? e.message : String(e) };
+        }
+        // Buffer results and repaint at most every 150 ms (smooth on phones).
+        pending[p.id] = state;
+        done++;
+        if (!timer) timer = setTimeout(flush, 150);
+      });
+    } finally {
       if (timer) clearTimeout(timer);
       flush();
       if (runRef.current === run) setProgress(null);
-    });
-    // scopedKey stands in for scoped.
+      loadingRef.current = false;
+    }
+  }
+
+  function isStale(): boolean {
+    if (Date.now() - lastFullRef.current < STALE_MS) return false;
+    const times = Object.values(savedAtRef.current);
+    return times.length > 0 && Date.now() / 1000 - Math.min(...times) > STALE_MS / 1000;
+  }
+
+  async function loadAll() {
+    lastFullRef.current = Date.now();
+    await fetchMonet(pagesRef.current);
+  }
+
+  // Saved snapshots first.
+  useEffect(() => {
+    (async () => {
+      try {
+        const res = await fetch("/api/insight/snapshots?kind=monet", { cache: "no-store" });
+        const data = (await res.json()) as { items?: Record<string, { data: Monet; fetchedAt: number }> };
+        const saved: Record<string, RowState> = {};
+        const at: Record<string, number> = {};
+        for (const [pid, v] of Object.entries(data.items ?? {})) {
+          saved[pid] = { status: "ok", data: v.data };
+          at[pid] = v.fetchedAt;
+        }
+        setRows(saved);
+        setSavedAt(at);
+      } catch {
+        // no snapshots — everything will be fetched
+      }
+      setBooted(true);
+    })();
+  }, []);
+
+  // Then only what's missing, or everything when stale.
+  const pagesKey = pages.map((p) => p.id).join(",");
+  useEffect(() => {
+    if (!booted || pages.length === 0) return;
+    if (isStale()) {
+      loadAll();
+      return;
+    }
+    fetchMonet(pages.filter((p) => !savedAtRef.current[p.id]));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [scopedKey, tick]);
+  }, [booted, pagesKey]);
+
+  // Auto-refresh every 2 hours while open.
+  useEffect(() => {
+    if (!booted) return;
+    const id = setInterval(() => {
+      if (document.visibilityState === "visible" && isStale()) loadAll();
+    }, 5 * 60_000);
+    return () => clearInterval(id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [booted]);
+
 
   function categorize(s: RowState | undefined): Category {
     if (!s || s.status === "loading") return "loading";
@@ -460,12 +522,10 @@ export function MonetizationTab({
           className="btn"
           style={smallBtn}
           disabled={!!progress}
-          onClick={() => {
-            freshRef.current = true;
-            setTick((t) => t + 1);
-          }}
+          onClick={() => loadAll()}
+          title="Đọc lại số liệu kiếm tiền của mọi Trang từ Facebook (tự động khi số liệu cũ hơn 2 giờ)"
         >
-          ↻ Kiểm tra lại
+          {progress ? `Đang tải ${progress.done}/${progress.total}…` : "⟳ Load kiếm tiền"}
         </button>
         <button className="btn" style={smallBtn} onClick={exportCsv} disabled={list.length === 0}>
           Xuất CSV

@@ -21,7 +21,7 @@
 // State lives in module memory (per Worker isolate / Node process) — a
 // best-effort cache; losing it only costs a few extra Graph calls.
 
-import { graphFetch, isAbuseError, parseGraphError } from "@/lib/facebook";
+import { graphBatch, graphFetch, isAbuseError, parseGraphError } from "@/lib/facebook";
 
 export type ReachRange = "today" | "7d" | "28d";
 
@@ -149,17 +149,12 @@ interface InsightResponse {
 
 type Series = Map<string, number>; // day → value
 
-async function fetchAllPeriods(
-  pageId: string,
-  metric: string,
-  pageToken: string,
-  now: Date,
-): Promise<Record<string, Series>> {
+function insightsPath(pageId: string, metric: string, now: Date): string {
   const nowSec = Math.floor(now.getTime() / 1000);
-  const data = await graphFetch<InsightResponse>(
-    `/${pageId}/insights?metric=${metric}&since=${nowSec - WINDOW_DAYS * DAY}&until=${nowSec + DAY}`,
-    pageToken,
-  );
+  return `/${pageId}/insights?metric=${metric}&since=${nowSec - WINDOW_DAYS * DAY}&until=${nowSec + DAY}`;
+}
+
+function parseSeries(data: InsightResponse): Record<string, Series> {
   const out: Record<string, Series> = {};
   for (const s of data.data ?? []) {
     const series: Series = out[s.period] ?? new Map();
@@ -169,6 +164,15 @@ async function fetchAllPeriods(
     out[s.period] = series;
   }
   return out;
+}
+
+async function fetchAllPeriods(
+  pageId: string,
+  metric: string,
+  pageToken: string,
+  now: Date,
+): Promise<Record<string, Series>> {
+  return parseSeries(await graphFetch<InsightResponse>(insightsPath(pageId, metric, now), pageToken));
 }
 
 function isInvalidMetric(e: unknown): boolean {
@@ -368,4 +372,120 @@ export async function fetchPageReach(
       "Thiếu quyền đọc Insights của Trang (read_insights / pages_read_engagement), " +
       `hoặc app chưa được Meta duyệt Advanced Access. Chi tiết: ${r.permissionError}`,
   };
+}
+
+// ---------------------------------------------------------------------------
+// Batch: many pages, one Graph call
+// ---------------------------------------------------------------------------
+
+export type BatchReachItem = ReachResult | { error: string; cooling?: boolean };
+
+/** Fill the page-token cache for a user token (one /me/accounts walk). */
+async function loadPageTokens(c: ReachCandidate): Promise<void> {
+  let path: string | null = "/me/accounts?fields=id,access_token&limit=100";
+  for (let i = 0; path && i < 10; i++) {
+    const d: { data?: Array<{ id: string; access_token?: string }>; paging?: { next?: string } } = await graphFetch(path, c.token);
+    for (const p of d.data ?? []) if (p.access_token) pageTokens.set(`${c.tokenId}:${p.id}`, p.access_token);
+    if (!d.paging?.next) break;
+    const u = new URL(d.paging.next);
+    u.searchParams.delete("access_token");
+    path = `${u.pathname.replace(/^\/v\d+\.\d+/, "")}${u.search}`;
+  }
+}
+
+function errorItem(e: unknown): BatchReachItem {
+  if (e instanceof CoolingError) return { error: e.message, cooling: true };
+  const info = parseGraphError(e);
+  return { error: `Lỗi Graph${info.code ? ` #${info.code}` : ""}: ${info.message}` };
+}
+
+/**
+ * Reach for up to 50 pages with ONE Graph Batch call (each item carries its
+ * own page token). Pages the batch does not answer cleanly (no cached token,
+ * invalid metric, rate limit, permission, transient error) fall back to the
+ * per-page path (fetchPageReach), which owns rotation, cooling and the
+ * metric fallback. Results keyed by page id.
+ */
+export async function fetchReachBatch(
+  items: Array<{ pageId: string; candidates: ReachCandidate[] }>,
+  now: Date = new Date(),
+): Promise<Record<string, BatchReachItem>> {
+  const out: Record<string, BatchReachItem> = {};
+  const list = items.slice(0, 50).filter((it) => {
+    if (it.candidates.length > 0) return true;
+    out[it.pageId] = { error: "Không có token nào đọc được Trang này" };
+    return false;
+  });
+  const nowMs = Date.now();
+  const ready = (c: ReachCandidate, pageId: string) =>
+    Math.max(cooling.get(`a:${c.tokenId}`) ?? 0, cooling.get(`p:${c.tokenId}:${pageId}`) ?? 0) <= nowMs;
+  const tokenOf = (c: ReachCandidate, pageId: string) =>
+    c.kind === "page" ? (c.fbId === pageId ? c.token : null) : pageTokens.get(`${c.tokenId}:${pageId}`) ?? null;
+
+  // Make sure every user token involved has its page tokens cached.
+  const userTokens = new Map<number, ReachCandidate>();
+  for (const it of list) {
+    for (const c of it.candidates) {
+      if (c.kind === "user" && ready(c, it.pageId) && !tokenOf(c, it.pageId)) userTokens.set(c.tokenId, c);
+    }
+  }
+  await Promise.all([...userTokens.values()].map((c) => loadPageTokens(c).catch(() => {})));
+
+  // One ready candidate with a page token per page (rotating = load balance).
+  const planned: Array<{ pageId: string; c: ReachCandidate; token: string; metric: string }> = [];
+  const fallback: typeof list = [];
+  for (const it of list) {
+    const pool = it.candidates.filter((c) => ready(c, it.pageId) && tokenOf(c, it.pageId));
+    if (pool.length === 0) {
+      fallback.push(it);
+      continue;
+    }
+    const turn = rotation.get(it.pageId) ?? 0;
+    rotation.set(it.pageId, turn + 1);
+    const c = pool[turn % pool.length];
+    planned.push({ pageId: it.pageId, c, token: tokenOf(c, it.pageId)!, metric: reachMetric.get(it.pageId) ?? REACH_METRICS[0] });
+  }
+
+  if (planned.length) {
+    let results: Awaited<ReturnType<typeof graphBatch<InsightResponse>>> | null = null;
+    try {
+      results = await graphBatch<InsightResponse>(
+        planned.map((p) => `${insightsPath(p.pageId, p.metric, now)}&access_token=${encodeURIComponent(p.token)}`),
+        planned[0].token,
+      );
+    } catch {
+      results = null; // whole batch failed: everyone takes the per-page path
+    }
+    planned.forEach((p, i) => {
+      const r = results?.[i];
+      if (r?.ok && r.data) {
+        reachMetric.set(p.pageId, p.metric);
+        out[p.pageId] = { metric: p.metric, via: p.c.label, ranges: buildRanges(parseSeries(r.data), now) };
+        return;
+      }
+      if (r?.error && isAbuseError(r.error)) {
+        const code = parseGraphError(r.error).code;
+        cooling.set(code === 32 || code === 368 ? `p:${p.c.tokenId}:${p.pageId}` : `a:${p.c.tokenId}`, Date.now() + COOL_MS);
+      }
+      if (r?.error && isTokenError(r.error)) pageTokens.delete(`${p.c.tokenId}:${p.pageId}`);
+      if (r?.error && isInvalidMetric(r.error) && reachMetric.get(p.pageId) === p.metric) reachMetric.delete(p.pageId);
+      fallback.push(list.find((it) => it.pageId === p.pageId)!);
+    });
+  }
+
+  // Per-page path for the rest (bounded so one request stays small).
+  let next = 0;
+  await Promise.all(
+    Array.from({ length: Math.min(4, fallback.length) }, async () => {
+      while (next < fallback.length) {
+        const it = fallback[next++];
+        try {
+          out[it.pageId] = await fetchPageReach(it.pageId, it.candidates, now);
+        } catch (e) {
+          out[it.pageId] = errorItem(e);
+        }
+      }
+    }),
+  );
+  return out;
 }

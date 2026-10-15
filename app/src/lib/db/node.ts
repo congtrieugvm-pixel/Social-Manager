@@ -193,6 +193,14 @@ export function initNodeDb(): BetterSQLite3Database<typeof schema> {
     );
     CREATE INDEX IF NOT EXISTS idx_insight_page_assignments_group
       ON insight_page_assignments(group_id);
+    CREATE TABLE IF NOT EXISTS insight_snapshots (
+      owner_user_id INTEGER NOT NULL REFERENCES app_users(id) ON DELETE CASCADE,
+      kind TEXT NOT NULL,
+      key TEXT NOT NULL,
+      data TEXT NOT NULL,
+      fetched_at INTEGER NOT NULL,
+      PRIMARY KEY (owner_user_id, kind, key)
+    );
   `);
 
   // Multi-tenant ownership column added in migration 0002. Local dev DBs

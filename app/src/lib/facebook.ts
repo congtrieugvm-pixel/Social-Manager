@@ -90,6 +90,54 @@ export async function graphFetch<T>(pathAndQuery: string, accessToken: string): 
   return data as T;
 }
 
+export interface BatchItemResult<T = unknown> {
+  ok: boolean;
+  /** Parsed body on success. */
+  data?: T;
+  /** Error carrying `.graph` (like graphFetch throws) on failure. */
+  error?: Error;
+}
+
+/**
+ * Graph Batch API: up to 50 GET requests in ONE HTTP call (each relative URL
+ * may carry its own access_token — e.g. a different page token per page).
+ * Measured live (2026-10): 54 pages' insights in ~1.3 s as 6 parallel
+ * batches of 10, vs one request per page. Returns one result per request, in
+ * order; a failed item never fails the others.
+ */
+export async function graphBatch<T>(relativeUrls: string[], accessToken: string): Promise<BatchItemResult<T>[]> {
+  if (relativeUrls.length > 50) throw new Error("Graph batch tối đa 50 request");
+  const res = await fetch(`${GRAPH_BASE}/`, {
+    method: "POST",
+    cache: "no-store",
+    headers: { "content-type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({
+      access_token: accessToken,
+      include_headers: "false",
+      batch: JSON.stringify(relativeUrls.map((u) => ({ method: "GET", relative_url: u.replace(/^\//, "") }))),
+    }),
+  });
+  const data = await res.json().catch(() => null);
+  if (!res.ok || !Array.isArray(data)) {
+    const raw = data?.error?.message ?? `Graph batch ${res.status} ${res.statusText}`;
+    const err = new Error(scrubGraphMessage(String(raw)));
+    (err as Error & { graph?: unknown }).graph = data?.error;
+    throw err;
+  }
+  return data.map((item: { code?: number; body?: string } | null) => {
+    let body: { error?: { message?: string } } | null = null;
+    try {
+      body = item?.body ? JSON.parse(item.body) : null;
+    } catch {
+      body = null;
+    }
+    if (item && item.code === 200 && body && !body.error) return { ok: true, data: body as T };
+    const err = new Error(scrubGraphMessage(String(body?.error?.message ?? `Graph ${item?.code ?? "?"}`)));
+    (err as Error & { graph?: unknown }).graph = body?.error ?? { code: item?.code === 0 || !item ? 2 : undefined };
+    return { ok: false, error: err };
+  });
+}
+
 export async function fetchMe(accessToken: string): Promise<FbUser> {
   // Identity-only — avatars are NOT taken from this response. App rule:
   // every avatar URL must be derived from a UID or username via

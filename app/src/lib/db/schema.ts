@@ -220,6 +220,19 @@ export const insightPageAssignments = sqliteTable("insight_page_assignments", {
     .references(() => insightPageGroups.id, { onDelete: "cascade" }),
 });
 
+// Last fetched Insight data per owner, so a page reload shows it instantly
+// instead of re-reading every page from Graph. kind: 'reach' | 'monet'
+// (key = page id) or 'pages' (key = "t:<tokenId>", the token's page list).
+export const insightSnapshots = sqliteTable("insight_snapshots", {
+  ownerUserId: integer("owner_user_id")
+    .notNull()
+    .references(() => appUsers.id, { onDelete: "cascade" }),
+  kind: text("kind").notNull(),
+  key: text("key").notNull(),
+  data: text("data").notNull(), // JSON
+  fetchedAt: integer("fetched_at").notNull(), // unix seconds
+});
+
 export type InsightToken = typeof insightTokens.$inferSelect;
 export type InsightPageGroup = typeof insightPageGroups.$inferSelect;
 

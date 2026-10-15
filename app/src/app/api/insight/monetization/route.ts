@@ -4,6 +4,7 @@ import { loadCandidates } from "@/lib/insight-tokens";
 import { parseGraphError } from "@/lib/facebook";
 import { CoolingError } from "@/lib/page-reach";
 import { fetchPageMonetization } from "@/lib/page-monetization";
+import { saveSnapshots } from "@/lib/insight-snapshots";
 import { errorResponse } from "../_util";
 
 // GET /api/insight/monetization?pageId=…&tokens=1,2
@@ -24,6 +25,7 @@ export async function GET(req: Request) {
       return NextResponse.json({ error: "Không có token nào đọc được Trang này" }, { status: 400 });
     }
     const result = await fetchPageMonetization(pageId, candidates);
+    await saveSnapshots(ownerId, "monet", [{ key: pageId, data: result }]);
     return NextResponse.json(result, { headers: { "Cache-Control": "no-store" } });
   } catch (e) {
     if (e instanceof CoolingError) {

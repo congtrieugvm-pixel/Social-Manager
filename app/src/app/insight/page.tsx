@@ -54,18 +54,23 @@ interface Reach {
 
 type RowState =
   | { status: "loading" }
-  | { status: "ok"; data: Reach }
+  | { status: "ok"; data: Reach; stale?: string }
   | { status: "error"; error: string; cooling?: boolean };
 
 type SortKey = "name" | "group" | "reach" | "change" | "via" | "status";
 
-const PAGE_CONCURRENCY = 6;
 const TOKEN_CONCURRENCY = 4;
-const CACHE_MS = 3 * 60_000;
+// Graph Batch: 10 pages per request, 6 requests in flight — measured fastest
+// live (54 pages ≈ 1.3 s). Graph allows ≤ 50 per batch.
+const BATCH_SIZE = 10;
+const BATCH_CONCURRENCY = 6;
+// Saved results older than this are refreshed automatically.
+const STALE_MS = 2 * 60 * 60_000;
 
-// Reach answers per page (all three ranges at once), 3 minutes. "Tải lại"
-// bypasses it. Module-level so it survives navigating away and back.
-const reachCache = new Map<string, { at: number; data: Reach }>();
+interface PageList {
+  pages: Array<{ id: string; name: string }>;
+  fetchedAt: number; // unix seconds
+}
 
 async function runPool<T>(items: T[], limit: number, fn: (item: T) => Promise<void>) {
   let next = 0;
@@ -126,6 +131,7 @@ function statusOf(s: RowState | undefined, range: Range): { label: string; tone:
     return s.cooling ? { label: "Bị giới hạn", tone: "err", title: s.error } : { label: "Lỗi", tone: "err", title: s.error };
   }
   if (s.data.unsupported) return { label: "Không hỗ trợ", tone: "err", title: s.data.reason };
+  if (s.stale) return { label: "Số cũ", tone: "muted", title: `Lần cập nhật gần nhất lỗi — đang hiện số đã lưu. ${s.stale}` };
   if (range === "today" && s.data.ranges.today.todayPending) {
     return { label: "Chưa có số", tone: "muted", title: "Facebook chưa cập nhật số liệu hôm nay" };
   }
@@ -189,9 +195,8 @@ export default function InsightPage() {
   const [tokens, setTokens] = useState<Token[] | null>(null);
   const [groups, setGroups] = useState<Group[]>([]);
   const [assignments, setAssignments] = useState<Record<string, number>>({});
-  const [pages, setPages] = useState<Page[]>([]);
+  const [pagesByToken, setPagesByToken] = useState<Record<number, PageList>>({});
   const [pagesProgress, setPagesProgress] = useState<{ done: number; total: number } | null>(null);
-  const [tokenPages, setTokenPages] = useState<Record<number, number>>({}); // token id → page count
   const [notice, setNotice] = useState<{ tone: "ok" | "err" | "warn"; text: string } | null>(null);
 
   const [range, setRange] = useState<Range>("7d");
@@ -199,79 +204,236 @@ export default function InsightPage() {
   const [search, setSearch] = useState("");
   const [rows, setRows] = useState<Record<string, RowState>>({});
   const [progress, setProgress] = useState<{ done: number; total: number } | null>(null);
-  const [reloadTick, setReloadTick] = useState(0);
-  const [pagesTick, setPagesTick] = useState(0);
+  const [reachAt, setReachAt] = useState<Record<string, number>>({}); // page id → fetched (unix s)
+  const [booted, setBooted] = useState(false);
+  const [loadingAll, setLoadingAll] = useState(false);
   const [sort, setSort] = useState<{ key: SortKey; dir: "asc" | "desc" }>({ key: "reach", dir: "desc" });
   const [checked, setChecked] = useState<Set<string>>(new Set());
   const [tab, setTab] = useState<"reach" | "monet" | "tokens">("reach");
   const [showGroups, setShowGroups] = useState(false);
   const [pickerGroupId, setPickerGroupId] = useState<number | null>(null);
-  const freshRef = useRef(false);
   const runRef = useRef(0);
+  const loadingRef = useRef(false);
+  const lastFullRef = useRef(0);
+  const savedReachRef = useRef<Record<string, Reach>>({});
   // Latest groups for callbacks that run right after creating a group (their
   // render-time closure doesn't know the new group yet).
   const groupsRef = useRef<Group[]>([]);
   groupsRef.current = groups;
 
   const storageKey = username ? `rmf_insight_${username}` : null;
+  const pagesByTokenRef = useRef(pagesByToken);
+  pagesByTokenRef.current = pagesByToken;
+  const reachAtRef = useRef(reachAt);
+  reachAtRef.current = reachAt;
+  const tokensRef = useRef(tokens);
+  tokensRef.current = tokens;
 
-  // --- bootstrap: user, tokens, groups --------------------------------------
+  const tokenKey = (tokens ?? []).map((t) => t.id).join(",");
+  // --- data loading ----------------------------------------------------------
+  // On open: show the saved snapshots right away (no Graph call). Graph is
+  // read only for pages that have no snapshot yet, when everything is older
+  // than 2 hours (also re-checked every 5 minutes while the tab is open), or
+  // when the user clicks "Load Insight". Reach goes through Graph Batch: 10
+  // pages per request, 6 requests in flight.
+
+  const pages = useMemo(() => {
+    const byId = new Map<string, Page>();
+    for (const t of tokens ?? []) {
+      for (const p of pagesByToken[t.id]?.pages ?? []) {
+        const cur = byId.get(p.id) ?? { id: p.id, name: p.name, tokenIds: [] };
+        if (!cur.tokenIds.includes(t.id)) cur.tokenIds.push(t.id);
+        byId.set(p.id, cur);
+      }
+    }
+    return [...byId.values()].sort((a, b) => a.name.localeCompare(b.name, "vi"));
+  }, [tokens, pagesByToken]);
+  const pagesRef = useRef(pages);
+  pagesRef.current = pages;
+  const tokenPages = useMemo(() => {
+    const out: Record<number, number> = {};
+    for (const [id, v] of Object.entries(pagesByToken)) out[Number(id)] = v.pages.length;
+    return out;
+  }, [pagesByToken]);
+
+  /** Read page lists from Graph for these tokens (and save them server-side). */
+  async function refreshLists(list: Token[]): Promise<Record<number, PageList>> {
+    const got: Record<number, PageList> = {};
+    const errors: Record<number, string> = {};
+    let done = 0;
+    setPagesProgress({ done: 0, total: list.length });
+    await runPool(list, TOKEN_CONCURRENCY, async (t) => {
+      const r = await api<{ pages: Array<{ id: string; name: string }> }>(`/api/insight/tokens/${t.id}/pages`);
+      if (r.ok) got[t.id] = { pages: r.data.pages, fetchedAt: Math.floor(Date.now() / 1000) };
+      else errors[t.id] = r.data.error ?? `Lỗi ${r.status}`;
+      setPagesProgress({ done: ++done, total: list.length });
+    });
+    setPagesByToken((prev) => ({ ...prev, ...got }));
+    setTokens((prev) => prev?.map((t) => (t.id in errors ? { ...t, lastError: errors[t.id] } : t.id in got ? { ...t, lastError: null } : t)) ?? prev);
+    setPagesProgress(null);
+    return got;
+  }
+
+  /** Reach for these pages via /api/insight/reach-batch (saved server-side). */
+  async function fetchReach(list: Page[]) {
+    if (list.length === 0) return;
+    const run = ++runRef.current;
+    const chunks: Page[][] = [];
+    for (let i = 0; i < list.length; i += BATCH_SIZE) chunks.push(list.slice(i, i + BATCH_SIZE));
+    setRows((prev) => {
+      const next = { ...prev };
+      // Keep showing the old numbers while refreshing; only blank pages spin.
+      for (const p of list) if (!next[p.id] || next[p.id].status !== "ok") next[p.id] = { status: "loading" };
+      return next;
+    });
+    let done = 0;
+    setProgress({ done: 0, total: list.length });
+    const pending: Record<string, RowState> = {};
+    const pendingAt: Record<string, number> = {};
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const flush = () => {
+      timer = null;
+      const batch = { ...pending };
+      const at = { ...pendingAt };
+      for (const k of Object.keys(pending)) delete pending[k];
+      for (const k of Object.keys(pendingAt)) delete pendingAt[k];
+      if (Object.keys(batch).length) setRows((prev) => ({ ...prev, ...batch }));
+      if (Object.keys(at).length) setReachAt((prev) => ({ ...prev, ...at }));
+      if (runRef.current === run) setProgress({ done, total: list.length });
+    };
+    await runPool(chunks, BATCH_CONCURRENCY, async (chunk) => {
+      const r = await api<{ results: Record<string, Reach | { error: string; cooling?: boolean }> }>("/api/insight/reach-batch", {
+        method: "POST",
+        body: { pages: chunk.map((p) => ({ pageId: p.id, tokens: p.tokenIds })) },
+      });
+      const now = Math.floor(Date.now() / 1000);
+      for (const p of chunk) {
+        const item = r.ok ? r.data.results?.[p.id] : undefined;
+        if (item && !("error" in item)) {
+          pending[p.id] = { status: "ok", data: item };
+          pendingAt[p.id] = now;
+          savedReachRef.current[p.id] = item;
+        } else {
+          const error = item && "error" in item ? item.error : r.data.error ?? `Lỗi ${r.status}`;
+          const cooling = !!(item && "error" in item && item.cooling);
+          // A failed refresh keeps the last good numbers.
+          pending[p.id] = { status: "error", error, cooling };
+        }
+      }
+      done += chunk.length;
+      if (!timer) timer = setTimeout(flush, 150);
+    });
+    if (timer) clearTimeout(timer);
+    flush();
+    // Failures of a refresh should not wipe saved numbers: put them back.
+    setRows((prev) => {
+      const next = { ...prev };
+      for (const p of list) {
+        const s = next[p.id];
+        const saved = savedReachRef.current[p.id];
+        if (s?.status === "error" && saved) next[p.id] = { status: "ok", data: saved, stale: s.error } as RowState;
+      }
+      return next;
+    });
+    if (runRef.current === run) setProgress(null);
+  }
+
+  /** "Load Insight": page lists + reach for every page, from Graph. */
+  async function loadAll() {
+    const tokens = tokensRef.current;
+    if (loadingRef.current || !tokens?.length) return;
+    loadingRef.current = true;
+    setLoadingAll(true);
+    try {
+      const got = await refreshLists(tokens);
+      const fresh = { ...pagesByTokenRef.current, ...got };
+      const byId = new Map<string, Page>();
+      for (const t of tokens) {
+        for (const p of fresh[t.id]?.pages ?? []) {
+          const cur = byId.get(p.id) ?? { id: p.id, name: p.name, tokenIds: [] };
+          if (!cur.tokenIds.includes(t.id)) cur.tokenIds.push(t.id);
+          byId.set(p.id, cur);
+        }
+      }
+      await fetchReach([...byId.values()]);
+      lastFullRef.current = Date.now();
+    } finally {
+      loadingRef.current = false;
+      setLoadingAll(false);
+    }
+  }
+
+  // Bootstrap: user, tokens, groups and every saved snapshot in parallel.
   useEffect(() => {
     (async () => {
-      const me = await api<{ user: { username: string } | null }>("/api/auth/me");
-      if (me.data.user) setUsername(me.data.user.username);
-      const [t, g] = await Promise.all([
+      const [me, t, g, sp, sr] = await Promise.all([
+        api<{ user: { username: string } | null }>("/api/auth/me"),
         api<{ tokens: Token[] }>("/api/insight/tokens"),
         api<{ groups: Group[]; assignments: Record<string, number> }>("/api/insight/groups"),
+        api<{ items: Record<string, { data: Array<{ id: string; name: string }>; fetchedAt: number }> }>("/api/insight/snapshots?kind=pages"),
+        api<{ items: Record<string, { data: Reach; fetchedAt: number }> }>("/api/insight/snapshots?kind=reach"),
       ]);
+      if (me.data.user) setUsername(me.data.user.username);
       if (!t.ok) setNotice({ tone: "err", text: t.data.error ?? "Không tải được token" });
-      setTokens(t.data.tokens ?? []);
-      if ((t.data.tokens ?? []).length === 0) setTab("tokens");
       if (g.ok) {
         setGroups(g.data.groups);
         setAssignments(g.data.assignments);
       }
+      const lists: Record<number, PageList> = {};
+      for (const [key, v] of Object.entries(sp.data.items ?? {})) {
+        const id = Number(key.replace(/^t:/, ""));
+        if (Number.isInteger(id)) lists[id] = { pages: v.data, fetchedAt: v.fetchedAt };
+      }
+      const savedRows: Record<string, RowState> = {};
+      const at: Record<string, number> = {};
+      for (const [pid, v] of Object.entries(sr.data.items ?? {})) {
+        savedRows[pid] = { status: "ok", data: v.data };
+        at[pid] = v.fetchedAt;
+        savedReachRef.current[pid] = v.data;
+      }
+      setPagesByToken(lists);
+      setRows(savedRows);
+      setReachAt(at);
+      setTokens(t.data.tokens ?? []);
+      if ((t.data.tokens ?? []).length === 0) setTab("tokens");
+      setBooted(true);
     })();
   }, []);
 
-  // --- pages of every token (re-run when tokens change) ----------------------
-  const tokenKey = (tokens ?? []).map((t) => t.id).join(",");
+  // After boot: fetch only what's missing; full refresh when stale (> 2 h).
   useEffect(() => {
-    if (!tokens) return;
-    let alive = true;
+    if (!booted || !tokens) return;
     (async () => {
-      const byId = new Map<string, Page>();
-      const counts: Record<number, number> = {};
-      const errors: Record<number, string> = {};
-      let done = 0;
-      setPagesProgress({ done: 0, total: tokens.length });
-      await runPool(tokens, TOKEN_CONCURRENCY, async (t) => {
-        const r = await api<{ pages: Array<{ id: string; name: string }> }>(`/api/insight/tokens/${t.id}/pages`);
-        if (r.ok) {
-          counts[t.id] = r.data.pages.length;
-          for (const p of r.data.pages) {
-            const cur = byId.get(p.id) ?? { id: p.id, name: p.name, tokenIds: [] };
-            if (!cur.tokenIds.includes(t.id)) cur.tokenIds.push(t.id);
-            byId.set(p.id, cur);
-          }
-        } else {
-          errors[t.id] = r.data.error ?? `Lỗi ${r.status}`;
-        }
-        done++;
-        if (alive) setPagesProgress({ done, total: tokens.length });
-      });
-      if (!alive) return;
-      setPages([...byId.values()].sort((a, b) => a.name.localeCompare(b.name, "vi")));
-      setTokenPages(counts);
-      setTokens((prev) => prev?.map((t) => (t.id in errors ? { ...t, lastError: errors[t.id] } : t.id in counts ? { ...t, lastError: null } : t)) ?? prev);
-      setPagesProgress(null);
+      const missingLists = tokens.filter((t) => !pagesByTokenRef.current[t.id]);
+      if (missingLists.length) await refreshLists(missingLists);
+      if (isStale()) return loadAll();
+      const missing = pagesRef.current.filter((p) => !reachAtRef.current[p.id]);
+      if (missing.length) await fetchReach(missing);
     })();
-    return () => {
-      alive = false;
-    };
-    // tokenKey stands in for tokens (ids only — label edits needn't refetch).
+    // Runs when the token set changes (boot, token added/removed).
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tokenKey, pagesTick]);
+  }, [booted, tokenKey]);
+
+  // Auto-refresh every 2 hours while the page is open.
+  useEffect(() => {
+    if (!booted) return;
+    const id = setInterval(() => {
+      if (document.visibilityState === "visible" && isStale()) loadAll();
+    }, 5 * 60_000);
+    return () => clearInterval(id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [booted, tokenKey]);
+
+  /** Oldest saved reach (or page list) older than 2 hours → refresh. */
+  function isStale(): boolean {
+    if (Date.now() - lastFullRef.current < STALE_MS) return false;
+    const times = [
+      ...Object.values(reachAtRef.current),
+      ...Object.values(pagesByTokenRef.current).map((v) => v.fetchedAt),
+    ];
+    if (times.length === 0) return false;
+    return Date.now() / 1000 - Math.min(...times) > STALE_MS / 1000;
+  }
 
   // --- remembered range + group filter, per user -----------------------------
   useEffect(() => {
@@ -329,73 +491,6 @@ export default function InsightPage() {
       return !term || p.name.toLowerCase().includes(term) || p.id.includes(term);
     });
   }, [pages, assignments, groupById, effectiveFilter, search]);
-  const visibleKey = visiblePages.map((p) => p.id).join(",");
-
-  // --- load reach for visible pages (≤ 6 in flight; all ranges per call) ----
-  useEffect(() => {
-    if (visiblePages.length === 0) {
-      setProgress(null);
-      return;
-    }
-    const run = ++runRef.current;
-    const fresh = freshRef.current;
-    freshRef.current = false;
-    const now = Date.now();
-    const queue: Page[] = [];
-    const ready: Record<string, RowState> = {};
-    for (const p of visiblePages) {
-      const hit = reachCache.get(p.id);
-      if (!fresh && hit && now - hit.at < CACHE_MS) ready[p.id] = { status: "ok", data: hit.data };
-      else queue.push(p);
-    }
-    setRows((prev) => {
-      const next = { ...prev, ...ready };
-      for (const p of queue) next[p.id] = { status: "loading" };
-      return next;
-    });
-    if (queue.length === 0) {
-      setProgress(null);
-      return;
-    }
-    let done = 0;
-    setProgress({ done: 0, total: queue.length });
-    const pending: Record<string, RowState> = {};
-    let timer: ReturnType<typeof setTimeout> | null = null;
-    const flush = () => {
-      timer = null;
-      const batch = { ...pending };
-      for (const k of Object.keys(pending)) delete pending[k];
-      if (Object.keys(batch).length) setRows((prev) => ({ ...prev, ...batch }));
-      if (runRef.current === run) setProgress({ done, total: queue.length });
-    };
-    runPool(queue, PAGE_CONCURRENCY, async (p) => {
-      if (runRef.current !== run) return;
-      const r = await api<Reach & { cooling?: boolean }>(`/api/insight/reach?pageId=${p.id}&tokens=${p.tokenIds.join(",")}`);
-      let state: RowState;
-      if (r.ok) {
-        reachCache.set(p.id, { at: Date.now(), data: r.data });
-        state = { status: "ok", data: r.data };
-      } else {
-        state = { status: "error", error: r.data.error ?? `Lỗi ${r.status}`, cooling: !!r.data.cooling };
-      }
-      // Buffer results and repaint at most every 150 ms: one table render per
-      // answer (157 pages → 157 full re-renders) is what made phones stutter.
-      pending[p.id] = state;
-      if (runRef.current === run) done++;
-      if (!timer) timer = setTimeout(flush, 150);
-    }).then(() => {
-      if (timer) clearTimeout(timer);
-      flush();
-      if (runRef.current === run) setProgress(null);
-    });
-    // visibleKey stands in for visiblePages (stable string identity).
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [visibleKey, reloadTick]);
-
-  function reload() {
-    freshRef.current = true;
-    setReloadTick((t) => t + 1);
-  }
 
   // --- tokens ---------------------------------------------------------------
   async function addToken(raw: string, label: string): Promise<boolean> {
@@ -409,7 +504,7 @@ export default function InsightPage() {
     }
     const t = r.data.token;
     setTokens((prev) => [t, ...(prev ?? []).filter((x) => x.id !== t.id)]);
-    if (r.data.replaced) setPagesTick((n) => n + 1);
+    if (r.data.replaced) void refreshLists([t]);
     setNotice(
       r.data.warning
         ? { tone: "warn", text: `Đã lưu token “${t.label}”. ${r.data.warning}` }
@@ -423,6 +518,11 @@ export default function InsightPage() {
     const r = await api(`/api/insight/tokens/${t.id}`, { method: "DELETE" });
     if (!r.ok) return setNotice({ tone: "err", text: r.data.error ?? "Không xóa được token" });
     setTokens((prev) => prev?.filter((x) => x.id !== t.id) ?? prev);
+    setPagesByToken((prev) => {
+      const next = { ...prev };
+      delete next[t.id];
+      return next;
+    });
     setNotice({ tone: "ok", text: `Đã xóa token “${t.label}”.` });
   }
 
@@ -615,6 +715,12 @@ export default function InsightPage() {
     setTimeout(() => URL.revokeObjectURL(a.href), 1000);
   }
 
+  const visibleTimes = visiblePages.map((p) => reachAt[p.id]).filter((t): t is number => !!t);
+  const oldest = visibleTimes.length ? Math.min(...visibleTimes) : null;
+  const updatedLabel = oldest
+    ? `Cập nhật ${new Date(oldest * 1000).toLocaleString("vi-VN", { hour: "2-digit", minute: "2-digit", day: "2-digit", month: "2-digit" })}`
+    : "Chưa tải số liệu";
+
   const filterName =
     effectiveFilter === "all" ? "Tất cả" : effectiveFilter === "none" ? "Chưa phân nhóm" : groupById.get(effectiveFilter)?.name ?? "Nhóm";
   const rangeDays = range === "7d" ? 7 : 28;
@@ -691,18 +797,18 @@ export default function InsightPage() {
             onRename={renameToken}
             onAssign={assign}
             onCreateGroup={createGroup}
-            onReloadPages={() => setPagesTick((n) => n + 1)}
+            onReloadPages={() => tokens && refreshLists(tokens)}
           />
         )
       ) : tab === "monet" ? (
-        tokens === null || pagesProgress ? (
+        tokens === null || !booted || (pagesProgress && pages.length === 0) ? (
           <div className="card mono" style={{ color: "var(--muted)", fontSize: 12 }}>
             {pagesProgress ? `Đang tải danh sách Trang ${pagesProgress.done}/${pagesProgress.total} token…` : "Đang tải…"}
           </div>
         ) : (
           <MonetizationTab pages={pages} groups={groups} assignments={assignments} username={username} />
         )
-      ) : tokens === null || pagesProgress ? (
+      ) : tokens === null || !booted || (pagesProgress && pages.length === 0) ? (
         <div className="card mono" style={{ color: "var(--muted)", fontSize: 12 }}>
           {pagesProgress ? `Đang tải danh sách Trang ${pagesProgress.done}/${pagesProgress.total} token…` : "Đang tải…"}
         </div>
@@ -765,17 +871,17 @@ export default function InsightPage() {
               {progress ? ` · Đang tải ${progress.done}/${progress.total} Trang…` : ""}
             </span>
             <span style={{ flex: 1 }} />
-            <button className="btn" style={smallBtn} onClick={reload} disabled={!!progress || visiblePages.length === 0}>
-              ↻ Tải lại
+            <span className="mono" style={{ fontSize: 11, color: "var(--muted)" }} title="Tự động cập nhật khi số liệu cũ hơn 2 giờ">
+              {updatedLabel}
+            </span>
+            <button className="btn btn-primary" style={smallBtn} onClick={() => loadAll()} disabled={loadingAll}>
+              {loadingAll ? (progress ? `Đang tải ${progress.done}/${progress.total}…` : "Đang tải…") : "⟳ Load Insight"}
             </button>
             {typeof effectiveFilter === "number" && (
               <button className="btn btn-primary" style={smallBtn} onClick={() => setPickerGroupId(effectiveFilter)}>
                 ＋ Thêm Trang vào nhóm
               </button>
             )}
-            <button className="btn" style={smallBtn} onClick={() => setPagesTick((n) => n + 1)} title="Đọc lại danh sách Trang từ token">
-              ↻ Danh sách Trang
-            </button>
             <button className="btn" style={smallBtn} onClick={exportCsv} disabled={tableRows.length === 0}>
               Xuất CSV
             </button>

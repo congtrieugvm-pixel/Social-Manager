@@ -3,6 +3,7 @@ import { getOwnerId } from "@/lib/scope";
 import { loadCandidates } from "@/lib/insight-tokens";
 import { parseGraphError } from "@/lib/facebook";
 import { CoolingError, fetchPageReach } from "@/lib/page-reach";
+import { saveSnapshots } from "@/lib/insight-snapshots";
 import { errorResponse } from "../_util";
 
 // GET /api/insight/reach?pageId=…&tokens=1,2
@@ -25,6 +26,7 @@ export async function GET(req: Request) {
       return NextResponse.json({ error: "Không có token nào đọc được Trang này" }, { status: 400 });
     }
     const result = await fetchPageReach(pageId, candidates);
+    await saveSnapshots(ownerId, "reach", [{ key: pageId, data: result }]);
     return NextResponse.json(result, { headers: { "Cache-Control": "no-store" } });
   } catch (e) {
     if (e instanceof CoolingError) {
