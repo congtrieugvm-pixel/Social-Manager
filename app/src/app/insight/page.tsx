@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { encodeBodyHeader } from "@/lib/req-body";
-import { BarChart, Sparkline, ddmm, type DayPoint } from "./charts";
+import { LineChart, Sparkline, ddmm, type DayPoint } from "./charts";
 import { MonetizationTab } from "./monetization-tab";
 
 type Range = "today" | "7d" | "28d";
@@ -833,27 +833,19 @@ export default function InsightPage() {
               </div>
 
               {range !== "today" && (
-                <section className="section">
-                  <div className="section-head">
-                    <div>
-                      <h2 className="h2-serif">
-                        Reach <em>theo ngày</em>
-                      </h2>
-                      <div className="section-label" style={{ marginTop: 4 }}>
-                        Tổng reach trong ngày · {filterName} · ngày theo giờ Thái Bình Dương
-                      </div>
+                <div className="card insight-chart">
+                  <div className="insight-chart-head">
+                    <span className="kpi-label">Reach theo ngày</span>
+                    <span className="section-label">{filterName} · giờ Thái Bình Dương</span>
+                  </div>
+                  {chartPoints.some((p) => p.value != null) ? (
+                    <LineChart points={chartPoints} />
+                  ) : (
+                    <div style={{ color: "var(--muted)", fontSize: 12, padding: "12px 0" }}>
+                      {progress ? "Đang tải…" : "Chưa có số liệu theo ngày."}
                     </div>
-                  </div>
-                  <div className="card" style={{ padding: "16px 18px 10px" }}>
-                    {chartPoints.some((p) => p.value != null) ? (
-                      <BarChart points={chartPoints} />
-                    ) : (
-                      <div style={{ color: "var(--muted)", fontSize: 12, padding: "24px 0" }}>
-                        {progress ? "Đang tải…" : "Chưa có số liệu theo ngày."}
-                      </div>
-                    )}
-                  </div>
-                </section>
+                  )}
+                </div>
               )}
 
               {checked.size > 0 && (

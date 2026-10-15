@@ -1428,3 +1428,38 @@ a.btn {
     animation-duration: 0.01ms !important;
   }
 }
+
+/* Insight · compact overview so the page list gets the screen */
+.insight-kpis {
+  margin-bottom: 12px;
+}
+.insight-kpis .kpi {
+  padding: 12px 16px;
+  gap: 6px;
+}
+.insight-kpis .kpi-num.insight-num {
+  font-size: 22px;
+}
+.insight-chart {
+  padding: 10px 14px 6px;
+  margin-bottom: 12px;
+}
+.insight-chart-head {
+  display: flex;
+  gap: 10px;
+  align-items: baseline;
+  flex-wrap: wrap;
+  margin-bottom: 4px;
+}
+/* The page list fills the viewport (header stays visible while scrolling).
+   Desktop only — phones keep a single page scroll (see mobile block). */
+@media (min-width: 769px) {
+  .insight-table-wrap {
+    max-height: calc(100vh - 96px);
+  }
+}
+/* Denser page rows → more pages per screen. */
+.insight-table tbody td {
+  padding-top: 6px;
+  padding-bottom: 6px;
+}

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 export interface DayPoint {
   date: string; // YYYY-MM-DD
@@ -13,111 +13,130 @@ export function ddmm(date: string): string {
 
 const fmt = (n: number) => n.toLocaleString("vi-VN");
 
-// Column chart of daily reach. One series → one color (--accent), no legend;
-// the section title names it. Columns ≤ 24px wide, 4px rounded data-end,
-// square at the baseline; hover shows a tooltip, hit target = whole slot.
-export function BarChart({ points }: { points: DayPoint[] }) {
+// Compact line chart of daily reach. Fixed pixel height (it used to scale
+// with the width — ~450px tall on a wide screen); the width is measured so
+// text never stretches. One series → one color (--accent), no legend; the
+// section title names it. Hover: crosshair + marker + tooltip; nulls (day
+// not published yet) break the line.
+export function LineChart({ points, height = 120 }: { points: DayPoint[]; height?: number }) {
+  const ref = useRef<HTMLDivElement>(null);
+  const [width, setWidth] = useState(0);
   const [hover, setHover] = useState<number | null>(null);
-  const W = 840;
-  const H = 190;
-  const top = 26;
-  const bottom = 24;
-  const base = H - bottom;
+
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const ro = new ResizeObserver(([e]) => setWidth(Math.round(e.contentRect.width)));
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+
+  const padL = 4;
+  const padR = 4;
+  const top = 16;
+  const bottom = 20;
+  const H = height;
+  const W = Math.max(width, 1);
   const n = points.length;
-  const slot = W / Math.max(n, 1);
-  const barW = Math.max(4, Math.min(24, slot - 2));
+  const plotW = W - padL - padR;
+  const base = H - bottom;
   const max = Math.max(0, ...points.map((p) => p.value ?? 0));
-  const scale = max > 0 ? (base - top) / max : 0;
-  const labelEvery = n > 14 ? 4 : 1;
-  const maxIdx = points.findIndex((p) => p.value === max && max > 0);
+  const x = (i: number) => padL + (n <= 1 ? plotW / 2 : (i / (n - 1)) * plotW);
+  const y = (v: number) => (max > 0 ? base - (v / max) * (base - top) : base);
 
-  const bar = (x: number, y: number, w: number) => {
-    const h = base - y;
-    const r = Math.min(4, w / 2, h);
-    return `M${x},${base} V${y + r} Q${x},${y} ${x + r},${y} H${x + w - r} Q${x + w},${y} ${x + w},${y + r} V${base} Z`;
+  // Line + area, broken at nulls.
+  let line = "";
+  let area = "";
+  let seg: Array<[number, number]> = [];
+  const flush = () => {
+    if (seg.length === 0) return;
+    line += seg.map(([px, py], i) => `${i ? "L" : "M"}${px.toFixed(1)},${py.toFixed(1)}`).join(" ") + " ";
+    area += `M${seg[0][0].toFixed(1)},${base} ` + seg.map(([px, py]) => `L${px.toFixed(1)},${py.toFixed(1)}`).join(" ") + ` L${seg[seg.length - 1][0].toFixed(1)},${base} Z `;
+    seg = [];
   };
+  points.forEach((p, i) => {
+    if (p.value == null) flush();
+    else seg.push([x(i), y(p.value)]);
+  });
+  flush();
 
+  const maxIdx = points.findIndex((p) => p.value === max && max > 0);
+  // Room-based label thinning: roughly one date label per 56px.
+  const every = Math.max(1, Math.ceil(n / Math.max(1, Math.floor(plotW / 56))));
   const hovered = hover !== null ? points[hover] : null;
 
+  function onMove(e: React.MouseEvent<SVGSVGElement>) {
+    if (n === 0) return;
+    const rect = e.currentTarget.getBoundingClientRect();
+    const rel = (e.clientX - rect.left - padL) / Math.max(plotW, 1);
+    setHover(Math.min(n - 1, Math.max(0, Math.round(rel * (n - 1)))));
+  }
+
   return (
-    <div style={{ position: "relative" }}>
-      <svg
-        viewBox={`0 0 ${W} ${H}`}
-        width="100%"
-        role="img"
-        aria-label="Biểu đồ reach theo ngày"
-        style={{ display: "block", overflow: "visible" }}
-        onMouseLeave={() => setHover(null)}
-      >
-        <line x1={0} x2={W} y1={top} y2={top} stroke="var(--line)" strokeDasharray="2 4" />
-        <line x1={0} x2={W} y1={base} y2={base} stroke="var(--line-strong)" />
-        {points.map((p, i) => {
-          const cx = slot * i + slot / 2;
-          const x = cx - barW / 2;
-          const v = p.value ?? 0;
-          const y = base - v * scale;
-          return (
-            <g key={p.date}>
-              {v > 0 && (
-                <path
-                  d={bar(x, y, barW)}
-                  fill="var(--accent)"
-                  opacity={hover === null || hover === i ? 1 : 0.45}
-                />
+    <div ref={ref} style={{ position: "relative", width: "100%", height: H }}>
+      {width > 0 && (
+        <svg
+          width={W}
+          height={H}
+          role="img"
+          aria-label="Biểu đồ reach theo ngày"
+          style={{ display: "block", overflow: "visible" }}
+          onMouseMove={onMove}
+          onMouseLeave={() => setHover(null)}
+        >
+          <line x1={padL} x2={W - padR} y1={top} y2={top} stroke="var(--line)" strokeDasharray="2 4" />
+          <line x1={padL} x2={W - padR} y1={base} y2={base} stroke="var(--line-strong)" />
+          <path d={area} fill="var(--accent-soft)" stroke="none" />
+          <path d={line} fill="none" stroke="var(--accent)" strokeWidth={2} strokeLinejoin="round" strokeLinecap="round" />
+          {maxIdx >= 0 && (
+            <text
+              x={Math.min(Math.max(x(maxIdx), 24), W - 24)}
+              y={y(max) - 6}
+              textAnchor="middle"
+              fill="var(--ink-soft)"
+              fontSize={10}
+              fontFamily="var(--font-mono)"
+            >
+              {fmt(max)}
+            </text>
+          )}
+          {points.map((p, i) =>
+            i % every === 0 || i === n - 1 ? (
+              <text
+                key={p.date}
+                x={x(i)}
+                y={H - 5}
+                textAnchor={i === 0 ? "start" : i === n - 1 ? "end" : "middle"}
+                fill="var(--muted)"
+                fontSize={10}
+                fontFamily="var(--font-mono)"
+              >
+                {ddmm(p.date)}
+              </text>
+            ) : null,
+          )}
+          {hovered && hover !== null && (
+            <g pointerEvents="none">
+              <line x1={x(hover)} x2={x(hover)} y1={top} y2={base} stroke="var(--line-strong)" />
+              {hovered.value != null && (
+                <circle cx={x(hover)} cy={y(hovered.value)} r={4.5} fill="var(--accent)" stroke="var(--paper)" strokeWidth={2} />
               )}
-              {p.value === null && (
-                <text x={cx} y={base - 4} textAnchor="middle" fill="var(--dim)" fontSize={10}>
-                  —
-                </text>
-              )}
-              {i === maxIdx && (
-                <text
-                  x={cx}
-                  y={y - 6}
-                  textAnchor="middle"
-                  fill="var(--ink-soft)"
-                  fontSize={10}
-                  fontFamily="var(--font-mono)"
-                >
-                  {fmt(v)}
-                </text>
-              )}
-              {(i % labelEvery === 0 || i === n - 1) && (
-                <text
-                  x={cx}
-                  y={H - 6}
-                  textAnchor="middle"
-                  fill="var(--muted)"
-                  fontSize={10}
-                  fontFamily="var(--font-mono)"
-                >
-                  {ddmm(p.date)}
-                </text>
-              )}
-              <rect
-                x={slot * i}
-                y={0}
-                width={slot}
-                height={H}
-                fill="transparent"
-                onMouseEnter={() => setHover(i)}
-              />
             </g>
-          );
-        })}
-      </svg>
+          )}
+        </svg>
+      )}
       {hovered && hover !== null && (
         <div
           className="mono"
           style={{
             position: "absolute",
             top: 0,
-            left: `${((hover + 0.5) / n) * 100}%`,
-            transform: `translateX(${hover > n / 2 ? "-100%" : "0"})`,
+            left: x(hover),
+            transform: `translateX(${hover > n / 2 ? "calc(-100% - 10px)" : "10px"})`,
             background: "var(--bg-3)",
             border: "1px solid var(--line-strong)",
             borderRadius: 6,
-            padding: "6px 10px",
+            padding: "5px 9px",
             fontSize: 11,
             color: "var(--ink)",
             pointerEvents: "none",
