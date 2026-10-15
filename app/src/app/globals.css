@@ -1463,3 +1463,28 @@ a.btn {
   padding-top: 6px;
   padding-bottom: 6px;
 }
+
+.monet-earn-days {
+  margin-top: 10px;
+  font-size: 12px;
+  max-width: 560px;
+}
+.monet-earn-days summary {
+  cursor: pointer;
+  color: var(--accent-hover);
+  font-weight: 600;
+}
+.monet-earn-days table {
+  margin-top: 6px;
+  border-collapse: collapse;
+  min-width: 220px;
+}
+.monet-earn-days td {
+  padding: 2px 12px 2px 0;
+  border-bottom: 1px solid var(--line);
+}
+.monet-earn-note {
+  margin-top: 8px;
+  color: var(--muted);
+  line-height: 1.5;
+}

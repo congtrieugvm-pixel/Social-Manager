@@ -41,6 +41,9 @@ interface Monet {
   met: number;
   measurable: number;
   earnings90: { micros: number; currency: string | null; days: number } | null;
+  earningsDaily?: Array<{ date: string; micros: number }> | null;
+  earningsCurrency?: string | null;
+  approxDaily?: Array<{ date: string; value: number }> | null;
   watchMinutes60: number | null;
   newFollowers28: number | null;
   missing: string[];
@@ -53,7 +56,7 @@ type RowState = { status: "loading" } | { status: "ok"; data: Monet } | { status
 type Category = "earning" | "full" | "miss1" | "miss2" | "error" | "loading";
 
 const CATS: Array<{ key: Category; label: string; color: string; hint: string }> = [
-  { key: "earning", label: "Đang kiếm tiền", color: "var(--good)", hint: "Có thu nhập Kiếm tiền từ nội dung trong 90 ngày" },
+  { key: "earning", label: "Đang kiếm tiền", color: "var(--good)", hint: "Có doanh thu Kiếm tiền từ nội dung trong 15 ngày gần nhất" },
   { key: "full", label: "Đủ 4/4 tiêu chí", color: "var(--accent)", hint: "Đạt cả 4 tiêu chí đo được của danh sách chờ — vào Business Suite xem lời mời" },
   { key: "miss1", label: "Thiếu 1 tiêu chí", color: "var(--warn)", hint: "Đạt 3/4 tiêu chí đo được" },
   { key: "miss2", label: "Thiếu 2+ tiêu chí", color: "var(--muted)", hint: "Đạt 2/4 tiêu chí trở xuống" },
@@ -74,6 +77,54 @@ const STALE_MS = 2 * 60 * 60_000;
 
 const fmt = (n: number | null | undefined) => (n == null ? "—" : n.toLocaleString("vi-VN"));
 const smallBtn = { padding: "5px 10px", fontSize: 11 } as const;
+
+type EarnPeriod = "today" | "7d" | "30d";
+const EARN_PERIODS: Array<{ key: EarnPeriod; label: string; days: number }> = [
+  { key: "today", label: "Hôm nay", days: 1 },
+  { key: "7d", label: "7 ngày", days: 7 },
+  { key: "30d", label: "30 ngày", days: 30 },
+];
+// A page counts as "Đang kiếm tiền" only if it earned within this many days.
+const ACTIVE_EARN_DAYS = 15;
+
+// Insights days are Pacific-time days (same as Meta's dashboard).
+const pacific = new Intl.DateTimeFormat("en-CA", { timeZone: "America/Los_Angeles", year: "numeric", month: "2-digit", day: "2-digit" });
+function shiftDay(date: string, n: number): string {
+  const d = new Date(`${date}T12:00:00Z`);
+  d.setUTCDate(d.getUTCDate() + n);
+  return d.toISOString().slice(0, 10);
+}
+const ddmm = (d: string) => `${d.slice(8, 10)}/${d.slice(5, 7)}`;
+
+/** [first, last] Pacific dates of a period ending today. */
+function periodRange(p: EarnPeriod): [string, string] {
+  const today = pacific.format(new Date());
+  const days = EARN_PERIODS.find((x) => x.key === p)!.days;
+  return [shiftDay(today, -(days - 1)), today];
+}
+
+/** Content Monetization earnings in the period (micros), null if unknown. */
+function earnIn(d: Monet | null | undefined, p: EarnPeriod): number | null {
+  if (!d?.earningsDaily) return null;
+  const [from, to] = periodRange(p);
+  return d.earningsDaily.reduce((a, x) => (x.date >= from && x.date <= to ? a + x.micros : a), 0);
+}
+
+function approxIn(d: Monet | null | undefined, p: EarnPeriod): number | null {
+  if (!d?.approxDaily) return null;
+  const [from, to] = periodRange(p);
+  return d.approxDaily.reduce((a, x) => (x.date >= from && x.date <= to ? a + x.value : a), 0);
+}
+
+function lastEarnDate(d: Monet | null | undefined): string | null {
+  const days = d?.earningsDaily?.filter((x) => x.micros > 0) ?? [];
+  return days.length ? days[days.length - 1].date : null;
+}
+
+function fmtMicros(micros: number | null, currency: string | null | undefined): string {
+  if (micros == null) return "—";
+  return `${(micros / 1_000_000).toLocaleString("vi-VN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ${currency ?? "USD"}`;
+}
 
 function money(e: Monet["earnings90"]): string {
   if (!e) return "—";
@@ -124,8 +175,14 @@ function Bar({ value, target }: { value: number | null; target: number }) {
 }
 
 /** The expanded row: Meta's "Kiếm tiền từ nội dung" waitlist card. */
-function WaitlistCard({ page, data }: { page: Page; data: Monet }) {
+function WaitlistCard({ page, data, period }: { page: Page; data: Monet; period: EarnPeriod }) {
   const [open, setOpen] = useState(true);
+  const [from, to] = periodRange("30d");
+  const days30 = (data.earningsDaily ?? []).filter((x) => x.date >= from && x.date <= to).reverse();
+  const last = lastEarnDate(data);
+  const active = !!last && last >= shiftDay(pacific.format(new Date()), -(ACTIVE_EARN_DAYS - 1));
+  const label = EARN_PERIODS.find((x) => x.key === period)!.label;
+  const [pFrom, pTo] = periodRange(period);
   return (
     <div className="monet-card">
       <div className="monet-card-head">
@@ -135,10 +192,42 @@ function WaitlistCard({ page, data }: { page: Page; data: Monet }) {
         <div style={{ flex: 1, minWidth: 0 }}>
           <div className="monet-card-title">Kiếm tiền từ nội dung</div>
           <div className="monet-card-text">
-            {(data.earnings90?.micros ?? 0) > 0
-              ? `Trang đang có thu nhập: ${money(data.earnings90)} trong 90 ngày (${data.earnings90!.days} ngày có tiền).`
+            {last
+              ? `Doanh thu ${label.toLowerCase()} (${ddmm(pFrom)}–${ddmm(pTo)}): ${fmtMicros(earnIn(data, period), data.earningsCurrency)}. Ngày có doanh thu gần nhất: ${ddmm(last)}${active ? "" : ` — đã hơn ${ACTIVE_EARN_DAYS} ngày không có doanh thu`}.`
               : "Chương trình này hiện chỉ dành cho người được mời. Việc đáp ứng tiêu chí của danh sách chờ không đảm bảo quyền tham gia chương trình."}
           </div>
+          {data.earningsDaily && (
+            <details className="monet-earn-days">
+              <summary>Doanh thu theo ngày (30 ngày, giờ Thái Bình Dương)</summary>
+              {days30.some((x) => x.micros > 0) ? (
+                <table>
+                  <tbody>
+                    {days30.map((x) => (
+                      <tr key={x.date}>
+                        <td>{ddmm(x.date)}</td>
+                        <td className="insight-num" style={{ color: x.micros > 0 ? "var(--good)" : "var(--dim)" }}>
+                          {fmtMicros(x.micros, data.earningsCurrency)}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              ) : (
+                <div style={{ color: "var(--muted)", padding: "6px 0" }}>Không có doanh thu trong 30 ngày.</div>
+              )}
+              <div className="monet-earn-note">
+                Số từ metric content_monetization_earnings của Meta — là <b>ước tính</b>, Meta có thể điều chỉnh sau khi xét
+                duyệt nội dung / bản quyền. Hôm nay thường chưa đủ số.
+                {approxIn(data, period) != null && (
+                  <>
+                    {" "}
+                    “Thu nhập xấp xỉ mọi nguồn trừ bonus” (monetization_approximate_earnings) {label.toLowerCase()}:{" "}
+                    {approxIn(data, period)!.toLocaleString("vi-VN", { maximumFractionDigits: 2 })} (Meta không ghi đơn vị).
+                  </>
+                )}
+              </div>
+            </details>
+          )}
           <button className="monet-card-toggle" onClick={() => setOpen((o) => !o)} aria-expanded={open}>
             Tiêu chí của danh sách chờ {open ? "▼" : "▶"}
           </button>
@@ -158,7 +247,7 @@ function WaitlistCard({ page, data }: { page: Page; data: Monet }) {
           )}
         </div>
         <div className="monet-card-side">
-          <div>{(data.earnings90?.micros ?? 0) > 0 ? "Đang kiếm tiền" : "Chỉ dành cho người được mời"}</div>
+          <div>{active ? "Đang kiếm tiền" : last ? "Không có doanh thu > 15 ngày" : "Chỉ dành cho người được mời"}</div>
           <a href={monetizationUrl(page.id)} target="_blank" rel="noreferrer" className="btn" style={{ ...smallBtn, textDecoration: "none", marginTop: 8 }}>
             Xem lời mời trong Business Suite ↗
           </a>
@@ -172,6 +261,7 @@ export function MonetizationTab({
   pages,
   groups,
   assignments,
+  username,
 }: {
   pages: Page[];
   groups: Group[];
@@ -179,6 +269,33 @@ export function MonetizationTab({
   username?: string | null;
 }) {
   const [rows, setRows] = useState<Record<string, RowState>>({});
+  const periodKey = username ? `rmf_insight_earn_${username}` : null;
+  // Read the remembered period on mount (no flash of the default).
+  const [period, setPeriod] = useState<EarnPeriod>(() => {
+    try {
+      const v = periodKey ? (localStorage.getItem(periodKey) as EarnPeriod | null) : null;
+      return v && EARN_PERIODS.some((x) => x.key === v) ? v : "30d";
+    } catch {
+      return "30d";
+    }
+  });
+  useEffect(() => {
+    if (!periodKey) return;
+    try {
+      const v = localStorage.getItem(periodKey) as EarnPeriod | null;
+      if (v && EARN_PERIODS.some((x) => x.key === v)) setPeriod(v);
+    } catch {
+      // storage unavailable
+    }
+  }, [periodKey]);
+  function choosePeriod(p: EarnPeriod) {
+    setPeriod(p);
+    try {
+      if (periodKey) localStorage.setItem(periodKey, p);
+    } catch {
+      // ignore
+    }
+  }
   const [progress, setProgress] = useState<{ done: number; total: number } | null>(null);
   const [savedAt, setSavedAt] = useState<Record<string, number>>({}); // page id → fetched (unix s)
   const [booted, setBooted] = useState(false);
@@ -188,6 +305,8 @@ export function MonetizationTab({
   pagesRef.current = pages;
   const loadingRef = useRef(false);
   const lastFullRef = useRef(0);
+  // Snapshots saved before daily earnings existed — refetch them once.
+  const needsDailyRef = useRef<Set<string>>(new Set());
   const runRef = useRef(0);
   const [cat, setCat] = useState<Category | "all">("all");
   const [missingKey, setMissingKey] = useState<CriterionKey | "">("");
@@ -292,6 +411,9 @@ export function MonetizationTab({
         for (const [pid, v] of Object.entries(data.items ?? {})) {
           saved[pid] = { status: "ok", data: v.data };
           at[pid] = v.fetchedAt;
+          // Saved before daily earnings existed (key absent) — refetch once. A
+          // present-but-null value means Graph has no earnings metric for it.
+          if (!("earningsDaily" in v.data) && !v.data.unsupported) needsDailyRef.current.add(pid);
         }
         setRows(saved);
         setSavedAt(at);
@@ -310,7 +432,7 @@ export function MonetizationTab({
       loadAll();
       return;
     }
-    fetchMonet(pages.filter((p) => !savedAtRef.current[p.id]));
+    fetchMonet(pages.filter((p) => !savedAtRef.current[p.id] || needsDailyRef.current.has(p.id)));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [booted, pagesKey]);
 
@@ -328,7 +450,10 @@ export function MonetizationTab({
   function categorize(s: RowState | undefined): Category {
     if (!s || s.status === "loading") return "loading";
     if (s.status === "error" || s.data.unsupported) return "error";
-    if ((s.data.earnings90?.micros ?? 0) > 0) return "earning";
+    const last = lastEarnDate(s.data);
+    if (last && last >= shiftDay(pacific.format(new Date()), -(ACTIVE_EARN_DAYS - 1))) return "earning";
+    // Old snapshot without daily data: fall back to the 90-day total.
+    if (!s.data.earningsDaily && (s.data.earnings90?.micros ?? 0) > 0) return "earning";
     const missingCount = s.data.measurable - s.data.met;
     if (missingCount <= 0) return "full";
     if (missingCount === 1) return "miss1";
@@ -366,7 +491,7 @@ export function MonetizationTab({
           case "reels":
             return r.data?.reels90 ?? null;
           case "earn":
-            return r.data?.earnings90?.micros ?? null;
+            return earnIn(r.data, period) ?? r.data?.earnings90?.micros ?? null;
         }
       };
       const va = v(a);
@@ -411,7 +536,7 @@ export function MonetizationTab({
     const crit = (r: (typeof all)[number], k: CriterionKey) => yn(r.data?.criteria.find((c) => c.key === k)?.met);
     const head = [
       "Trang", "Page ID", "Nhóm", "Phân loại", "Đạt tiêu chí", "Thước phim 90 ngày", "TC thước phim", "Người theo dõi", "TC người theo dõi",
-      "Lượt xem riêng biệt 28 ngày", "TC lượt xem", "TC Trang ≥30 ngày", "Quốc gia (địa chỉ Trang)", "Thu nhập 90 ngày", "Tiền tệ",
+      "Lượt xem riêng biệt 28 ngày", "TC lượt xem", "TC Trang ≥30 ngày", "Quốc gia (địa chỉ Trang)", `Thu nhập ${EARN_PERIODS.find((x) => x.key === period)!.label} (${periodRange(period).map(ddmm).join("–")})`, "Tiền tệ", "Ngày có doanh thu gần nhất",
     ];
     const lines = list.map((r) =>
       [
@@ -428,8 +553,9 @@ export function MonetizationTab({
         crit(r, "views"),
         crit(r, "pageAge"),
         r.data?.country ?? null,
-        r.data?.earnings90 ? (r.data.earnings90.micros / 1_000_000).toFixed(2) : null,
-        r.data?.earnings90?.currency ?? null,
+        earnIn(r.data, period) != null ? (earnIn(r.data, period)! / 1_000_000).toFixed(2) : null,
+        r.data?.earningsCurrency ?? r.data?.earnings90?.currency ?? null,
+        lastEarnDate(r.data),
       ]
         .map(esc)
         .join(","),
@@ -485,6 +611,22 @@ export function MonetizationTab({
           onChange={(e) => setSearch(e.target.value)}
           style={{ flex: "1 1 200px", maxWidth: 280 }}
         />
+        <div className="btn-group" role="tablist" aria-label="Kỳ doanh thu" title="Kỳ tính doanh thu (ngày theo giờ Thái Bình Dương như Meta)">
+          {EARN_PERIODS.map((p) => (
+            <button
+              key={p.key}
+              role="tab"
+              aria-selected={period === p.key}
+              className={`btn-seg${period === p.key ? " active" : ""}`}
+              onClick={() => choosePeriod(p.key)}
+            >
+              {p.label}
+            </button>
+          ))}
+        </div>
+        <span className="mono" style={{ fontSize: 10, color: "var(--muted)" }}>
+          {periodRange(period).map(ddmm).join("–")}
+        </span>
         <select
           className="input"
           aria-label="Lọc tiêu chí còn thiếu"
@@ -545,7 +687,7 @@ export function MonetizationTab({
               <th className="right" style={{ whiteSpace: "nowrap" }}>
                 Trang ≥30 ngày
               </th>
-              {th("earn", "Thu nhập 90 ngày")}
+              {th("earn", `Thu nhập ${EARN_PERIODS.find((x) => x.key === period)!.label}`)}
               <th />
             </tr>
           </thead>
@@ -604,8 +746,8 @@ export function MonetizationTab({
                     <td className="right">{r.data ? <Bar value={r.data.followers} target={TARGET.followers} /> : "—"}</td>
                     <td className="right">{r.data ? <Bar value={r.data.views28} target={TARGET.views28} /> : "—"}</td>
                     <td className="right">{r.data && r.data.pageOlderThan30 !== null ? <Mark met={r.data.pageOlderThan30} /> : "—"}</td>
-                    <td className="right insight-num" style={{ fontSize: 12, color: (r.data?.earnings90?.micros ?? 0) > 0 ? "var(--good)" : undefined }}>
-                      {money(r.data?.earnings90 ?? null)}
+                    <td className="right insight-num" style={{ fontSize: 12, color: (earnIn(r.data, period) ?? 0) > 0 ? "var(--good)" : undefined }}>
+                      {r.data?.earningsDaily ? fmtMicros(earnIn(r.data, period), r.data.earningsCurrency) : money(r.data?.earnings90 ?? null)}
                     </td>
                     <td className="right">
                       <a
@@ -624,7 +766,7 @@ export function MonetizationTab({
                   {isOpen && r.data && (
                     <tr className="monet-detail">
                       <td colSpan={9}>
-                        <WaitlistCard page={r.page} data={r.data} />
+                        <WaitlistCard page={r.page} data={r.data} period={period} />
                       </td>
                     </tr>
                   )}

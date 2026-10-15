@@ -29,6 +29,9 @@ const REEL_PAGES_MAX = 3; // ≤ 300 reels scanned — plenty to count "≥ 3 in
 
 const METRICS = [
   "content_monetization_earnings",
+  // All revenue sources except bonuses; a bare number (Meta: different
+  // scale from content_monetization_earnings) — shown for reference.
+  "monetization_approximate_earnings",
   "page_video_view_time",
   "page_video_views",
   "page_daily_follows_unique",
@@ -61,6 +64,11 @@ export interface MonetizationResult {
   measurable: number;
   /** Content Monetization earnings over the last 90 days. */
   earnings90: { micros: number; currency: string | null; days: number } | null;
+  /** content_monetization_earnings per Pacific day (90 days, incl. today). */
+  earningsDaily: Array<{ date: string; micros: number }> | null;
+  earningsCurrency: string | null;
+  /** monetization_approximate_earnings per Pacific day (bare number). */
+  approxDaily: Array<{ date: string; value: number }> | null;
   watchMinutes60: number | null;
   newFollowers28: number | null;
   /** Data points Graph refused for this page (shown as "—"). */
@@ -83,7 +91,7 @@ async function optional<T>(name: string, missing: string[], fn: () => Promise<T>
 }
 
 async function fetchSeries(pageId: string, pageToken: string, nowSec: number, missing: string[]) {
-  const qs = `period=day&since=${nowSec - WINDOW_DAYS * DAY}&until=${nowSec}`;
+  const qs = `period=day&since=${nowSec - WINDOW_DAYS * DAY}&until=${nowSec + DAY}`;
   const out: Record<string, Values> = {};
   try {
     const d = await graphFetch<{ data?: Array<{ name: string; values?: Values }> }>(
@@ -124,6 +132,17 @@ async function countReels90(pageId: string, pageToken: string, nowSec: number): 
     path = `${u.pathname.replace(/^\/v\d+\.\d+/, "")}${u.search}`;
   }
   return count;
+}
+
+// Insights end_time = midnight Pacific at the END of the day the value covers.
+const pacificDate = new Intl.DateTimeFormat("en-CA", {
+  timeZone: "America/Los_Angeles",
+  year: "numeric",
+  month: "2-digit",
+  day: "2-digit",
+});
+function dayOf(endTime: string): string {
+  return pacificDate.format(new Date(new Date(endTime).getTime() - 12 * 3600_000));
 }
 
 function sumLast(values: Values | undefined, days: number, nowSec: number): number | null {
@@ -234,6 +253,9 @@ export async function fetchPageMonetization(
       met: 0,
       measurable: 4,
       earnings90: null,
+      earningsDaily: null,
+      earningsCurrency: null,
+      approxDaily: null,
       watchMinutes60: null,
       newFollowers28: null,
       missing: [...METRICS],
@@ -246,18 +268,30 @@ export async function fetchPageMonetization(
 
   const { page, series, views, reels90, oldPost, missing } = r.value;
   let earnings90: MonetizationResult["earnings90"] = null;
+  let earningsDaily: MonetizationResult["earningsDaily"] = null;
+  let currency: string | null = null;
   if (!missing.includes("content_monetization_earnings")) {
     let micros = 0;
     let days = 0;
-    let currency: string | null = null;
+    const byDay = new Map<string, number>();
     for (const v of series.content_monetization_earnings ?? []) {
       const val = v.value as { microAmount?: number; currency?: string } | number | null;
       const m = typeof val === "number" ? Math.round(val * 1_000_000) : val?.microAmount ?? 0;
       if (val && typeof val === "object" && val.currency) currency = val.currency;
       if (m > 0) days++;
       micros += m;
+      byDay.set(dayOf(v.end_time), m);
     }
     earnings90 = { micros, currency, days };
+    earningsDaily = [...byDay.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([date, micros]) => ({ date, micros }));
+  }
+  let approxDaily: MonetizationResult["approxDaily"] = null;
+  if (!missing.includes("monetization_approximate_earnings")) {
+    const byDay = new Map<string, number>();
+    for (const v of series.monetization_approximate_earnings ?? []) {
+      if (typeof v.value === "number") byDay.set(dayOf(v.end_time), v.value);
+    }
+    approxDaily = [...byDay.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([date, value]) => ({ date, value }));
   }
   const viewMs = missing.includes("page_video_view_time") ? null : sumLast(series.page_video_view_time, 60, nowSec);
   const views28Raw = views?.data?.[0]?.values?.filter((v) => typeof v.value === "number").at(-1)?.value;
@@ -279,6 +313,9 @@ export async function fetchPageMonetization(
     met: measured.filter((c) => c.met === true).length,
     measurable: measured.length,
     earnings90,
+    earningsDaily,
+    earningsCurrency: currency,
+    approxDaily,
     watchMinutes60: viewMs === null ? null : Math.round(viewMs / 60_000),
     newFollowers28: missing.includes("page_daily_follows_unique") ? null : sumLast(series.page_daily_follows_unique, 28, nowSec),
     missing,
