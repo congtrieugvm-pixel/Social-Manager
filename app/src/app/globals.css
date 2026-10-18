@@ -1488,3 +1488,25 @@ a.btn {
   color: var(--muted);
   line-height: 1.5;
 }
+
+/* Insight · Nội dung */
+.insight-post-msg {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  font-size: 13px;
+  color: var(--ink);
+  line-height: 1.4;
+}
+.insight-content-groups tbody tr:hover {
+  background: var(--bg-2);
+}
+.insight-group-stats {
+  display: inline-flex;
+  gap: 8px;
+  align-items: center;
+  font-size: 11px;
+  color: var(--muted);
+  flex-wrap: wrap;
+}

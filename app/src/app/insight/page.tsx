@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { encodeBodyHeader } from "@/lib/req-body";
 import { LineChart, Sparkline, ddmm, type DayPoint } from "./charts";
 import { MonetizationTab } from "./monetization-tab";
+import { ContentTab } from "./content-tab";
 
 type Range = "today" | "7d" | "28d";
 type Filter = "all" | "none" | number; // number = group id
@@ -209,7 +210,7 @@ export default function InsightPage() {
   const [loadingAll, setLoadingAll] = useState(false);
   const [sort, setSort] = useState<{ key: SortKey; dir: "asc" | "desc" }>({ key: "reach", dir: "desc" });
   const [checked, setChecked] = useState<Set<string>>(new Set());
-  const [tab, setTab] = useState<"reach" | "monet" | "tokens">("reach");
+  const [tab, setTab] = useState<"reach" | "content" | "monet" | "tokens">("reach");
   const [showGroups, setShowGroups] = useState(false);
   const [pickerGroupId, setPickerGroupId] = useState<number | null>(null);
   const runRef = useRef(0);
@@ -721,6 +722,33 @@ export default function InsightPage() {
     ? `Cập nhật ${new Date(oldest * 1000).toLocaleString("vi-VN", { hour: "2-digit", minute: "2-digit", day: "2-digit", month: "2-digit" })}`
     : "Chưa tải số liệu";
 
+  // Reach of each group (sum of its pages) vs the previous period — shown in
+  // the group manager with a rating. Only pages with both numbers count.
+  const groupStats = useMemo(() => {
+    const out: Record<number, GroupStat> = {};
+    for (const g of groups) {
+      const ids = pages.filter((p) => assignments[p.id] === g.id).map((p) => p.id);
+      const acc = { r7: 0, p7: 0, r28: 0, p28: 0, n: 0 };
+      for (const id of ids) {
+        const st = rows[id];
+        if (st?.status !== "ok" || st.data.unsupported) continue;
+        const w = st.data.ranges["7d"];
+        const m = st.data.ranges["28d"];
+        if (w.reach != null && w.prev != null) {
+          acc.r7 += w.reach;
+          acc.p7 += w.prev;
+          acc.n++;
+        }
+        if (m.reach != null && m.prev != null) {
+          acc.r28 += m.reach;
+          acc.p28 += m.prev;
+        }
+      }
+      out[g.id] = { reach7: acc.r7, change7: pct(acc.r7, acc.p7), reach28: acc.r28, change28: pct(acc.r28, acc.p28), pagesWithData: acc.n };
+    }
+    return out;
+  }, [groups, pages, assignments, rows]);
+
   const filterName =
     effectiveFilter === "all" ? "Tất cả" : effectiveFilter === "none" ? "Chưa phân nhóm" : groupById.get(effectiveFilter)?.name ?? "Nhóm";
   const rangeDays = range === "7d" ? 7 : 28;
@@ -739,6 +767,9 @@ export default function InsightPage() {
           <div className="btn-group" role="tablist" aria-label="Chọn tab">
             <button role="tab" aria-selected={tab === "reach"} className={`btn-seg${tab === "reach" ? " active" : ""}`} onClick={() => setTab("reach")}>
               Reach
+            </button>
+            <button role="tab" aria-selected={tab === "content"} className={`btn-seg${tab === "content" ? " active" : ""}`} onClick={() => setTab("content")}>
+              Nội dung
             </button>
             <button role="tab" aria-selected={tab === "monet"} className={`btn-seg${tab === "monet" ? " active" : ""}`} onClick={() => setTab("monet")}>
               Kiếm tiền
@@ -800,6 +831,12 @@ export default function InsightPage() {
             onReloadPages={() => tokens && refreshLists(tokens)}
           />
         )
+      ) : tab === "content" ? (
+        tokens === null || !booted || (pagesProgress && pages.length === 0) ? (
+          <div className="card mono" style={{ color: "var(--muted)", fontSize: 12 }}>Đang tải…</div>
+        ) : (
+          <ContentTab pages={pages} groups={groups} assignments={assignments} username={username} />
+        )
       ) : tab === "monet" ? (
         tokens === null || !booted || (pagesProgress && pages.length === 0) ? (
           <div className="card mono" style={{ color: "var(--muted)", fontSize: 12 }}>
@@ -853,7 +890,7 @@ export default function InsightPage() {
               </button>
             </div>
             {showGroups && (
-              <GroupManager groups={groups} counts={counts.byGroup} pages={pages} assignments={assignments} onCreate={createGroup} onUpdate={updateGroup} onDelete={deleteGroup} onAssign={assign} />
+              <GroupManager groups={groups} counts={counts.byGroup} pages={pages} assignments={assignments} stats={groupStats} onCreate={createGroup} onUpdate={updateGroup} onDelete={deleteGroup} onAssign={assign} />
             )}
           </section>
 
@@ -1323,11 +1360,51 @@ function PagePicker({
   );
 }
 
+interface GroupStat {
+  reach7: number;
+  change7: number | null;
+  reach28: number;
+  change28: number | null;
+  pagesWithData: number;
+}
+
+/** Group performance from reach: ≥ +10% Tốt, ≤ −10% Giảm, else Ổn định. */
+function groupRating(change: number | null): { label: string; color: string } {
+  if (change == null) return { label: "Chưa đủ dữ liệu", color: "var(--muted)" };
+  if (change >= 10) return { label: "Tốt", color: "var(--good)" };
+  if (change <= -10) return { label: "Giảm", color: "var(--danger)" };
+  return { label: "Ổn định", color: "var(--warn)" };
+}
+
+function GroupStatChips({ stat }: { stat: GroupStat | undefined }) {
+  if (!stat || stat.pagesWithData === 0) {
+    return <span className="mono" style={{ fontSize: 10, color: "var(--dim)" }}>chưa có số reach</span>;
+  }
+  const r = groupRating(stat.change7);
+  // Same formatting as the rest of Insight: near-zero changes are neutral.
+  const ch = (v: number | null) => changeView(v).text;
+  const col = (v: number | null) => changeView(v).color;
+  return (
+    <span className="insight-group-stats" title={`Tổng reach các Trang trong nhóm so với kỳ trước (${stat.pagesWithData} Trang có số). Đánh giá theo 7 ngày: ≥ +10% Tốt, ≤ −10% Giảm.`}>
+      <span className="mono">
+        7N {stat.reach7.toLocaleString("vi-VN")} <b style={{ color: col(stat.change7) }}>{ch(stat.change7)}</b>
+      </span>
+      <span className="mono">
+        28N <b style={{ color: col(stat.change28) }}>{ch(stat.change28)}</b>
+      </span>
+      <span className="pill" style={{ color: r.color, borderColor: "currentColor" }}>
+        {r.label}
+      </span>
+    </span>
+  );
+}
+
 function GroupManager({
   groups,
   counts,
   pages,
   assignments,
+  stats,
   onCreate,
   onUpdate,
   onDelete,
@@ -1337,6 +1414,7 @@ function GroupManager({
   counts: Record<number, number>;
   pages: Page[];
   assignments: Record<string, number>;
+  stats: Record<number, GroupStat>;
   onCreate: (name: string, color: string) => Promise<Group | null>;
   onUpdate: (id: number, patch: { name?: string; color?: string }) => void;
   onDelete: (g: Group) => void;
@@ -1440,6 +1518,7 @@ function GroupManager({
                   >
                     {n} Trang {n > 0 ? (openGroup === g.id ? "▴" : "▾") : ""}
                   </button>
+                  <GroupStatChips stat={stats[g.id]} />
                   <button className="btn btn-primary" style={{ padding: "3px 8px", fontSize: 11 }} onClick={() => setPicker(g.id)}>
                     ＋ Thêm Trang
                   </button>

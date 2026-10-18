@@ -3,7 +3,7 @@ import { getOwnerId } from "@/lib/scope";
 import { loadSnapshots, type SnapshotKind } from "@/lib/insight-snapshots";
 import { errorResponse } from "../_util";
 
-const KINDS: SnapshotKind[] = ["reach", "monet", "pages"];
+const KINDS: SnapshotKind[] = ["reach", "monet", "pages", "posts"];
 
 // GET /api/insight/snapshots?kind=reach|monet|pages
 // → { items: { [key]: { data, fetchedAt } }, now } — last saved results, no Graph call.

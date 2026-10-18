@@ -489,3 +489,93 @@ export async function fetchReachBatch(
   );
   return out;
 }
+
+/**
+ * Generic per-page Graph read for many pages in ONE Batch call — same token
+ * choice / rotation / cooling as Reach. `pathFor(pageId)` is the relative
+ * Graph path (no token); pages the batch can't answer go through
+ * withPageToken one by one. Used by the Nội dung (posts) tab.
+ */
+export async function fetchPageBatch<T>(
+  items: Array<{ pageId: string; candidates: ReachCandidate[] }>,
+  pathFor: (pageId: string) => string,
+  parse: (data: unknown) => T,
+): Promise<Record<string, T | { error: string; cooling?: boolean }>> {
+  const out: Record<string, T | { error: string; cooling?: boolean }> = {};
+  const list = items.slice(0, 50).filter((it) => {
+    if (it.candidates.length > 0) return true;
+    out[it.pageId] = { error: "Không có token nào đọc được Trang này" };
+    return false;
+  });
+  const nowMs = Date.now();
+  const ready = (c: ReachCandidate, pageId: string) =>
+    Math.max(cooling.get(`a:${c.tokenId}`) ?? 0, cooling.get(`p:${c.tokenId}:${pageId}`) ?? 0) <= nowMs;
+  const tokenOf = (c: ReachCandidate, pageId: string) =>
+    c.kind === "page" ? (c.fbId === pageId ? c.token : null) : pageTokens.get(`${c.tokenId}:${pageId}`) ?? null;
+
+  const userTokens = new Map<number, ReachCandidate>();
+  for (const it of list) {
+    for (const c of it.candidates) {
+      if (c.kind === "user" && ready(c, it.pageId) && !tokenOf(c, it.pageId)) userTokens.set(c.tokenId, c);
+    }
+  }
+  await Promise.all([...userTokens.values()].map((c) => loadPageTokens(c).catch(() => {})));
+
+  const planned: Array<{ pageId: string; c: ReachCandidate; token: string }> = [];
+  const fallback: typeof list = [];
+  for (const it of list) {
+    const pool = it.candidates.filter((c) => ready(c, it.pageId) && tokenOf(c, it.pageId));
+    if (pool.length === 0) {
+      fallback.push(it);
+      continue;
+    }
+    const turn = rotation.get(it.pageId) ?? 0;
+    rotation.set(it.pageId, turn + 1);
+    const c = pool[turn % pool.length];
+    planned.push({ pageId: it.pageId, c, token: tokenOf(c, it.pageId)! });
+  }
+
+  if (planned.length) {
+    let results: Awaited<ReturnType<typeof graphBatch<unknown>>> | null = null;
+    try {
+      results = await graphBatch<unknown>(
+        planned.map((p) => {
+          const path = pathFor(p.pageId);
+          return `${path}${path.includes("?") ? "&" : "?"}access_token=${encodeURIComponent(p.token)}`;
+        }),
+        planned[0].token,
+      );
+    } catch {
+      results = null;
+    }
+    planned.forEach((p, i) => {
+      const r = results?.[i];
+      if (r?.ok && r.data !== undefined) {
+        out[p.pageId] = parse(r.data);
+        return;
+      }
+      if (r?.error && isAbuseError(r.error)) {
+        const code = parseGraphError(r.error).code;
+        cooling.set(code === 32 || code === 368 ? `p:${p.c.tokenId}:${p.pageId}` : `a:${p.c.tokenId}`, Date.now() + COOL_MS);
+      }
+      if (r?.error && isTokenError(r.error)) pageTokens.delete(`${p.c.tokenId}:${p.pageId}`);
+      fallback.push(list.find((it) => it.pageId === p.pageId)!);
+    });
+  }
+
+  let next = 0;
+  await Promise.all(
+    Array.from({ length: Math.min(4, fallback.length) }, async () => {
+      while (next < fallback.length) {
+        const it = fallback[next++];
+        try {
+          const r = await withPageToken(it.pageId, it.candidates, (token) => graphFetch<unknown>(pathFor(it.pageId), token));
+          out[it.pageId] = "value" in r ? parse(r.value) : { error: `Thiếu quyền đọc Trang: ${r.permissionError}` };
+        } catch (e) {
+          out[it.pageId] = errorItem(e) as { error: string; cooling?: boolean };
+        }
+      }
+    }),
+  );
+  return out;
+}

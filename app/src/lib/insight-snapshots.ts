@@ -5,7 +5,7 @@ import { and, eq, sql } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { insightSnapshots } from "@/lib/db/schema";
 
-export type SnapshotKind = "reach" | "monet" | "pages";
+export type SnapshotKind = "reach" | "monet" | "pages" | "posts";
 
 // D1 caps bound parameters at 100 per statement: 5 per row → 18 rows/insert.
 const ROWS_PER_INSERT = 18;
