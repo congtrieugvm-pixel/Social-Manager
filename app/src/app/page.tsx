@@ -226,6 +226,7 @@ export default function Dashboard() {
   const [selected, setSelected] = useState<Set<number>>(new Set());
   const [loading, setLoading] = useState(false);
   const [action, setAction] = useState<string | null>(null);
+  const [fetchProgress, setFetchProgress] = useState<{ done: number; total: number; retry?: boolean } | null>(null);
   const [detail, setDetail] = useState<DetailResponse | null>(null);
   const [search, setSearch] = useState("");
   const [pickFrom, setPickFrom] = useState<number>(1);
@@ -402,20 +403,67 @@ export default function Dashboard() {
       return;
     }
     setAction(endpoint);
+    setFetchProgress({ done: 0, total: ids.length });
+    type Res = { id: number; username?: string; ok: boolean; error?: string; retryable?: boolean };
+    const final = new Map<number, Res>();
+    // Small chunks (the server takes ≤ 5 per call — Worker subrequest limit),
+    // 3 calls in flight. Accounts TikTok refused only temporarily get a
+    // second round after a pause.
+    const runRound = async (list: number[], countProgress: boolean) => {
+      const chunks: number[][] = [];
+      for (let i = 0; i < list.length; i += 4) chunks.push(list.slice(i, i + 4));
+      let next = 0;
+      await Promise.all(
+        Array.from({ length: Math.min(3, chunks.length) }, async () => {
+          while (next < chunks.length) {
+            const chunk = chunks[next++];
+            let results: Res[];
+            try {
+              const res = await fetch(`/api/accounts/${endpoint}`, {
+                method: "POST",
+                headers: { "X-Body": encodeBodyHeader({ ids: chunk }) },
+              });
+              const data = (await res.json().catch(() => ({}))) as { results?: Res[]; error?: string };
+              results = data.results ?? chunk.map((id) => ({ id, ok: false, retryable: true, error: data.error ?? `HTTP ${res.status}` }));
+            } catch (e) {
+              results = chunk.map((id) => ({ id, ok: false, retryable: true, error: e instanceof Error ? e.message : String(e) }));
+            }
+            for (const r of results) final.set(r.id, r);
+            if (countProgress) setFetchProgress((p) => (p ? { ...p, done: p.done + chunk.length } : p));
+          }
+        }),
+      );
+    };
     try {
-      const res = await fetch(`/api/accounts/${endpoint}`, {
-        method: "POST",
-        headers: { "X-Body": JSON.stringify({ ids }) },
-      });
-      const data = await res.json();
-      alert(`Hoàn tất: ${data.success}/${data.total} thành công · ${data.failed} lỗi`);
+      await runRound(ids, true);
+      const retry = ids.filter((id) => final.get(id)?.ok === false && final.get(id)?.retryable !== false);
+      if (retry.length > 0) {
+        setFetchProgress({ done: 0, total: retry.length, retry: true });
+        await new Promise((r) => setTimeout(r, 2000));
+        await runRound(retry, true);
+      }
+      const all = ids.map((id) => final.get(id)).filter((r): r is Res => !!r);
+      const failed = all.filter((r) => !r.ok);
+      if (failed.length === 0) {
+        alert(`Hoàn tất: ${all.length}/${all.length} thành công`);
+      } else {
+        const lines = failed.slice(0, 8).map((r) => `• ${r.username ?? `#${r.id}`}: ${r.error ?? "lỗi"}`);
+        if (failed.length > 8) lines.push(`… và ${failed.length - 8} tài khoản khác`);
+        alert(`Hoàn tất: ${all.length - failed.length}/${all.length} thành công\n\nChưa lấy được:\n${lines.join("\n")}`);
+      }
       await load();
-    } catch (e) {
-      alert("Lỗi: " + (e instanceof Error ? e.message : String(e)));
     } finally {
       setAction(null);
+      setFetchProgress(null);
     }
   }
+
+  const fetchLabel = (endpoint: string, idle: string) =>
+    action !== endpoint
+      ? idle
+      : fetchProgress
+        ? `${fetchProgress.retry ? "Thử lại" : "Đang lấy"} ${fetchProgress.done}/${fetchProgress.total}…`
+        : "Đang lấy…";
 
   async function moveSelectedToGroup(newGroupId: number | null) {
     const ids = Array.from(selected);
@@ -1139,7 +1187,7 @@ export default function Dashboard() {
                 ...prev,
                 fetchAction: null,
                 fetchMessage: null,
-                fetchError: result?.error ?? "Lỗi không xác định",
+                fetchError: result?.error ?? data.error ?? "Lỗi không xác định",
               }
             : prev,
         );
@@ -1347,7 +1395,7 @@ export default function Dashboard() {
               className="btn btn-accent"
               style={{ padding: "6px 12px", fontSize: 10, flexShrink: 0 }}
             >
-              {action === "fetch-follow" ? "Đang lấy…" : "Lấy Follow"}
+              {fetchLabel("fetch-follow", "Lấy Follow")}
             </button>
             <button
               onClick={() => runFetchBulk("fetch-avatar")}
@@ -1356,7 +1404,7 @@ export default function Dashboard() {
               className="btn"
               style={{ padding: "6px 12px", fontSize: 10, flexShrink: 0 }}
             >
-              {action === "fetch-avatar" ? "Đang lấy…" : "Lấy AVT"}
+              {fetchLabel("fetch-avatar", "Lấy AVT")}
             </button>
             <button
               onClick={() => runFetchBulk("fetch-videos")}
@@ -1364,7 +1412,7 @@ export default function Dashboard() {
               className="btn btn-primary"
               style={{ padding: "6px 12px", fontSize: 10, flexShrink: 0 }}
             >
-              {action === "fetch-videos" ? "Đang lấy…" : "Lấy Video"}
+              {fetchLabel("fetch-videos", "Lấy Video")}
             </button>
             <button
               onClick={triggerAutoFetch}

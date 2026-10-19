@@ -24,3 +24,10 @@ migrations_dir = "drizzle/migrations"
 [vars]
 APP_RUNTIME = "cloudflare"
 INITIAL_ADMIN_USERNAME = "admin"
+
+# ── TikTok fetch proxy (workers/tiktok-fetcher) ──────────────────
+# TikTok redirects requests from Hong Kong colos; src/lib/tiktok.ts sends
+# TikTok page fetches through this Worker's NA/EU Durable Objects.
+[[services]]
+binding = "TIKTOK_FETCHER"
+service = "social-manager-tiktok"

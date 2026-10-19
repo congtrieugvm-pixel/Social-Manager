@@ -1,0 +1,21 @@
+# TikTok fetch proxy. The main Worker runs in the Cloudflare colo nearest the
+# user — for Vietnam that is often HKG, and TikTok answers every request from
+# Hong Kong with a redirect to /hk/about (x-tt-system-error: 30). This Worker
+# forwards TikTok page requests to a Durable Object pinned (locationHint) to
+# North America / Europe, so the fetch never leaves from Hong Kong.
+# Reachable only through the main Worker's service binding (no public URL).
+# Deployed by CI before the main Worker: `npx wrangler deploy -c workers/tiktok-fetcher/wrangler.toml`.
+name = "social-manager-tiktok"
+main = "index.js"
+compatibility_date = "2026-04-01"
+workers_dev = false
+preview_urls = false
+
+[[durable_objects.bindings]]
+name = "FETCHER"
+class_name = "TikTokFetcher"
+
+# SQLite-backed class: the only kind the Workers Free plan allows.
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["TikTokFetcher"]
