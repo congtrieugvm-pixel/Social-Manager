@@ -233,6 +233,40 @@ export const insightSnapshots = sqliteTable("insight_snapshots", {
   fetchedAt: integer("fetched_at").notNull(), // unix seconds
 });
 
+// ---------------------------------------------------------------------------
+// Bookmark Key — YouTube channel bookmarks with "new video" badges.
+// ---------------------------------------------------------------------------
+
+export const ytGroups = sqliteTable("yt_groups", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  ownerUserId: integer("owner_user_id").references(() => appUsers.id, { onDelete: "cascade" }),
+  name: text("name").notNull(),
+  color: text("color").notNull().default("#5e6ad2"),
+  note: text("note"),
+  createdAt: integer("created_at", { mode: "timestamp" })
+    .notNull()
+    .default(sql`(unixepoch())`),
+});
+
+export const ytChannels = sqliteTable("yt_channels", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  ownerUserId: integer("owner_user_id").references(() => appUsers.id, { onDelete: "cascade" }),
+  channelId: text("channel_id").notNull(), // UC…
+  title: text("title").notNull(),
+  handle: text("handle"), // @name
+  avatar: text("avatar"),
+  groupId: integer("group_id").references(() => ytGroups.id, { onDelete: "set null" }),
+  note: text("note"),
+  // JSON: Array<{ id, title, published (ISO) }> — latest videos from the RSS feed.
+  videos: text("videos"),
+  lastSeenAt: integer("last_seen_at").notNull(), // unix s: videos after this are "new"
+  checkedAt: integer("checked_at"), // unix s: last feed read
+  checkError: text("check_error"),
+  createdAt: integer("created_at", { mode: "timestamp" })
+    .notNull()
+    .default(sql`(unixepoch())`),
+});
+
 export type InsightToken = typeof insightTokens.$inferSelect;
 export type InsightPageGroup = typeof insightPageGroups.$inferSelect;
 

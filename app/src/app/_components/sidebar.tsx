@@ -14,6 +14,7 @@ const nav: NavItem[] = [
   { href: "/", label: "Tài Khoản Tiktok" },
   { href: "/facebook", label: "Tài Khoản Facebook" },
   { href: "/insight", label: "Insight" },
+  { href: "/youtube", label: "Bookmark Key" },
 ];
 
 interface SidebarProps {
