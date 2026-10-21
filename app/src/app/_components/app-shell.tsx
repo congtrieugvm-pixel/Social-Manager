@@ -62,7 +62,8 @@ export function AppShell({ user, children }: AppShellProps) {
           <span />
         </button>
         <div className="mobile-topbar-brand">
-          Social<em>Manager</em>
+          <img src="/logo.png" alt="" className="brand-logo" />
+          <span>Social<em>Manager</em></span>
         </div>
       </header>
 

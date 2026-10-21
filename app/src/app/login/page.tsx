@@ -46,7 +46,8 @@ export default function LoginPage() {
     <div className="auth-card">
       <div style={{ marginBottom: 28 }}>
         <div className="brand" style={{ fontSize: 28 }}>
-          Social<em>Manager</em>
+          <img src="/logo.png" alt="" className="brand-logo" />
+          <span>Social<em>Manager</em></span>
         </div>
         <div className="brand-sub">Đăng nhập</div>
       </div>

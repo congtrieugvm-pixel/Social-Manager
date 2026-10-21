@@ -43,7 +43,8 @@ export function Sidebar({ user }: SidebarProps) {
     <aside className="sidebar">
       <div style={{ marginBottom: 28 }}>
         <div className="brand">
-          Social<em>Manager</em>
+          <img src="/logo.png" alt="" className="brand-logo" />
+          <span>Social<em>Manager</em></span>
         </div>
         <div className="brand-sub">Account Management</div>
       </div>
