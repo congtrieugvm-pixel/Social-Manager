@@ -1588,3 +1588,47 @@ a.btn {
   .yt-foot { flex-direction: column; }
   .yt-foot .select { flex: none; width: 100%; }
 }
+
+/* ── TikTok: số ngày chưa đăng video ── */
+.idle-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--line-strong);
+  background: var(--bg-2);
+  color: var(--ink-soft);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+}
+.idle-badge.fresh {
+  color: var(--good);
+  border-color: rgba(63, 185, 80, 0.3);
+  background: rgba(63, 185, 80, 0.1);
+}
+.idle-badge.warn {
+  color: var(--danger);
+  border-color: rgba(248, 81, 73, 0.35);
+  background: var(--danger-soft);
+}
+.idle-menu { position: relative; flex-shrink: 0; }
+.idle-pop {
+  position: fixed;
+  z-index: 60;
+  width: 280px;
+  max-width: calc(100vw - 32px);
+  padding: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  background: var(--paper);
+  border: 1px solid var(--line-strong);
+  border-radius: 10px;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.45);
+}
+.idle-row { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--ink); cursor: pointer; }
+.idle-row input[type="checkbox"] { width: 16px; height: 16px; accent-color: var(--accent); }
+.idle-row .input { width: 64px; padding: 4px 8px; font-size: 13px; }
+.idle-hint { font-size: 11.5px; color: var(--muted); line-height: 1.5; }

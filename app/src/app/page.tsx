@@ -233,6 +233,8 @@ export default function Dashboard() {
   const [pickTo, setPickTo] = useState<number>(10);
   const [sortKey, setSortKey] = useState<SortKey>("createdAt");
   const [sortDir, setSortDir] = useState<SortDir>("desc");
+  const [idleCfg, setIdleCfg] = useIdleDaysSettings();
+  const [idleCfgOpen, setIdleCfgOpen] = useState(false);
 
   const [exportOpen, setExportOpen] = useState(false);
   const [transferOpen, setTransferOpen] = useState(false);
@@ -1431,6 +1433,12 @@ export default function Dashboard() {
             >
               Refresh
             </button>
+            <IdleDaysMenu
+              cfg={idleCfg}
+              onChange={setIdleCfg}
+              open={idleCfgOpen}
+              onOpenChange={setIdleCfgOpen}
+            />
           </div>
           <div
             style={{
@@ -1849,6 +1857,7 @@ export default function Dashboard() {
                       >
                         @{r.username}
                       </a>
+                      {idleCfg.enabled && <IdleDaysBadge videos={r.lastVideos} cfg={idleCfg} />}
                     </div>
                   </td>
                   <td>
@@ -3823,5 +3832,147 @@ function TotpMenuButton({
         </span>
       </span>
     </button>
+  );
+}
+
+// ── Số ngày chưa đăng video ──────────────────────────────────────────────
+// Tính từ video mới nhất trong "3 video gần nhất" (cập nhật khi bấm Lấy Video
+// hoặc Đồng bộ 4h). Cài đặt lưu trên trình duyệt này.
+
+interface IdleDaysSettings {
+  enabled: boolean;
+  /** Chỉ hiện khi từ N ngày trở lên (0 = luôn hiện) */
+  minDays: number;
+  /** Tô đỏ khi từ N ngày trở lên */
+  warnDays: number;
+}
+
+const IDLE_KEY = "tt_idle_days_v1";
+const IDLE_DEFAULT: IdleDaysSettings = { enabled: true, minDays: 0, warnDays: 3 };
+
+function useIdleDaysSettings(): [IdleDaysSettings, (c: IdleDaysSettings) => void] {
+  const [cfg, setCfg] = useState<IdleDaysSettings>(IDLE_DEFAULT);
+  useEffect(() => {
+    try {
+      const saved = JSON.parse(localStorage.getItem(IDLE_KEY) || "null");
+      if (saved && typeof saved === "object") setCfg({ ...IDLE_DEFAULT, ...saved });
+    } catch {}
+  }, []);
+  const update = useCallback((c: IdleDaysSettings) => {
+    setCfg(c);
+    try {
+      localStorage.setItem(IDLE_KEY, JSON.stringify(c));
+    } catch {}
+  }, []);
+  return [cfg, update];
+}
+
+/** Số ngày từ video mới nhất đến hôm nay; null = chưa lấy video, -1 = không có video công khai. */
+function idleDays(videos: Video[] | null): { days: number | null; last: number | null } {
+  if (!videos) return { days: null, last: null };
+  const last = videos.reduce((m, v) => Math.max(m, v.postedAt || 0), 0);
+  if (!last) return { days: -1, last: null };
+  return { days: Math.max(0, Math.floor((Date.now() / 1000 - last) / 86400)), last };
+}
+
+function IdleDaysBadge({ videos, cfg }: { videos: Video[] | null; cfg: IdleDaysSettings }) {
+  const { days, last } = idleDays(videos);
+  if (days === null) return null;
+  if (days >= 0 && days < cfg.minDays) return null;
+  const tone = days < 0 || days >= cfg.warnDays ? "warn" : days <= 1 ? "fresh" : "";
+  const text = days < 0 ? "Chưa có video" : days === 0 ? "Đăng hôm nay" : `${days} ngày chưa đăng`;
+  const title = last ? `Video gần nhất: ${new Date(last * 1000).toLocaleString("vi-VN")}` : "Không thấy video công khai";
+  return (
+    <span className={`idle-badge ${tone}`} title={title}>
+      {text}
+    </span>
+  );
+}
+
+function IdleDaysMenu({
+  cfg,
+  onChange,
+  open,
+  onOpenChange,
+}: {
+  cfg: IdleDaysSettings;
+  onChange: (c: IdleDaysSettings) => void;
+  open: boolean;
+  onOpenChange: (v: boolean) => void;
+}) {
+  const ref = useRef<HTMLDivElement>(null);
+  const btnRef = useRef<HTMLButtonElement>(null);
+  // The toolbar scrolls horizontally (overflow-x: auto) and would clip an
+  // absolutely positioned popover — place it fixed under the button instead.
+  const [pos, setPos] = useState<{ top: number; right: number } | null>(null);
+  useEffect(() => {
+    if (!open) return;
+    const r = btnRef.current?.getBoundingClientRect();
+    if (r) setPos({ top: r.bottom + 6, right: Math.max(16, window.innerWidth - r.right) });
+    const close = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) onOpenChange(false);
+    };
+    const hide = () => onOpenChange(false);
+    document.addEventListener("mousedown", close);
+    window.addEventListener("resize", hide);
+    window.addEventListener("scroll", hide, true);
+    return () => {
+      document.removeEventListener("mousedown", close);
+      window.removeEventListener("resize", hide);
+      window.removeEventListener("scroll", hide, true);
+    };
+  }, [open, onOpenChange]);
+  const num = (v: string) => Math.max(0, Math.min(365, Math.floor(Number(v) || 0)));
+  return (
+    <div ref={ref} className="idle-menu">
+      <button
+        ref={btnRef}
+        type="button"
+        className={`btn${cfg.enabled ? " btn-accent" : ""}`}
+        style={{ padding: "6px 12px", fontSize: 10, flexShrink: 0 }}
+        aria-expanded={open}
+        onClick={() => onOpenChange(!open)}
+        title="Cài đặt hiển thị số ngày chưa đăng video"
+      >
+        ⚙ Số ngày chưa đăng
+      </button>
+      {open && pos && (
+        <div className="idle-pop" style={{ top: pos.top, right: pos.right }} role="dialog" aria-label="Cài đặt số ngày chưa đăng video">
+          <label className="idle-row">
+            <input type="checkbox" checked={cfg.enabled} onChange={(e) => onChange({ ...cfg, enabled: e.target.checked })} />
+            Hiện số ngày chưa đăng video
+          </label>
+          <label className="idle-row" style={{ opacity: cfg.enabled ? 1 : 0.5 }}>
+            Chỉ hiện khi từ
+            <input
+              type="number"
+              min={0}
+              max={365}
+              className="input"
+              disabled={!cfg.enabled}
+              value={cfg.minDays}
+              onChange={(e) => onChange({ ...cfg, minDays: num(e.target.value) })}
+            />
+            ngày
+          </label>
+          <label className="idle-row" style={{ opacity: cfg.enabled ? 1 : 0.5 }}>
+            Tô đỏ khi từ
+            <input
+              type="number"
+              min={1}
+              max={365}
+              className="input"
+              disabled={!cfg.enabled}
+              value={cfg.warnDays}
+              onChange={(e) => onChange({ ...cfg, warnDays: Math.max(1, num(e.target.value)) })}
+            />
+            ngày
+          </label>
+          <div className="idle-hint">
+            Tính từ video mới nhất đã lấy về. Bấm <b>Lấy Video</b> để cập nhật. Tài khoản chưa lấy video sẽ không hiện số.
+          </div>
+        </div>
+      )}
+    </div>
   );
 }
