@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import { encodeBodyHeader } from "@/lib/req-body";
 
 interface UserRow {
   id: number;
@@ -77,7 +78,7 @@ export default function AdminUsersPage() {
       const res = await fetch("/api/admin/users", {
         method: "POST",
         headers: {
-          "X-Body": JSON.stringify({
+          "X-Body": encodeBodyHeader({
             username: newUsername.trim(),
             password: newPassword,
             role: newRole,
@@ -106,7 +107,7 @@ export default function AdminUsersPage() {
     try {
       const res = await fetch(`/api/admin/users/${id}`, {
         method: "PATCH",
-        headers: { "X-Body": JSON.stringify(patch) },
+        headers: { "X-Body": encodeBodyHeader(patch) },
       });
       const data = (await res.json()) as { ok?: boolean; error?: string };
       if (!res.ok || !data.ok) {

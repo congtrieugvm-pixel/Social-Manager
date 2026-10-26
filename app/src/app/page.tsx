@@ -475,7 +475,7 @@ export default function Dashboard() {
     }
     await fetch(`/api/accounts/move-group`, {
       method: "POST",
-      headers: { "X-Body": JSON.stringify({ ids, groupId: newGroupId }) },
+      headers: { "X-Body": encodeBodyHeader({ ids, groupId: newGroupId }) },
     });
     setSelected(new Set());
     await load();
@@ -489,7 +489,7 @@ export default function Dashboard() {
     }
     await fetch(`/api/accounts/bulk-update`, {
       method: "POST",
-      headers: { "X-Body": JSON.stringify({ ids, statusId }) },
+      headers: { "X-Body": encodeBodyHeader({ ids, statusId }) },
     });
     setSelected(new Set());
     await load();
@@ -503,7 +503,7 @@ export default function Dashboard() {
     }
     await fetch(`/api/accounts/bulk-update`, {
       method: "POST",
-      headers: { "X-Body": JSON.stringify({ ids, countryId }) },
+      headers: { "X-Body": encodeBodyHeader({ ids, countryId }) },
     });
     setSelected(new Set());
     await load();
@@ -517,7 +517,7 @@ export default function Dashboard() {
     }
     await fetch(`/api/accounts/bulk-update`, {
       method: "POST",
-      headers: { "X-Body": JSON.stringify({ ids, machineId }) },
+      headers: { "X-Body": encodeBodyHeader({ ids, machineId }) },
     });
     setSelected(new Set());
     await load();
@@ -531,7 +531,7 @@ export default function Dashboard() {
     }
     await fetch(`/api/accounts/bulk-update`, {
       method: "POST",
-      headers: { "X-Body": JSON.stringify({ ids, employeeId }) },
+      headers: { "X-Body": encodeBodyHeader({ ids, employeeId }) },
     });
     setSelected(new Set());
     await load();
@@ -563,7 +563,7 @@ export default function Dashboard() {
     try {
       const res = await fetch(`/api/accounts/bulk-delete`, {
         method: "POST",
-        headers: { "X-Body": JSON.stringify({ ids }) },
+        headers: { "X-Body": encodeBodyHeader({ ids }) },
       });
       if (!res.ok) {
         const err = await res.json().catch(() => ({ error: "Lỗi" }));
@@ -590,7 +590,7 @@ export default function Dashboard() {
     try {
       const res = await fetch(`/api/accounts/export`, {
         method: "POST",
-        headers: { "X-Body": JSON.stringify({ ids, delimiter: exportDelimiter, fields: exportFields }) },
+        headers: { "X-Body": encodeBodyHeader({ ids, delimiter: exportDelimiter, fields: exportFields }) },
       });
       if (!res.ok) {
         const err = await res.json().catch(() => ({ error: "Lỗi" }));
@@ -616,7 +616,7 @@ export default function Dashboard() {
     try {
       const res = await fetch(`/api/accounts/export`, {
         method: "POST",
-        headers: { "X-Body": JSON.stringify({ ids, delimiter: nextDelimiter, fields: nextFields }) },
+        headers: { "X-Body": encodeBodyHeader({ ids, delimiter: nextDelimiter, fields: nextFields }) },
       });
       if (!res.ok) return;
       const data = (await res.json()) as { text: string; count: number };
@@ -727,7 +727,7 @@ export default function Dashboard() {
       const res = await fetch(`/api/accounts/${edit.id}`, {
         method: "PATCH",
         headers: {
-          "X-Body": JSON.stringify({
+          "X-Body": encodeBodyHeader({
             username: edit.username.trim(),
             password: edit.password,
             email: edit.email,
@@ -974,7 +974,7 @@ export default function Dashboard() {
     );
     await fetch(`/api/accounts/${id}`, {
       method: "PATCH",
-      headers: { "X-Body": JSON.stringify({ statusId }) },
+      headers: { "X-Body": encodeBodyHeader({ statusId }) },
     });
   }
 
@@ -995,7 +995,7 @@ export default function Dashboard() {
     );
     await fetch(`/api/accounts/${id}`, {
       method: "PATCH",
-      headers: { "X-Body": JSON.stringify({ countryId }) },
+      headers: { "X-Body": encodeBodyHeader({ countryId }) },
     });
   }
 
@@ -1015,7 +1015,7 @@ export default function Dashboard() {
     );
     await fetch(`/api/accounts/${id}`, {
       method: "PATCH",
-      headers: { "X-Body": JSON.stringify({ machineId }) },
+      headers: { "X-Body": encodeBodyHeader({ machineId }) },
     });
   }
 
@@ -1035,7 +1035,7 @@ export default function Dashboard() {
     );
     await fetch(`/api/accounts/${id}`, {
       method: "PATCH",
-      headers: { "X-Body": JSON.stringify({ employeeId }) },
+      headers: { "X-Body": encodeBodyHeader({ employeeId }) },
     });
   }
 
@@ -1058,7 +1058,7 @@ export default function Dashboard() {
   async function moveOneToGroup(id: number, newGroupId: number | null) {
     await fetch(`/api/accounts/${id}`, {
       method: "PATCH",
-      headers: { "X-Body": JSON.stringify({ groupId: newGroupId }) },
+      headers: { "X-Body": encodeBodyHeader({ groupId: newGroupId }) },
     });
     if (detail && detail.id === id) {
       const g = newGroupId ? groups.find((gr) => gr.id === newGroupId) : null;
@@ -1085,14 +1085,14 @@ export default function Dashboard() {
     try {
       const res = await fetch("/api/groups", {
         method: "POST",
-        headers: { "X-Body": JSON.stringify({ name, color: "#2d5a3d", description: "" }) },
+        headers: { "X-Body": encodeBodyHeader({ name, color: "#2d5a3d", description: "" }) },
       });
       if (!res.ok) {
         const err = await res.json().catch(() => ({ error: "Lỗi" }));
         alert(err.error ?? "Không tạo được nhóm");
         return;
       }
-      const created = (await res.json()) as { id: number };
+      const created = ((await res.json()) as { group: { id: number } }).group;
       const listRes = await fetch("/api/groups", { cache: "no-store" });
       if (listRes.ok) {
         const data = (await listRes.json()) as { groups: GroupRow[] };
@@ -1167,7 +1167,7 @@ export default function Dashboard() {
     try {
       const res = await fetch(`/api/accounts/${endpoint}`, {
         method: "POST",
-        headers: { "X-Body": JSON.stringify({ ids: [id] }) },
+        headers: { "X-Body": encodeBodyHeader({ ids: [id] }) },
       });
       const data = await res.json();
       const result = data.results?.[0];
@@ -1217,7 +1217,7 @@ export default function Dashboard() {
   async function saveNote(id: number, note: string) {
     await fetch(`/api/accounts/${id}`, {
       method: "PATCH",
-      headers: { "X-Body": JSON.stringify({ note }) },
+      headers: { "X-Body": encodeBodyHeader({ note }) },
     });
     await load();
   }

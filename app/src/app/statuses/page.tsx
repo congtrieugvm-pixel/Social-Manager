@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
+import { encodeBodyHeader } from "@/lib/req-body";
 
 interface StatusRow {
   id: number;
@@ -71,11 +72,11 @@ export default function StatusesPage() {
       editingId == null
         ? await fetch("/api/statuses", {
             method: "POST",
-            headers: { "X-Body": JSON.stringify(payload) },
+            headers: { "X-Body": encodeBodyHeader(payload) },
           })
         : await fetch(`/api/statuses/${editingId}`, {
             method: "PATCH",
-            headers: { "X-Body": JSON.stringify(payload) },
+            headers: { "X-Body": encodeBodyHeader(payload) },
           });
     if (!res.ok) {
       const err = await res.json().catch(() => ({ error: "Lỗi" }));

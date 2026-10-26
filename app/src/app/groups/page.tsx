@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
+import { encodeBodyHeader } from "@/lib/req-body";
 
 interface GroupRow {
   id: number;
@@ -67,16 +68,22 @@ export default function GroupsPage() {
       return;
     }
     const payload = { name, color: formColor, description: formDesc.trim() };
-    const res =
-      editingId == null
-        ? await fetch("/api/groups", {
-            method: "POST",
-            headers: { "X-Body": JSON.stringify(payload) },
-          })
-        : await fetch(`/api/groups/${editingId}`, {
-            method: "PATCH",
-            headers: { "X-Body": JSON.stringify(payload) },
-          });
+    let res: Response;
+    try {
+      res =
+        editingId == null
+          ? await fetch("/api/groups", {
+              method: "POST",
+              headers: { "X-Body": encodeBodyHeader(payload) },
+            })
+          : await fetch(`/api/groups/${editingId}`, {
+              method: "PATCH",
+              headers: { "X-Body": encodeBodyHeader(payload) },
+            });
+    } catch (e) {
+      alert("Không gửi được: " + (e instanceof Error ? e.message : String(e)));
+      return;
+    }
     if (!res.ok) {
       const err = await res.json().catch(() => ({ error: "Lỗi" }));
       alert(err.error ?? "Lỗi");

@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
+import { encodeBodyHeader } from "@/lib/req-body";
 
 interface MachineRow {
   id: number;
@@ -80,11 +81,11 @@ export default function MachinesPage() {
       editingId == null
         ? await fetch("/api/machines", {
             method: "POST",
-            headers: { "X-Body": JSON.stringify(payload) },
+            headers: { "X-Body": encodeBodyHeader(payload) },
           })
         : await fetch(`/api/machines/${editingId}`, {
             method: "PATCH",
-            headers: { "X-Body": JSON.stringify(payload) },
+            headers: { "X-Body": encodeBodyHeader(payload) },
           });
     if (!res.ok) {
       const err = await res.json().catch(() => ({ error: "Lỗi" }));

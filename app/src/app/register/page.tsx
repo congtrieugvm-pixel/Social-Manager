@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
+import { encodeBodyHeader } from "@/lib/req-body";
 
 export default function RegisterPage() {
   const router = useRouter();
@@ -25,7 +26,7 @@ export default function RegisterPage() {
       const res = await fetch("/api/auth/register", {
         method: "POST",
         headers: {
-          "X-Body": JSON.stringify({ username: username.trim(), password }),
+          "X-Body": encodeBodyHeader({ username: username.trim(), password }),
         },
       });
       const data = (await res.json()) as { ok?: boolean; error?: string };

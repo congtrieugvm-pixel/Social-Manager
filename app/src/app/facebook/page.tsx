@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
+import { encodeBodyHeader } from "@/lib/req-body";
 
 interface FacebookRow {
   id: number;
@@ -274,7 +275,7 @@ export default function FacebookPage() {
     try {
       const res = await fetch("/api/facebook/accounts/bulk-delete", {
         method: "POST",
-        headers: { "X-Body": JSON.stringify({ ids }) },
+        headers: { "X-Body": encodeBodyHeader({ ids }) },
       });
       const data = (await res.json()) as { deleted?: number; error?: string };
       if (!res.ok || data.error) {
@@ -299,7 +300,7 @@ export default function FacebookPage() {
     try {
       const res = await fetch("/api/facebook/accounts/bulk-update", {
         method: "POST",
-        headers: { "X-Body": JSON.stringify({ ids, [field]: value }) },
+        headers: { "X-Body": encodeBodyHeader({ ids, [field]: value }) },
       });
       const data = (await res.json()) as { updated?: number; error?: string };
       if (!res.ok || data.error) {
@@ -323,7 +324,7 @@ export default function FacebookPage() {
     try {
       const res = await fetch("/api/facebook/accounts/refresh-avatar", {
         method: "POST",
-        headers: { "X-Body": JSON.stringify({ ids }) },
+        headers: { "X-Body": encodeBodyHeader({ ids }) },
       });
       const data = (await res.json()) as {
         total?: number;
@@ -389,7 +390,7 @@ export default function FacebookPage() {
     setEdit({ ...edit, saving: true, error: null });
     const res = await fetch(`/api/facebook/accounts/${edit.id}`, {
       method: "PATCH",
-      headers: { "X-Body": JSON.stringify({
+      headers: { "X-Body": encodeBodyHeader({
         username: edit.username,
         password: edit.password,
         email: edit.email,

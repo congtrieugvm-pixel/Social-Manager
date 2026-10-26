@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
+import { encodeBodyHeader } from "@/lib/req-body";
 
 type FieldKey =
   | "username"
@@ -200,7 +201,7 @@ ${SHORT_EXAMPLE}`;
     try {
       const res = await fetch("/api/facebook/accounts/import", {
         method: "PUT",
-        headers: { "X-Body": JSON.stringify({ text, delimiter, order }) },
+        headers: { "X-Body": encodeBodyHeader({ text, delimiter, order }) },
       });
       const data = (await res.json()) as PreviewResponse;
       setPreview(data);
@@ -214,7 +215,7 @@ ${SHORT_EXAMPLE}`;
     try {
       const res = await fetch("/api/facebook/accounts/import", {
         method: "POST",
-        headers: { "X-Body": JSON.stringify({ text, delimiter, order, groupId }) },
+        headers: { "X-Body": encodeBodyHeader({ text, delimiter, order, groupId }) },
       });
       const data = (await res.json()) as ImportResponse;
       setResult(data);
