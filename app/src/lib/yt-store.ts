@@ -1,20 +1,22 @@
-// Shared helpers for the Bookmark Key (YouTube) API routes.
+// Shared helpers for the Bookmark Key API routes (YouTube, TikTok, RSS, links).
 
 import { ytChannels } from "@/lib/db/schema";
-import { channelUrl, type YtVideo } from "@/lib/youtube";
+import { channelUrl } from "@/lib/youtube";
+import type { BookmarkItem } from "@/lib/bookmark";
 
 type Row = typeof ytChannels.$inferSelect;
 
 export interface SafeChannel {
   id: number;
   channelId: string;
+  kind: string;
   title: string;
   handle: string | null;
   avatar: string | null;
   url: string;
   groupId: number | null;
   note: string | null;
-  videos: YtVideo[];
+  videos: BookmarkItem[];
   lastSeenAt: number;
   checkedAt: number | null;
   checkError: string | null;
@@ -22,7 +24,7 @@ export interface SafeChannel {
   unread: number;
 }
 
-export function parseVideos(json: string | null): YtVideo[] {
+export function parseVideos(json: string | null): BookmarkItem[] {
   if (!json) return [];
   try {
     const v = JSON.parse(json);
@@ -37,10 +39,11 @@ export function toSafeChannel(r: Row): SafeChannel {
   return {
     id: r.id,
     channelId: r.channelId,
+    kind: r.kind,
     title: r.title,
     handle: r.handle,
     avatar: r.avatar,
-    url: channelUrl(r.channelId, r.handle),
+    url: r.url ?? channelUrl(r.channelId, r.handle),
     groupId: r.groupId,
     note: r.note,
     videos,

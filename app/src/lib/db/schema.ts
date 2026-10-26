@@ -251,13 +251,18 @@ export const ytGroups = sqliteTable("yt_groups", {
 export const ytChannels = sqliteTable("yt_channels", {
   id: integer("id").primaryKey({ autoIncrement: true }),
   ownerUserId: integer("owner_user_id").references(() => appUsers.id, { onDelete: "cascade" }),
-  channelId: text("channel_id").notNull(), // UC…
+  // Dedup key: UC… (YouTube), "tiktok:<user>", "url:<normalized link>"
+  channelId: text("channel_id").notNull(),
+  // youtube | tiktok | feed (RSS/Atom) | link (saved only, not tracked)
+  kind: text("kind").notNull().default("youtube"),
+  url: text("url"), // link to open (null = YouTube channel URL from id/handle)
+  feedUrl: text("feed_url"), // RSS/Atom feed for kind "feed"
   title: text("title").notNull(),
   handle: text("handle"), // @name
   avatar: text("avatar"),
   groupId: integer("group_id").references(() => ytGroups.id, { onDelete: "set null" }),
   note: text("note"),
-  // JSON: Array<{ id, title, published (ISO) }> — latest videos from the RSS feed.
+  // JSON: Array<{ id, title, published (ISO), url? }> — latest videos / posts.
   videos: text("videos"),
   lastSeenAt: integer("last_seen_at").notNull(), // unix s: videos after this are "new"
   checkedAt: integer("checked_at"), // unix s: last feed read

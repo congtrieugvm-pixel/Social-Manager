@@ -278,6 +278,10 @@ export function initNodeDb(): BetterSQLite3Database<typeof schema> {
   ensureColumn("accounts", "password_history", "password_history TEXT");
   ensureColumn("accounts", "email_password_history", "email_password_history TEXT");
   ensureColumn("accounts", "enc_ms_refresh_token", "enc_ms_refresh_token TEXT");
+  // Bookmark Key: any link (mirrors D1 migration 0009)
+  ensureColumn("yt_channels", "kind", "kind TEXT NOT NULL DEFAULT 'youtube'");
+  ensureColumn("yt_channels", "url", "url TEXT");
+  ensureColumn("yt_channels", "feed_url", "feed_url TEXT");
   ensureColumn("accounts", "enc_ms_access_token", "enc_ms_access_token TEXT");
   ensureColumn("accounts", "ms_token_expires_at", "ms_token_expires_at INTEGER");
   ensureColumn("accounts", "ms_email", "ms_email TEXT");

@@ -5,13 +5,16 @@ import { ytChannels } from "@/lib/db/schema";
 import { getOwnerId } from "@/lib/scope";
 import { readBody } from "@/lib/req-body";
 import { AuthError } from "@/lib/auth";
-import { fetchFeed } from "@/lib/youtube";
-import { toSafeChannel } from "@/lib/yt-store";
+import { fetchBookmarkItems, mergeItems } from "@/lib/bookmark";
+import { parseVideos, toSafeChannel } from "@/lib/yt-store";
 
-const MAX = 20; // feeds per request (Worker subrequest budget)
+// Bookmarks per request: a TikTok one can take 4 fetches (retries) and the
+// Worker gets 50 subrequests per invocation, D1 writes included.
+const MAX = 8;
 
-// POST { ids: number[] } → { channels } — re-read the RSS feeds (6 at a time)
-// and store the latest videos; the client sends the list in chunks.
+// POST { ids: number[] } → { channels } — re-read each bookmark (YouTube /
+// RSS feed / TikTok, 4 at a time) and store the latest items; plain links
+// only get checkedAt. The client sends the list in chunks.
 export async function POST(req: Request) {
   try {
     const ownerId = await getOwnerId();
@@ -25,14 +28,16 @@ export async function POST(req: Request) {
     let next = 0;
     const out: ReturnType<typeof toSafeChannel>[] = [];
     await Promise.all(
-      Array.from({ length: Math.min(6, rows.length) }, async () => {
+      Array.from({ length: Math.min(4, rows.length) }, async () => {
         while (next < rows.length) {
           const r = rows[next++];
           const now = Math.floor(Date.now() / 1000);
           let patch: Partial<typeof ytChannels.$inferInsert>;
           try {
-            const feed = await fetchFeed(r.channelId);
-            patch = { videos: JSON.stringify(feed.videos), checkedAt: now, checkError: null, ...(feed.title ? { title: feed.title } : {}) };
+            const items = await fetchBookmarkItems(r);
+            patch = items === null
+              ? { checkedAt: now, checkError: null }
+              : { videos: JSON.stringify(mergeItems(items, parseVideos(r.videos))), checkedAt: now, checkError: null };
           } catch (e) {
             // Keep the previous videos; just record the error.
             patch = { checkedAt: now, checkError: e instanceof Error ? e.message : String(e) };

@@ -5,7 +5,8 @@ import { ytChannels, ytGroups } from "@/lib/db/schema";
 import { getOwnerId } from "@/lib/scope";
 import { readBody } from "@/lib/req-body";
 import { AuthError } from "@/lib/auth";
-import { YtError, fetchFeed, resolveChannel } from "@/lib/youtube";
+import { YtError } from "@/lib/youtube";
+import { mergeItems, resolveBookmark } from "@/lib/bookmark";
 import { toSafeChannel } from "@/lib/yt-store";
 
 const MAX_LINKS = 20;
@@ -44,7 +45,7 @@ export async function POST(req: Request) {
       .filter((l): l is string => typeof l === "string" && l.trim().length > 0)
       .map((l) => l.trim())
       .slice(0, MAX_LINKS);
-    if (links.length === 0) return NextResponse.json({ error: "Chưa nhập link YouTube" }, { status: 400 });
+    if (links.length === 0) return NextResponse.json({ error: "Chưa nhập link" }, { status: 400 });
     let groupId: number | null = null;
     if (typeof body.groupId === "number") {
       const [g] = await db
@@ -58,37 +59,34 @@ export async function POST(req: Request) {
     const results: Array<{ input: string; status: "added" | "exists" | "error"; channel?: ReturnType<typeof toSafeChannel>; error?: string }> = [];
     for (const input of links) {
       try {
-        const info = await resolveChannel(input);
+        const info = await resolveBookmark(input);
         const [dup] = await db
           .select()
           .from(ytChannels)
-          .where(and(eq(ytChannels.ownerUserId, ownerId), eq(ytChannels.channelId, info.channelId)));
+          .where(and(eq(ytChannels.ownerUserId, ownerId), eq(ytChannels.channelId, info.key)));
         if (dup) {
           results.push({ input, status: "exists", channel: toSafeChannel(dup) });
           continue;
-        }
-        let videos: Awaited<ReturnType<typeof fetchFeed>>["videos"] = [];
-        let checkError: string | null = null;
-        try {
-          videos = (await fetchFeed(info.channelId)).videos;
-        } catch (e) {
-          checkError = e instanceof Error ? e.message : String(e);
         }
         const now = Math.floor(Date.now() / 1000);
         const [row] = await db
           .insert(ytChannels)
           .values({
             ownerUserId: ownerId,
-            channelId: info.channelId,
+            channelId: info.key,
+            kind: info.kind,
+            url: info.url,
+            feedUrl: info.feedUrl,
             title: info.title,
             handle: info.handle,
             avatar: info.avatar,
             groupId,
             note,
-            videos: JSON.stringify(videos),
-            lastSeenAt: now,
+            videos: JSON.stringify(mergeItems(info.items, [])),
+            // Rounded up so nothing already listed counts as new.
+            lastSeenAt: Math.ceil(Date.now() / 1000),
             checkedAt: now,
-            checkError,
+            checkError: info.checkError,
           })
           .returning();
         results.push({ input, status: "added", channel: toSafeChannel(row) });

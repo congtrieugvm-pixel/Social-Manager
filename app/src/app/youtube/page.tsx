@@ -3,21 +3,25 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { patchJson, postJson, safeJson } from "@/lib/req-body";
 
-// Bookmark Key: saved YouTube channels. Paste links → the channel name shows;
-// a small red badge counts videos published since the channel was last
-// opened, and clicking the channel (or a video) clears it. Channels can be
-// put into groups that carry a note. Feeds are re-checked when older than
-// 30 minutes, every 30 minutes while the page is open, or on demand.
+// Bookmark Key: saved links of any kind. YouTube channels, TikTok profiles
+// and sites with an RSS/Atom feed are tracked: a small red badge counts items
+// published since the bookmark was last opened, and opening it (or an item)
+// clears it. Other links are just saved with their title and icon. Bookmarks
+// go into groups that carry a note. Tracked ones are re-checked when older
+// than 30 minutes, every 30 minutes while the page is open, or on demand.
 
 interface Video {
   id: string;
   title: string;
   published: string;
+  /** Item link; YouTube items have none (built from the video id). */
+  url?: string;
 }
 
 interface Channel {
   id: number;
   channelId: string;
+  kind: Kind;
   title: string;
   handle: string | null;
   avatar: string | null;
@@ -38,10 +42,15 @@ interface Group {
   note: string | null;
 }
 
+type Kind = "youtube" | "tiktok" | "feed" | "link";
+
+const KIND_LABEL: Record<Kind, string> = { youtube: "YouTube", tiktok: "TikTok", feed: "RSS", link: "Link" };
+const ITEM_NOUN: Record<Kind, string> = { youtube: "video", tiktok: "video", feed: "bài", link: "bài" };
+
 type AddResult = { input: string; status: "added" | "exists" | "error"; channel?: Channel; error?: string };
 
 const STALE_S = 30 * 60;
-const REFRESH_CHUNK = 20;
+const REFRESH_CHUNK = 8; // = server MAX in /api/youtube/refresh
 const COLORS = ["#5e6ad2", "#3fb950", "#d29922", "#f85149", "#db61a2", "#39c5cf", "#a371f7", "#8a8a8a"];
 const UNGROUPED = -1;
 
@@ -55,6 +64,8 @@ function ago(iso: string | number): string {
 }
 
 const isNew = (v: Video, c: Channel) => Date.parse(v.published) / 1000 > c.lastSeenAt;
+const itemUrl = (v: Video, c: Channel) => v.url ?? (c.kind === "youtube" ? `https://www.youtube.com/watch?v=${v.id}` : c.url);
+const tracked = (c: Channel) => c.kind !== "link";
 
 export default function YoutubePage() {
   const [channels, setChannels] = useState<Channel[] | null>(null);
@@ -92,7 +103,7 @@ export default function YoutubePage() {
   const refresh = useCallback(
     async (ids?: number[]) => {
       if (refreshingRef.current) return;
-      const all = ids ?? (channelsRef.current ?? []).map((c) => c.id);
+      const all = ids ?? (channelsRef.current ?? []).filter(tracked).map((c) => c.id);
       if (!all.length) return;
       refreshingRef.current = true;
       setRefreshing({ done: 0, total: all.length });
@@ -126,7 +137,7 @@ export default function YoutubePage() {
   useEffect(() => {
     const checkStale = () => {
       const now = Date.now() / 1000;
-      const stale = (channelsRef.current ?? []).filter((c) => !c.checkedAt || now - c.checkedAt > STALE_S).map((c) => c.id);
+      const stale = (channelsRef.current ?? []).filter((c) => tracked(c) && (!c.checkedAt || now - c.checkedAt > STALE_S)).map((c) => c.id);
       if (stale.length) void refresh(stale);
     };
     void load().then(checkStale);
@@ -136,7 +147,7 @@ export default function YoutubePage() {
 
   const markSeen = useCallback((c: Channel) => {
     if (!c.unread) return;
-    const now = Math.floor(Date.now() / 1000);
+    const now = Math.ceil(Date.now() / 1000); // same rounding as the server
     setChannels((cur) => (cur ? cur.map((x) => (x.id === c.id ? { ...x, unread: 0, lastSeenAt: now } : x)) : cur));
     void fetch(`/api/youtube/channels/${c.id}`, { method: "POST" })
       .then((r) => safeJson<{ channel: Channel }>(r))
@@ -154,7 +165,7 @@ export default function YoutubePage() {
   );
 
   const removeChannel = useCallback(async (c: Channel) => {
-    if (!confirm(`Xoá kênh "${c.title}" khỏi Bookmark?`)) return;
+    if (!confirm(`Xoá "${c.title}" khỏi Bookmark?`)) return;
     const res = await fetch(`/api/youtube/channels/${c.id}`, { method: "DELETE" });
     const data = await safeJson(res);
     if (data.error) setError(data.error);
@@ -180,7 +191,7 @@ export default function YoutubePage() {
     return (channels ?? [])
       .filter((c) => filter === null || (c.groupId ?? UNGROUPED) === filter)
       .filter((c) => !onlyNew || c.unread > 0)
-      .filter((c) => !q || c.title.toLowerCase().includes(q) || (c.handle ?? "").toLowerCase().includes(q) || (c.note ?? "").toLowerCase().includes(q))
+      .filter((c) => !q || [c.title, c.handle ?? "", c.note ?? "", c.url].some((t) => t.toLowerCase().includes(q)))
       .sort((a, b) => b.unread - a.unread || (b.videos[0]?.published ?? "").localeCompare(a.videos[0]?.published ?? ""));
   }, [channels, filter, onlyNew, query]);
 
@@ -190,20 +201,20 @@ export default function YoutubePage() {
     <>
       <header className="page-header">
         <div className="page-header-left">
-          <span className="eyebrow">YouTube · Theo dõi kênh</span>
+          <span className="eyebrow">Bookmark · Lưu link & theo dõi bài mới</span>
           <h1 className="h1-serif">
             Bookmark <em>Key</em>
           </h1>
         </div>
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-          <button className="btn" onClick={() => void refresh()} disabled={!!refreshing || !channels?.length}>
-            {refreshing ? `Đang kiểm tra ${refreshing.done}/${refreshing.total}…` : "⟳ Kiểm tra video mới"}
+          <button className="btn" onClick={() => void refresh()} disabled={!!refreshing || !channels?.some(tracked)}>
+            {refreshing ? `Đang kiểm tra ${refreshing.done}/${refreshing.total}…` : "⟳ Kiểm tra bài mới"}
           </button>
           <button className={`btn${showGroups ? " btn-accent" : ""}`} onClick={() => setShowGroups((v) => !v)}>
             Nhóm ({groups.length})
           </button>
           <button className="btn btn-primary" onClick={() => setShowAdd((v) => !v)}>
-            + Thêm kênh
+            + Thêm link
           </button>
         </div>
       </header>
@@ -266,9 +277,9 @@ export default function YoutubePage() {
           )}
         </div>
         <div className="yt-tools">
-          <input className="input" placeholder="Tìm kênh / ghi chú…" value={query} onChange={(e) => setQuery(e.target.value)} />
+          <input className="input" placeholder="Tìm tên / link / ghi chú…" value={query} onChange={(e) => setQuery(e.target.value)} />
           <label className="yt-check">
-            <input type="checkbox" checked={onlyNew} onChange={(e) => setOnlyNew(e.target.checked)} /> Chỉ kênh có video mới
+            <input type="checkbox" checked={onlyNew} onChange={(e) => setOnlyNew(e.target.checked)} /> Chỉ mục có bài mới
           </label>
         </div>
       </div>
@@ -283,10 +294,10 @@ export default function YoutubePage() {
         <div className="card mono" style={{ color: "var(--muted)", fontSize: 12 }}>Đang tải…</div>
       ) : channels.length === 0 ? (
         <div className="card" style={{ color: "var(--muted)", lineHeight: 1.6 }}>
-          Chưa có kênh nào. Bấm <strong>+ Thêm kênh</strong> và dán link YouTube (link kênh, @handle hoặc link video đều được).
+          Chưa có link nào. Bấm <strong>+ Thêm link</strong> và dán link bất kì. Kênh YouTube, TikTok @profile và trang có RSS sẽ báo số đỏ khi có bài mới.
         </div>
       ) : visible.length === 0 ? (
-        <div className="card" style={{ color: "var(--muted)" }}>Không có kênh nào khớp bộ lọc.</div>
+        <div className="card" style={{ color: "var(--muted)" }}>Không có link nào khớp bộ lọc.</div>
       ) : (
         <div className="yt-grid">
           {visible.map((c) => (
@@ -330,12 +341,13 @@ function AddForm({ groups, defaultGroup, onAdded }: { groups: Group[]; defaultGr
     setResults([]);
     const out: AddResult[] = [];
     try {
-      // 5 links per request keeps each Worker call short.
-      for (let i = 0; i < links.length; i += 5) {
-        const res = await postJson("/api/youtube/channels", { links: links.slice(i, i + 5), groupId });
+      // 3 links per request: a TikTok profile can take ~8 fetches and a
+      // Worker call gets 50 subrequests.
+      for (let i = 0; i < links.length; i += 3) {
+        const res = await postJson("/api/youtube/channels", { links: links.slice(i, i + 3), groupId });
         const data = await safeJson<{ results: AddResult[] }>(res);
         const part: AddResult[] = data.error
-          ? links.slice(i, i + 5).map((input) => ({ input, status: "error" as const, error: data.error }))
+          ? links.slice(i, i + 3).map((input) => ({ input, status: "error" as const, error: data.error }))
           : data.results;
         out.push(...part);
         setResults([...out]);
@@ -353,7 +365,7 @@ function AddForm({ groups, defaultGroup, onAdded }: { groups: Group[]; defaultGr
       <textarea
         className="textarea"
         rows={4}
-        placeholder={"Dán link YouTube, mỗi dòng 1 link\nhttps://www.youtube.com/@tenkenh\nhttps://youtu.be/xxxx"}
+        placeholder={"Dán link bất kì, mỗi dòng 1 link\nhttps://www.youtube.com/@tenkenh\nhttps://www.tiktok.com/@taikhoan\nhttps://vnexpress.net\nhttps://trang-bat-ki.com/bai-viet"}
         value={text}
         onChange={(e) => setText(e.target.value)}
       />
@@ -447,7 +459,7 @@ function GroupRow({ g, count, onSave, onRemove }: { g: Group; count: number; onS
       <ColorPick value={g.color} onChange={(color) => onSave(g, { color })} />
       <input className="input" value={name} onChange={(e) => setName(e.target.value)} aria-label="Tên nhóm" />
       <textarea className="textarea" rows={1} value={note} placeholder="Ghi chú…" onChange={(e) => setNote(e.target.value)} aria-label="Ghi chú nhóm" />
-      <span className="yt-chip-count">{count} kênh</span>
+      <span className="yt-chip-count">{count} link</span>
       <button className="btn btn-primary" disabled={!dirty || !name.trim()} onClick={() => onSave(g, { name, note })}>Lưu</button>
       <button className="btn btn-danger" onClick={() => onRemove(g)}>Xoá</button>
     </div>
@@ -487,26 +499,32 @@ function ChannelCard(props: {
   const group = groups.find((g) => g.id === c.groupId);
   const latest = c.videos[0];
   const shown = open ? c.videos : c.videos.slice(0, Math.max(1, Math.min(c.unread, 5)));
+  const [iconBroken, setIconBroken] = useState(false);
+  const noun = ITEM_NOUN[c.kind] ?? "bài";
 
   return (
     <div className="card yt-card" style={group ? { borderTopColor: group.color } : undefined}>
       <div className="yt-head">
         <a href={c.url} target="_blank" rel="noreferrer" className="yt-avatar" onClick={() => onSeen(c)}>
-          {c.avatar ? <img src={c.avatar} alt="" loading="lazy" referrerPolicy="no-referrer" /> : <span>{c.title.slice(0, 1)}</span>}
+          {c.avatar && !iconBroken ? (
+            <img src={c.avatar} alt="" loading="lazy" referrerPolicy="no-referrer" onError={() => setIconBroken(true)} />
+          ) : (
+            <span>{c.title.slice(0, 1).toUpperCase()}</span>
+          )}
         </a>
         <div className="yt-title-wrap">
-          <a href={c.url} target="_blank" rel="noreferrer" className="yt-title" onClick={() => onSeen(c)} title="Mở kênh">
+          <a href={c.url} target="_blank" rel="noreferrer" className="yt-title" onClick={() => onSeen(c)} title={c.url}>
             {c.title}
-            {c.unread > 0 && <span className="yt-badge" aria-label={`${c.unread} video mới`}>{c.unread > 99 ? "99+" : c.unread}</span>}
+            {c.unread > 0 && <span className="yt-badge" aria-label={`${c.unread} ${noun} mới`}>{c.unread > 99 ? "99+" : c.unread}</span>}
           </a>
           <div className="yt-sub">
-            {c.handle ?? c.channelId}
+            <span className={`yt-kind ${c.kind}`}>{KIND_LABEL[c.kind] ?? "Link"}</span> {c.handle ?? c.channelId}
             {c.checkError ? <span className="yt-err" title={c.checkError}> · lỗi kiểm tra</span> : c.checkedAt ? <> · kiểm tra {ago(c.checkedAt)}</> : null}
           </div>
         </div>
         <div className="yt-actions">
-          <button className="btn yt-icon" title="Kiểm tra lại kênh này" onClick={props.onRefresh}>⟳</button>
-          <button className="btn yt-icon" title="Xoá kênh" onClick={() => props.onRemove(c)}>✕</button>
+          {tracked(c) && <button className="btn yt-icon" title="Kiểm tra lại" onClick={props.onRefresh}>⟳</button>}
+          <button className="btn yt-icon" title="Xoá" onClick={() => props.onRemove(c)}>✕</button>
         </div>
       </div>
 
@@ -514,7 +532,7 @@ function ChannelCard(props: {
         <ul className="yt-videos">
           {shown.map((v) => (
             <li key={v.id} className={isNew(v, c) ? "new" : undefined}>
-              <a href={`https://www.youtube.com/watch?v=${v.id}`} target="_blank" rel="noreferrer" onClick={() => onSeen(c)}>
+              <a href={itemUrl(v, c)} target="_blank" rel="noreferrer" onClick={() => onSeen(c)}>
                 {isNew(v, c) && <span className="yt-new">Mới</span>}
                 <span className="yt-vtitle">{v.title}</span>
               </a>
@@ -523,11 +541,11 @@ function ChannelCard(props: {
           ))}
         </ul>
       ) : (
-        <div className="yt-sub">Chưa có video công khai.</div>
+        <div className="yt-sub yt-wrap">{tracked(c) ? `Chưa có ${noun} nào.` : c.url}</div>
       )}
       {c.videos.length > shown.length || open ? (
         <button className="yt-more" onClick={() => setOpen((v) => !v)}>
-          {open ? "Thu gọn" : `Xem ${c.videos.length} video gần nhất`}
+          {open ? "Thu gọn" : `Xem ${c.videos.length} ${noun} gần nhất`}
         </button>
       ) : null}
 
@@ -545,7 +563,7 @@ function ChannelCard(props: {
           onChange={(e) => setNote(e.target.value)}
           onBlur={() => note.trim() !== (c.note ?? "") && onUpdate(c, { note })}
           onKeyDown={(e) => e.key === "Enter" && (e.target as HTMLInputElement).blur()}
-          aria-label="Ghi chú kênh"
+          aria-label="Ghi chú"
         />
       </div>
     </div>

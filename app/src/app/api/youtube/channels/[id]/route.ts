@@ -72,7 +72,8 @@ export async function POST(_req: Request, ctx: { params: Promise<{ id: string }>
     if (!id) return NextResponse.json({ error: "id không hợp lệ" }, { status: 400 });
     const [row] = await db
       .update(ytChannels)
-      .set({ lastSeenAt: Math.floor(Date.now() / 1000) })
+      // Round up: an item published earlier in this same second is seen too.
+      .set({ lastSeenAt: Math.ceil(Date.now() / 1000) })
       .where(and(eq(ytChannels.id, id), eq(ytChannels.ownerUserId, ownerId)))
       .returning();
     if (!row) return NextResponse.json({ error: "Không tìm thấy kênh" }, { status: 404 });
