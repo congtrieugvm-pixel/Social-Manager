@@ -86,3 +86,63 @@ export function fetchPostsBatch(items: Array<{ pageId: string; candidates: Reach
     parsePosts,
   );
 }
+
+// ── Scheduled posts ──────────────────────────────────────────────────────
+// GET /{page-id}/scheduled_posts (Page token; pages_read_engagement or
+// pages_manage_metadata …). Read alongside published_posts; a page whose
+// scheduled list fails keeps its published posts (error kept per page).
+
+export const SCHEDULED_PER_PAGE = 50;
+
+const SCHEDULED_FIELDS = ["id", "message", "created_time", "scheduled_publish_time", "permalink_url", "full_picture", "status_type"].join(",");
+
+export interface ScheduledPost {
+  id: string;
+  message: string | null;
+  scheduledTime: string | null; // ISO; null if Graph gave none
+  createdTime: string | null;
+  permalink: string | null;
+  picture: string | null;
+  type: string | null;
+}
+
+interface RawScheduled {
+  id: string;
+  message?: string;
+  created_time?: string;
+  scheduled_publish_time?: number | string;
+  permalink_url?: string;
+  full_picture?: string;
+  status_type?: string;
+}
+
+/** scheduled_publish_time comes as unix seconds (number or numeric string) or ISO. */
+function toIso(v: number | string | undefined): string | null {
+  if (v == null || v === "") return null;
+  const n = typeof v === "number" ? v : /^\d+$/.test(v) ? Number(v) : NaN;
+  const ms = Number.isFinite(n) ? n * 1000 : Date.parse(String(v));
+  return Number.isFinite(ms) ? new Date(ms).toISOString() : null;
+}
+
+export function parseScheduled(data: unknown): { scheduled: ScheduledPost[] } {
+  const raw = (data as { data?: RawScheduled[] })?.data ?? [];
+  return {
+    scheduled: raw.map((p) => ({
+      id: p.id,
+      message: p.message ? p.message.slice(0, 500) : null,
+      scheduledTime: toIso(p.scheduled_publish_time),
+      createdTime: p.created_time ?? null,
+      permalink: p.permalink_url ?? null,
+      picture: p.full_picture ?? null,
+      type: p.status_type ?? null,
+    })),
+  };
+}
+
+export function fetchScheduledBatch(items: Array<{ pageId: string; candidates: ReachCandidate[] }>) {
+  return fetchPageBatch<{ scheduled: ScheduledPost[] }>(
+    items,
+    (pageId) => `/${pageId}/scheduled_posts?fields=${SCHEDULED_FIELDS}&limit=${SCHEDULED_PER_PAGE}`,
+    parseScheduled,
+  );
+}

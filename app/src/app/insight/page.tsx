@@ -763,8 +763,8 @@ export default function InsightPage() {
             Insight <em>Reach</em>
           </h1>
         </div>
-        <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
-          <div className="btn-group" role="tablist" aria-label="Chọn tab">
+        <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", minWidth: 0, maxWidth: "100%" }}>
+          <div className="btn-group insight-tabs" role="tablist" aria-label="Chọn tab">
             <button role="tab" aria-selected={tab === "reach"} className={`btn-seg${tab === "reach" ? " active" : ""}`} onClick={() => setTab("reach")}>
               Reach
             </button>

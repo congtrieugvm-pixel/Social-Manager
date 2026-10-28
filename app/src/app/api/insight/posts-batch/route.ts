@@ -2,16 +2,17 @@ import { NextResponse } from "next/server";
 import { getOwnerId } from "@/lib/scope";
 import { readBody } from "@/lib/req-body";
 import { loadCandidates } from "@/lib/insight-tokens";
-import { fetchPostsBatch } from "@/lib/page-posts";
+import { fetchPostsBatch, fetchScheduledBatch } from "@/lib/page-posts";
 import { saveSnapshots } from "@/lib/insight-snapshots";
 import { errorResponse } from "../_util";
 
 const MAX_PAGES = 20;
 
 // POST /api/insight/posts-batch  { pages: [{ pageId, tokens: [tokenId…] }] }
-// → { results: { [pageId]: { posts: PagePost[] } | { error, cooling? } } }
-// Latest 25 posts per page with lifetime reach/views + engagement, one Graph
-// Batch call; answers saved as snapshots (kind 'posts').
+// → { results: { [pageId]: { posts, scheduled: ScheduledPost[] | null, scheduledError? } | { error, cooling? } } }
+// Latest 25 posts per page with lifetime reach/views + engagement, plus the
+// page's scheduled posts — two Graph Batch calls in parallel; answers saved as
+// snapshots (kind 'posts').
 export async function POST(req: Request) {
   try {
     const ownerId = await getOwnerId();
@@ -23,17 +24,27 @@ export async function POST(req: Request) {
 
     const candidates = await loadCandidates(ownerId, [...new Set(pages.flatMap((p) => p.tokens.map(Number)))]);
     const byId = new Map(candidates.map((c) => [c.tokenId, c]));
-    const results = await fetchPostsBatch(
-      pages.map((p) => ({
-        pageId: p.pageId,
-        candidates: p.tokens.map((t) => byId.get(Number(t))).filter((c): c is NonNullable<typeof c> => !!c),
-      })),
-    );
+    const items = pages.map((p) => ({
+      pageId: p.pageId,
+      candidates: p.tokens.map((t) => byId.get(Number(t))).filter((c): c is NonNullable<typeof c> => !!c),
+    }));
+    const [published, scheduled] = await Promise.all([fetchPostsBatch(items), fetchScheduledBatch(items)]);
+    // Published posts decide success; the scheduled list rides along (or its
+    // error, e.g. a token without the permission) without failing the page.
+    const results: Record<string, unknown> = {};
+    for (const [pageId, r] of Object.entries(published)) {
+      if ("error" in r) {
+        results[pageId] = r;
+        continue;
+      }
+      const s = scheduled[pageId];
+      results[pageId] = s && !("error" in s) ? { ...r, scheduled: s.scheduled } : { ...r, scheduled: null, scheduledError: s?.error ?? "Không đọc được" };
+    }
     await saveSnapshots(
       ownerId,
       "posts",
       Object.entries(results)
-        .filter(([, r]) => !("error" in r))
+        .filter(([, r]) => !(r as { error?: string }).error)
         .map(([key, data]) => ({ key, data })),
     );
     return NextResponse.json({ results }, { headers: { "Cache-Control": "no-store" } });

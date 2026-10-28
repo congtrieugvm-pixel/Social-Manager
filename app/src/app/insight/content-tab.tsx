@@ -6,8 +6,9 @@ import { encodeBodyHeader } from "@/lib/req-body";
 // "Nội dung" tab of Insight: the latest 25 posts of every page (lifetime
 // reach / views + engagement), filterable by group, and a per-group content
 // performance table — average reach per post vs the previous period of the
-// same length. Saved snapshots show instantly; Graph is read for pages
-// without one, when older than 2 hours, or on "Load nội dung".
+// same length. A second view lists the pages' scheduled posts (soonest
+// first). Saved snapshots show instantly; Graph is read for pages without
+// one, when older than 2 hours, or on "Load nội dung".
 
 interface Page {
   id: string;
@@ -35,7 +36,22 @@ interface Post {
   views: number | null;
 }
 
-type PageState = { status: "loading" } | { status: "ok"; posts: Post[] } | { status: "error"; error: string };
+interface Scheduled {
+  id: string;
+  message: string | null;
+  scheduledTime: string | null;
+  createdTime: string | null;
+  permalink: string | null;
+  picture: string | null;
+  type: string | null;
+}
+
+/** scheduled: undefined = snapshot from before scheduled posts were read; null = read failed. */
+type PageState =
+  | { status: "loading" }
+  | { status: "ok"; posts: Post[]; scheduled?: Scheduled[] | null; scheduledError?: string }
+  | { status: "error"; error: string };
+type View = "published" | "scheduled";
 
 type Period = 7 | 30 | 90;
 type Kind = "all" | "video" | "photo" | "text";
@@ -54,6 +70,19 @@ const STALE_MS = 2 * 60 * 60_000;
 const PAGE_LIST = 200; // posts rendered at once ("Hiện thêm" for more)
 const smallBtn = { padding: "5px 10px", fontSize: 11 } as const;
 const fmt = (n: number | null | undefined) => (n == null ? "—" : n.toLocaleString("vi-VN"));
+
+/** "còn 3 giờ 20 phút" / "còn 2 ngày" until a scheduled time. */
+function untilText(iso: string | null, nowMs: number): string {
+  if (!iso) return "chưa rõ giờ";
+  const m = Math.round((Date.parse(iso) - nowMs) / 60_000);
+  if (m <= 0) return "đến giờ đăng";
+  if (m < 60) return `còn ${m} phút`;
+  if (m < 24 * 60) return `còn ${Math.floor(m / 60)} giờ${m % 60 ? ` ${m % 60} phút` : ""}`;
+  return `còn ${Math.round(m / 1440)} ngày`;
+}
+
+const fmtTime = (iso: string) =>
+  new Date(iso).toLocaleString("vi-VN", { weekday: "short", day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" });
 
 function kindOf(t: string | null): Exclude<Kind, "all"> {
   if (!t) return "text";
@@ -103,7 +132,7 @@ export function ContentTab({
     } catch {
       return {};
     }
-  })() as { period?: Period; group?: "all" | "none" | number };
+  })() as { period?: Period; group?: "all" | "none" | number; view?: View };
   const [state, setState] = useState<Record<string, PageState>>({});
   const [savedAt, setSavedAt] = useState<Record<string, number>>({});
   const [booted, setBooted] = useState(false);
@@ -111,6 +140,7 @@ export function ContentTab({
   const [period, setPeriod] = useState<Period>(saved.period && PERIODS.includes(saved.period) ? saved.period : 30);
   const [group, setGroup] = useState<"all" | "none" | number>(saved.group ?? "all");
   const [kind, setKind] = useState<Kind>("all");
+  const [view, setView] = useState<View>(saved.view === "scheduled" ? "scheduled" : "published");
   const [search, setSearch] = useState("");
   const [sort, setSort] = useState<SortKey>("new");
   const [limit, setLimit] = useState(PAGE_LIST);
@@ -121,9 +151,9 @@ export function ContentTab({
   const loadingRef = useRef(false);
   const lastFullRef = useRef(0);
 
-  function remember(patch: { period?: Period; group?: "all" | "none" | number }) {
+  function remember(patch: { period?: Period; group?: "all" | "none" | number; view?: View }) {
     try {
-      if (prefKey) localStorage.setItem(prefKey, JSON.stringify({ period, group, ...patch }));
+      if (prefKey) localStorage.setItem(prefKey, JSON.stringify({ period, group, view, ...patch }));
     } catch {
       // ignore
     }
@@ -163,7 +193,7 @@ export function ContentTab({
     };
     try {
       await runPool(chunks, CONCURRENCY, async (chunk) => {
-        let results: Record<string, { posts: Post[] } | { error: string }> = {};
+        let results: Record<string, { posts: Post[]; scheduled?: Scheduled[] | null; scheduledError?: string } | { error: string }> = {};
         let fail = "";
         try {
           const res = await fetch("/api/insight/posts-batch", {
@@ -181,7 +211,7 @@ export function ContentTab({
         for (const p of chunk) {
           const r = results[p.id];
           if (r && "posts" in r) {
-            pending[p.id] = { status: "ok", posts: r.posts };
+            pending[p.id] = { status: "ok", posts: r.posts, scheduled: r.scheduled ?? null, scheduledError: r.scheduledError };
             pendingAt[p.id] = now;
           } else pending[p.id] = { status: "error", error: (r && "error" in r ? r.error : fail) || "Lỗi" };
         }
@@ -210,12 +240,15 @@ export function ContentTab({
     (async () => {
       try {
         const res = await fetch("/api/insight/snapshots?kind=posts", { cache: "no-store" });
-        const data = (await res.json()) as { items?: Record<string, { data: { posts: Post[] }; fetchedAt: number }> };
+        const data = (await res.json()) as {
+          items?: Record<string, { data: { posts: Post[]; scheduled?: Scheduled[] | null; scheduledError?: string }; fetchedAt: number }>;
+        };
         const st: Record<string, PageState> = {};
         const at: Record<string, number> = {};
         for (const [pid, v] of Object.entries(data.items ?? {})) {
-          st[pid] = { status: "ok", posts: v.data.posts ?? [] };
-          at[pid] = v.fetchedAt;
+          st[pid] = { status: "ok", posts: v.data.posts ?? [], scheduled: v.data.scheduled, scheduledError: v.data.scheduledError };
+          // Saved before scheduled posts were read: fetch this page again.
+          if (v.data.scheduled !== undefined) at[pid] = v.fetchedAt;
         }
         setState(st);
         setSavedAt(at);
@@ -322,6 +355,34 @@ export function ContentTab({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [state, scopedIds.join(","), curFrom, kind, term, sort]);
 
+  const scheduledList = useMemo(() => {
+    const out: Array<Scheduled & { pageId: string }> = [];
+    for (const pid of scopedIds) {
+      const s = state[pid];
+      if (s?.status !== "ok" || !s.scheduled) continue;
+      for (const p of s.scheduled) {
+        // Past its time = already published (shows under "Đã đăng" after a reload).
+        if (p.scheduledTime && Date.parse(p.scheduledTime) < nowMs - 60_000) continue;
+        if (kind !== "all" && kindOf(p.type) !== kind) continue;
+        if (term && !(p.message ?? "").toLowerCase().includes(term) && !(pageById.get(pid)?.name ?? "").toLowerCase().includes(term)) continue;
+        out.push({ ...p, pageId: pid });
+      }
+    }
+    return out.sort((a, b) => (a.scheduledTime ?? "9").localeCompare(b.scheduledTime ?? "9"));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [state, scopedIds.join(","), kind, term, Math.floor(nowMs / 60_000)]);
+  const schedReadIds = scopedIds.filter((id) => {
+    const s = state[id];
+    return s?.status === "ok" && Array.isArray(s.scheduled);
+  });
+  const schedErrorIds = scopedIds.filter((id) => {
+    const s = state[id];
+    return s?.status === "ok" && s.scheduled === null;
+  });
+  const pagesWithSched = new Set(scheduledList.map((p) => p.pageId));
+  const in24h = new Set(scheduledList.filter((p) => p.scheduledTime && Date.parse(p.scheduledTime) - nowMs < 86_400_000).map((p) => p.pageId));
+  const nextPost = scheduledList.find((p) => p.scheduledTime);
+
   const loaded = scopedIds.filter((id) => state[id]?.status === "ok").length;
   const errors = scopedIds.filter((id) => state[id]?.status === "error").length;
   const times = scopedIds.map((id) => savedAt[id]).filter((t): t is number => !!t);
@@ -337,6 +398,27 @@ export function ContentTab({
   return (
     <>
       <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", marginBottom: 12 }}>
+        <div className="btn-group" role="tablist" aria-label="Bài đã đăng / đã lên lịch">
+          {(
+            [
+              ["published", "Đã đăng"],
+              ["scheduled", `Đã lên lịch (${scheduledList.length})`],
+            ] as Array<[View, string]>
+          ).map(([v, l]) => (
+            <button
+              key={v}
+              role="tab"
+              aria-selected={view === v}
+              className={`btn-seg${view === v ? " active" : ""}`}
+              onClick={() => {
+                setView(v);
+                remember({ view: v });
+              }}
+            >
+              {l}
+            </button>
+          ))}
+        </div>
         <select
           className="input"
           aria-label="Xem theo nhóm"
@@ -357,7 +439,7 @@ export function ContentTab({
           ))}
           <option value="none">Chưa phân nhóm</option>
         </select>
-        <div className="btn-group" role="tablist" aria-label="Khoảng thời gian">
+        {view === "published" && <div className="btn-group" role="tablist" aria-label="Khoảng thời gian">
           {PERIODS.map((p) => (
             <button
               key={p}
@@ -372,7 +454,7 @@ export function ContentTab({
               {p} ngày
             </button>
           ))}
-        </div>
+        </div>}
         <select className="input" aria-label="Loại bài" value={kind} onChange={(e) => setKind(e.target.value as Kind)} style={{ padding: "4px 8px", fontSize: 12, width: "auto" }}>
           {KINDS.map((k) => (
             <option key={k.key} value={k.key}>
@@ -390,6 +472,26 @@ export function ContentTab({
         </button>
       </div>
 
+      {view === "scheduled" ? (
+        <ScheduledView
+          list={scheduledList}
+          pageById={pageById}
+          groupOf={(pid) => {
+            const gid = groupOfPage(pid);
+            return gid ? groupById.get(gid) ?? null : null;
+          }}
+          nowMs={nowMs}
+          readCount={schedReadIds.length}
+          scopeCount={scopedIds.length}
+          errorCount={schedErrorIds.length}
+          firstError={schedErrorIds.length ? (state[schedErrorIds[0]] as { scheduledError?: string }).scheduledError ?? null : null}
+          pagesWithSched={pagesWithSched.size}
+          pagesNo24h={schedReadIds.filter((id) => !in24h.has(id)).length}
+          nextPost={nextPost ?? null}
+          loading={!!progress}
+        />
+      ) : (
+      <>
       <div className="kpi-grid insight-kpis">
         <div className="kpi">
           <span className="kpi-label">Bài viết {period} ngày</span>
@@ -557,6 +659,128 @@ export function ContentTab({
         <div style={{ textAlign: "center", marginTop: 10 }}>
           <button className="btn" style={smallBtn} onClick={() => setLimit((l) => l + PAGE_LIST)}>
             Hiện thêm ({posts.length - limit} bài)
+          </button>
+        </div>
+      )}
+      </>
+      )}
+    </>
+  );
+}
+
+function ScheduledView(props: {
+  list: Array<Scheduled & { pageId: string }>;
+  pageById: Map<string, Page>;
+  groupOf: (pageId: string) => Group | null;
+  nowMs: number;
+  readCount: number;
+  scopeCount: number;
+  errorCount: number;
+  firstError: string | null;
+  pagesWithSched: number;
+  pagesNo24h: number;
+  nextPost: (Scheduled & { pageId: string }) | null;
+  loading: boolean;
+}) {
+  const { list, pageById, nowMs } = props;
+  const [limit, setLimit] = useState(PAGE_LIST);
+  return (
+    <>
+      <div className="kpi-grid insight-kpis">
+        <div className="kpi">
+          <span className="kpi-label">Bài đã lên lịch</span>
+          <span className="kpi-num insight-num">{fmt(list.length)}</span>
+          <span className="kpi-sub insight-sub">
+            {props.readCount}/{props.scopeCount} Trang đã đọc lịch{props.errorCount ? ` · ${props.errorCount} không đọc được` : ""}
+          </span>
+        </div>
+        <div className="kpi">
+          <span className="kpi-label">Trang có lịch đăng</span>
+          <span className="kpi-num insight-num">{fmt(props.pagesWithSched)}</span>
+          <span className="kpi-sub insight-sub">trên {props.readCount} Trang đã đọc</span>
+        </div>
+        <div className="kpi">
+          <span className="kpi-label">Bài sắp lên tiếp theo</span>
+          <span className="kpi-num insight-num" style={{ fontSize: 18 }}>{props.nextPost?.scheduledTime ? fmtTime(props.nextPost.scheduledTime) : "—"}</span>
+          <span className="kpi-sub insight-sub">
+            {props.nextPost ? `${pageById.get(props.nextPost.pageId)?.name ?? props.nextPost.pageId} · ${untilText(props.nextPost.scheduledTime, nowMs)}` : "Chưa có bài nào lên lịch"}
+          </span>
+        </div>
+        <div className="kpi">
+          <span className="kpi-label">Trang trống lịch 24 giờ tới</span>
+          <span className="kpi-num insight-num" style={{ color: props.pagesNo24h ? "var(--warn)" : undefined }}>{fmt(props.pagesNo24h)}</span>
+          <span className="kpi-sub insight-sub">Không có bài nào lên trong 24 giờ tới</span>
+        </div>
+      </div>
+
+      {props.errorCount > 0 && (
+        <div className="card" style={{ padding: "10px 14px", marginBottom: 12, fontSize: 12, color: "var(--muted)" }}>
+          {props.errorCount} Trang không đọc được bài lên lịch{props.firstError ? ` (${props.firstError})` : ""}. Token cần quyền <b>pages_read_engagement</b> trên Trang đó.
+        </div>
+      )}
+
+      <div className="table-wrap insight-table-wrap">
+        <table className="table insight-posts insight-scheduled">
+          <thead>
+            <tr>
+              <th style={{ width: 64 }} />
+              <th>Bài viết</th>
+              <th>Lên lịch lúc</th>
+              <th />
+            </tr>
+          </thead>
+          <tbody>
+            {list.slice(0, limit).map((p) => {
+              const pg = pageById.get(p.pageId);
+              const g = props.groupOf(p.pageId);
+              const soon = p.scheduledTime && Date.parse(p.scheduledTime) - nowMs < 3 * 3_600_000;
+              return (
+                <tr key={p.id}>
+                  <td>
+                    {p.picture ? (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img src={p.picture} alt="" width={56} height={56} loading="lazy" style={{ objectFit: "cover", borderRadius: 6, display: "block", background: "var(--bg-3)" }} />
+                    ) : (
+                      <div style={{ width: 56, height: 56, borderRadius: 6, background: "var(--bg-3)" }} />
+                    )}
+                  </td>
+                  <td style={{ maxWidth: 460 }}>
+                    <div className="insight-post-msg" title={p.message ?? ""}>
+                      {p.message || <span style={{ color: "var(--dim)" }}>(không có chữ)</span>}
+                    </div>
+                    <div className="mono" style={{ fontSize: 10, color: "var(--muted)", marginTop: 4, display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
+                      {g && <span style={{ width: 7, height: 7, borderRadius: "50%", background: g.color }} title={g.name} />}
+                      <span>{pg?.name ?? p.pageId}</span>
+                      <span>·</span>
+                      <span>{KINDS.find((k) => k.key === kindOf(p.type))?.label}</span>
+                    </div>
+                  </td>
+                  <td style={{ whiteSpace: "nowrap" }}>
+                    <div className="insight-num">{p.scheduledTime ? fmtTime(p.scheduledTime) : "—"}</div>
+                    <div className="mono" style={{ fontSize: 10, color: soon ? "var(--warn)" : "var(--muted)", marginTop: 2 }}>{untilText(p.scheduledTime, nowMs)}</div>
+                  </td>
+                  <td className="right">
+                    {p.permalink && (
+                      <a href={p.permalink} target="_blank" rel="noreferrer" className="btn" style={{ padding: "3px 8px", fontSize: 10, textDecoration: "none" }}>
+                        Mở ↗
+                      </a>
+                    )}
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+        {list.length === 0 && (
+          <div style={{ padding: 18, color: "var(--muted)", fontSize: 12 }}>
+            {props.loading ? "Đang tải lịch đăng…" : props.readCount === 0 ? "Chưa đọc lịch đăng — bấm ⟳ Load nội dung." : "Không có bài nào đang lên lịch."}
+          </div>
+        )}
+      </div>
+      {list.length > limit && (
+        <div style={{ textAlign: "center", marginTop: 10 }}>
+          <button className="btn" style={smallBtn} onClick={() => setLimit((l) => l + PAGE_LIST)}>
+            Hiện thêm ({list.length - limit} bài)
           </button>
         </div>
       )}

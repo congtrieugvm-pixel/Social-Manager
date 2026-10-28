@@ -1639,3 +1639,8 @@ a.btn {
 .yt-kind.tiktok { background: rgba(57, 197, 207, 0.15); color: #39c5cf; }
 .yt-kind.feed { background: rgba(210, 153, 34, 0.15); color: var(--warn); }
 .yt-wrap { white-space: normal; overflow-wrap: anywhere; }
+
+/* Insight header tabs: never wider than the screen — scroll inside on phones */
+.btn-group.insight-tabs { max-width: 100%; overflow-x: auto; scrollbar-width: none; }
+.btn-group.insight-tabs::-webkit-scrollbar { display: none; }
+.btn-group.insight-tabs .btn-seg { flex-shrink: 0; white-space: nowrap; }
