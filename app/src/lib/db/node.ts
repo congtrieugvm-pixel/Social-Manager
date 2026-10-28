@@ -219,6 +219,33 @@ export function initNodeDb(): BetterSQLite3Database<typeof schema> {
     );
     CREATE UNIQUE INDEX IF NOT EXISTS yt_channels_owner_channel ON yt_channels(owner_user_id, channel_id);
     CREATE INDEX IF NOT EXISTS idx_yt_channels_group ON yt_channels(group_id);
+    CREATE TABLE IF NOT EXISTS fb_comment_rules (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    owner_user_id INTEGER NOT NULL REFERENCES app_users(id) ON DELETE CASCADE,
+    target_type TEXT NOT NULL,
+    target_id TEXT NOT NULL,
+    comments TEXT NOT NULL,
+    enabled INTEGER NOT NULL DEFAULT 1,
+    active_since INTEGER NOT NULL,
+    last_run_at INTEGER,
+    created_at INTEGER NOT NULL DEFAULT (unixepoch())
+    );
+    CREATE INDEX IF NOT EXISTS idx_fb_comment_rules_owner ON fb_comment_rules(owner_user_id);
+    CREATE TABLE IF NOT EXISTS fb_comment_log (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    owner_user_id INTEGER NOT NULL REFERENCES app_users(id) ON DELETE CASCADE,
+    rule_id INTEGER REFERENCES fb_comment_rules(id) ON DELETE SET NULL,
+    page_id TEXT NOT NULL,
+    post_id TEXT NOT NULL,
+    post_message TEXT,
+    comment TEXT,
+    comment_id TEXT,
+    status TEXT NOT NULL,
+    error TEXT,
+    created_at INTEGER NOT NULL DEFAULT (unixepoch())
+    );
+    CREATE UNIQUE INDEX IF NOT EXISTS fb_comment_log_owner_post ON fb_comment_log(owner_user_id, post_id);
+    CREATE INDEX IF NOT EXISTS idx_fb_comment_log_owner_time ON fb_comment_log(owner_user_id, created_at);
     CREATE TABLE IF NOT EXISTS insight_snapshots (
       owner_user_id INTEGER NOT NULL REFERENCES app_users(id) ON DELETE CASCADE,
       kind TEXT NOT NULL,

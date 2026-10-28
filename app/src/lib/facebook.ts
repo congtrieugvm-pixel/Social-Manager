@@ -90,6 +90,24 @@ export async function graphFetch<T>(pathAndQuery: string, accessToken: string): 
   return data as T;
 }
 
+/** POST form fields to Graph (e.g. a comment); errors carry `.graph` like graphFetch. */
+export async function graphPost<T>(path: string, fields: Record<string, string>, accessToken: string): Promise<T> {
+  const res = await fetch(`${GRAPH_BASE}${path}`, {
+    method: "POST",
+    cache: "no-store",
+    headers: { "content-type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({ ...fields, access_token: accessToken }),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok || data?.error) {
+    const err = new Error(scrubGraphMessage(String(data?.error?.message ?? `Graph API ${res.status} ${res.statusText}`)));
+    (err as Error & { graph?: unknown; httpStatus?: number }).graph = data?.error;
+    (err as Error & { httpStatus?: number }).httpStatus = res.status;
+    throw err;
+  }
+  return data as T;
+}
+
 export interface BatchItemResult<T = unknown> {
   ok: boolean;
   /** Parsed body on success. */

@@ -1,0 +1,17 @@
+# Cron for Social Manager: every 5 minutes, runs the Insight auto-comment job
+# by calling the main Worker through a service binding (no public URL).
+# CRON_SECRET is a Worker secret set on BOTH this Worker and social-manager
+# (`npx wrangler secret put CRON_SECRET`); the main route rejects calls without it.
+# Deployed by CI after the main Worker: `npx wrangler deploy -c workers/cron/wrangler.toml`.
+name = "social-manager-cron"
+main = "index.js"
+compatibility_date = "2026-04-01"
+workers_dev = false
+preview_urls = false
+
+[triggers]
+crons = ["*/5 * * * *"]
+
+[[services]]
+binding = "APP"
+service = "social-manager"

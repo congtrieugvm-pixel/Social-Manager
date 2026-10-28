@@ -5,6 +5,7 @@ import { encodeBodyHeader } from "@/lib/req-body";
 import { LineChart, Sparkline, ddmm, type DayPoint } from "./charts";
 import { MonetizationTab } from "./monetization-tab";
 import { ContentTab } from "./content-tab";
+import { AutoCommentTab } from "./autocomment-tab";
 
 type Range = "today" | "7d" | "28d";
 type Filter = "all" | "none" | number; // number = group id
@@ -210,7 +211,7 @@ export default function InsightPage() {
   const [loadingAll, setLoadingAll] = useState(false);
   const [sort, setSort] = useState<{ key: SortKey; dir: "asc" | "desc" }>({ key: "reach", dir: "desc" });
   const [checked, setChecked] = useState<Set<string>>(new Set());
-  const [tab, setTab] = useState<"reach" | "content" | "monet" | "tokens">("reach");
+  const [tab, setTab] = useState<"reach" | "content" | "monet" | "comment" | "tokens">("reach");
   const [showGroups, setShowGroups] = useState(false);
   const [pickerGroupId, setPickerGroupId] = useState<number | null>(null);
   const runRef = useRef(0);
@@ -774,6 +775,9 @@ export default function InsightPage() {
             <button role="tab" aria-selected={tab === "monet"} className={`btn-seg${tab === "monet" ? " active" : ""}`} onClick={() => setTab("monet")}>
               Kiếm tiền
             </button>
+            <button role="tab" aria-selected={tab === "comment"} className={`btn-seg${tab === "comment" ? " active" : ""}`} onClick={() => setTab("comment")}>
+              Comment tự động
+            </button>
             <button role="tab" aria-selected={tab === "tokens"} className={`btn-seg${tab === "tokens" ? " active" : ""}`} onClick={() => setTab("tokens")}>
               Quản lý token ({tokens?.length ?? 0})
             </button>
@@ -836,6 +840,12 @@ export default function InsightPage() {
           <div className="card mono" style={{ color: "var(--muted)", fontSize: 12 }}>Đang tải…</div>
         ) : (
           <ContentTab pages={pages} groups={groups} assignments={assignments} username={username} />
+        )
+      ) : tab === "comment" ? (
+        tokens === null || !booted || (pagesProgress && pages.length === 0) ? (
+          <div className="card mono" style={{ color: "var(--muted)", fontSize: 12 }}>Đang tải…</div>
+        ) : (
+          <AutoCommentTab pages={pages} groups={groups} assignments={assignments} />
         )
       ) : tab === "monet" ? (
         tokens === null || !booted || (pagesProgress && pages.length === 0) ? (

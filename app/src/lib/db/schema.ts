@@ -272,6 +272,39 @@ export const ytChannels = sqliteTable("yt_channels", {
     .default(sql`(unixepoch())`),
 });
 
+// Insight "Comment tự động" (migration 0010)
+export const fbCommentRules = sqliteTable("fb_comment_rules", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  ownerUserId: integer("owner_user_id")
+    .notNull()
+    .references(() => appUsers.id, { onDelete: "cascade" }),
+  targetType: text("target_type").notNull(), // page | group
+  targetId: text("target_id").notNull(), // page id, or insight_page_groups.id
+  comments: text("comments").notNull(), // JSON string[]
+  enabled: integer("enabled", { mode: "boolean" }).notNull().default(true),
+  activeSince: integer("active_since").notNull(), // unix s
+  lastRunAt: integer("last_run_at"),
+  createdAt: integer("created_at", { mode: "timestamp" })
+    .notNull()
+    .default(sql`(unixepoch())`),
+});
+
+export const fbCommentLog = sqliteTable("fb_comment_log", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  ownerUserId: integer("owner_user_id")
+    .notNull()
+    .references(() => appUsers.id, { onDelete: "cascade" }),
+  ruleId: integer("rule_id").references(() => fbCommentRules.id, { onDelete: "set null" }),
+  pageId: text("page_id").notNull(),
+  postId: text("post_id").notNull(),
+  postMessage: text("post_message"),
+  comment: text("comment"),
+  commentId: text("comment_id"),
+  status: text("status").notNull(), // ok | error
+  error: text("error"),
+  createdAt: integer("created_at").notNull(), // unix s
+});
+
 export type InsightToken = typeof insightTokens.$inferSelect;
 export type InsightPageGroup = typeof insightPageGroups.$inferSelect;
 
