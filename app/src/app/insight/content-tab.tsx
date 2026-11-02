@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { encodeBodyHeader } from "@/lib/req-body";
-import { ExternalLink, FileText, RefreshCw } from "lucide-react";
+import { Check, ChevronDown, ExternalLink, FileText, RefreshCw, Search } from "lucide-react";
 
 // "Nội dung" tab of Insight: the latest 25 posts of every page (lifetime
 // reach / views + engagement), filterable by group, and a per-group content
@@ -133,13 +133,15 @@ export function ContentTab({
     } catch {
       return {};
     }
-  })() as { period?: Period; group?: "all" | "none" | number; view?: View };
+  })() as { period?: Period; group?: "all" | "none" | number; view?: View; pageId?: string | null };
   const [state, setState] = useState<Record<string, PageState>>({});
   const [savedAt, setSavedAt] = useState<Record<string, number>>({});
   const [booted, setBooted] = useState(false);
   const [progress, setProgress] = useState<{ done: number; total: number } | null>(null);
   const [period, setPeriod] = useState<Period>(saved.period && PERIODS.includes(saved.period) ? saved.period : 30);
   const [group, setGroup] = useState<"all" | "none" | number>(saved.group ?? "all");
+  // One Page picked → everything below shows that Page only (group filter is set aside).
+  const [pageId, setPageId] = useState<string | null>(saved.pageId ?? null);
   const [kind, setKind] = useState<Kind>("all");
   const [view, setView] = useState<View>(saved.view === "scheduled" ? "scheduled" : "published");
   const [search, setSearch] = useState("");
@@ -152,9 +154,9 @@ export function ContentTab({
   const loadingRef = useRef(false);
   const lastFullRef = useRef(0);
 
-  function remember(patch: { period?: Period; group?: "all" | "none" | number; view?: View }) {
+  function remember(patch: { period?: Period; group?: "all" | "none" | number; view?: View; pageId?: string | null }) {
     try {
-      if (prefKey) localStorage.setItem(prefKey, JSON.stringify({ period, group, view, ...patch }));
+      if (prefKey) localStorage.setItem(prefKey, JSON.stringify({ period, group, view, pageId, ...patch }));
     } catch {
       // ignore
     }
@@ -319,7 +321,8 @@ export function ContentTab({
     return { posts, reach, avgReach: withReach ? reach / withReach : 0, avgEngage: posts ? eng / posts : 0 };
   }
 
-  const scopedIds = pages.filter((p) => inGroup(p.id, group)).map((p) => p.id);
+  const pagePicked = pageId && pages.some((p) => p.id === pageId) ? pageId : null;
+  const scopedIds = pagePicked ? [pagePicked] : pages.filter((p) => inGroup(p.id, group)).map((p) => p.id);
   const cur = windowStats(scopedIds, curFrom, nowMs + 1, false);
   const prev = windowStats(scopedIds, prevFrom, curFrom, true);
   const change = pct(cur.avgReach, prev.avgReach);
@@ -355,6 +358,17 @@ export function ContentTab({
     return out.sort((a, b) => val(b) - val(a));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [state, scopedIds.join(","), curFrom, kind, term, sort]);
+
+  const postCounts = useMemo(() => {
+    const m = new Map<string, number>();
+    for (const pg of pages) {
+      const st = state[pg.id];
+      if (st?.status !== "ok") continue;
+      m.set(pg.id, st.posts.filter((x) => Date.parse(x.createdTime) >= curFrom).length);
+    }
+    return m;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [state, pages, curFrom]);
 
   const scheduledList = useMemo(() => {
     const out: Array<Scheduled & { pageId: string }> = [];
@@ -404,7 +418,7 @@ export function ContentTab({
 
   return (
     <>
-      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", marginBottom: 12 }}>
+      <div className="content-tools" style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", marginBottom: 12 }}>
         <div className="btn-group" role="tablist" aria-label="Bài đã đăng / đã lên lịch">
           {(
             [
@@ -433,10 +447,11 @@ export function ContentTab({
           onChange={(e) => {
             const v = e.target.value === "all" || e.target.value === "none" ? e.target.value : Number(e.target.value);
             setGroup(v);
+            setPageId(null);
             setLimit(PAGE_LIST);
-            remember({ group: v });
+            remember({ group: v, pageId: null });
           }}
-          style={{ padding: "4px 8px", fontSize: 12, width: "auto", maxWidth: 220 }}
+          style={{ padding: "4px 28px 4px 8px", fontSize: 12, width: "auto", maxWidth: 240 }}
         >
           <option value="all">Tất cả nhóm ({pages.length} Trang)</option>
           {groups.map((g) => (
@@ -446,6 +461,16 @@ export function ContentTab({
           ))}
           <option value="none">Chưa phân nhóm</option>
         </select>
+        <PagePicker
+          pages={pages}
+          value={pagePicked}
+          counts={postCounts}
+          onChange={(id) => {
+            setPageId(id);
+            setLimit(PAGE_LIST);
+            remember({ pageId: id });
+          }}
+        />
         {view === "published" && <div className="btn-group" role="tablist" aria-label="Khoảng thời gian">
           {PERIODS.map((p) => (
             <button
@@ -527,7 +552,7 @@ export function ContentTab({
         </div>
       </div>
 
-      {group === "all" && groupRows.length > 0 && (
+      {group === "all" && !pagePicked && groupRows.length > 0 && (
         <section className="section" style={{ marginBottom: 16 }}>
           <div className="section-label" style={{ marginBottom: 8 }}>
             Hiệu suất nội dung theo nhóm — reach trung bình mỗi bài {period} ngày qua so với {period} ngày trước đó
@@ -598,7 +623,38 @@ export function ContentTab({
         </div>
       </div>
 
-      <div className="table-wrap insight-table-wrap">
+      <div className="m-list only-phone">
+        {posts.slice(0, limit).map((p) => {
+          const pg = pageById.get(p.pageId);
+          return (
+            <a key={p.id} className="m-post" href={p.permalink ?? undefined} target="_blank" rel="noreferrer">
+              {p.picture ? (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img src={p.picture} alt="" loading="lazy" className="m-post-img" />
+              ) : (
+                <span className="m-post-img" />
+              )}
+              <span className="m-post-body">
+                <span className="m-post-msg">{p.message || "(không có chữ)"}</span>
+                <span className="m-meta">
+                  {pg?.name ?? p.pageId} · {new Date(p.createdTime).toLocaleString("vi-VN", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" })}
+                </span>
+                <span className="m-post-stats">
+                  <span><b>{fmt(p.reach)}</b> reach</span>
+                  <span><b>{fmt(p.views)}</b> xem</span>
+                  <span><b>{fmt(engage(p))}</b> tương tác</span>
+                </span>
+              </span>
+            </a>
+          );
+        })}
+        {posts.length === 0 && (
+          <div className="card" style={{ color: "var(--muted)", fontSize: 13 }}>
+            {progress ? "Đang tải bài viết…" : `Không có bài nào trong ${period} ngày qua.`}
+          </div>
+        )}
+      </div>
+      <div className="table-wrap insight-table-wrap only-wide">
         <table className="table insight-posts">
           <thead>
             <tr>
@@ -793,5 +849,93 @@ function ScheduledView(props: {
         </div>
       )}
     </>
+  );
+}
+
+/** Vietnamese-friendly search key: lower case, no diacritics, đ → d. */
+const fold = (t: string) => t.normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/đ/g, "d").replace(/Đ/g, "d").toLowerCase();
+
+/** Pick one Page to look at, with a search box (accent-insensitive). */
+function PagePicker({
+  pages,
+  value,
+  counts,
+  onChange,
+}: {
+  pages: Page[];
+  value: string | null;
+  counts: Map<string, number>;
+  onChange: (id: string | null) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [q, setQ] = useState("");
+  const ref = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    setQ("");
+    // Next tick: the input exists now.
+    setTimeout(() => inputRef.current?.focus(), 0);
+    const onDown = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    };
+    const onKey = (e: KeyboardEvent) => e.key === "Escape" && setOpen(false);
+    document.addEventListener("mousedown", onDown);
+    window.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onDown);
+      window.removeEventListener("keydown", onKey);
+    };
+  }, [open]);
+
+  const term = fold(q.trim());
+  const list = useMemo(
+    () =>
+      pages
+        .filter((p) => !term || fold(p.name).includes(term) || p.id.includes(term))
+        .sort((a, b) => (counts.get(b.id) ?? 0) - (counts.get(a.id) ?? 0) || a.name.localeCompare(b.name, "vi")),
+    [pages, term, counts],
+  );
+  const current = value ? pages.find((p) => p.id === value) : null;
+  const pick = (id: string | null) => {
+    onChange(id);
+    setOpen(false);
+  };
+
+  return (
+    <div className="pagepick" ref={ref}>
+      <button type="button" className={`btn pagepick-btn${current ? " picked" : ""}`} aria-expanded={open} aria-haspopup="listbox" onClick={() => setOpen((v) => !v)}>
+        <span className="pagepick-label">{current ? current.name : `Tất cả Trang (${pages.length})`}</span>
+        <ChevronDown size={14} aria-hidden="true" />
+      </button>
+      {open && (
+        <div className="pagepick-pop" role="dialog" aria-label="Chọn Trang">
+          <label className="search-field pagepick-search">
+            <Search size={16} aria-hidden="true" />
+            <input ref={inputRef} autoFocus type="search" placeholder="Tìm Trang theo tên hoặc ID" value={q} onChange={(e) => setQ(e.target.value)} aria-label="Tìm Trang" />
+          </label>
+          <ul className="pagepick-list" role="listbox" aria-label="Danh sách Trang">
+            {!term && (
+              <li role="option" aria-selected={!value}>
+                <button type="button" className="pagepick-item" onClick={() => pick(null)}>
+                  <span className="pagepick-name">Tất cả Trang</span>
+                  {!value && <Check size={16} aria-hidden="true" />}
+                </button>
+              </li>
+            )}
+            {list.slice(0, 200).map((p) => (
+              <li key={p.id} role="option" aria-selected={value === p.id}>
+                <button type="button" className="pagepick-item" onClick={() => pick(p.id)}>
+                  <span className="pagepick-name">{p.name}</span>
+                  <span className="pagepick-count">{counts.has(p.id) ? `${counts.get(p.id)} bài` : "—"}</span>
+                  {value === p.id && <Check size={16} aria-hidden="true" />}
+                </button>
+              </li>
+            ))}
+            {list.length === 0 && <li className="pagepick-empty">Không có Trang nào khớp “{q.trim()}”.</li>}
+          </ul>
+        </div>
+      )}
+    </div>
   );
 }

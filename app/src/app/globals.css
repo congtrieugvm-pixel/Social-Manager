@@ -2082,3 +2082,68 @@ kbd { display: inline-flex; align-items: center; justify-content: center; min-wi
   .m-actionbar .btn-primary { flex: 1.6; }
   .m-actionbar .m-ab-more { flex: 0 0 44px; padding: 0; }
 }
+
+.menu-sep { height: 1px; margin: 4px 6px; background: var(--line); }
+.menu-item input[type="checkbox"] { width: 18px; height: 18px; margin: 0 1px; }
+button.menu-item { appearance: none; border: 0; background: transparent; font: inherit; text-align: left; width: 100%; }
+button.menu-item:disabled { opacity: 0.45; }
+
+@media (max-width: 768px) {
+  /* Header: title left, "＋ Nhập" + overflow menu right — one row */
+  .tt-head { flex-wrap: nowrap; align-items: center; }
+  .tt-head .page-header-left { min-width: 0; }
+  .tt-head-phone { display: flex !important; align-items: center; gap: 8px; flex-shrink: 0; }
+  .tt-head-phone .btn { min-height: 44px; }
+  .tt-head-phone .btn-icon { width: 44px; padding: 0; }
+  .tt-head-phone .menu-pop { right: 0; left: auto; min-width: 250px; }
+  .tt-head-phone .menu-item { min-height: 46px; font-size: 15px; }
+
+  /* Sticky list bar under the top bar: select all + sort */
+  .m-listbar { position: sticky; top: calc(52px + env(safe-area-inset-top)); z-index: 20; display: flex; align-items: center; gap: 8px; margin: 0 -14px; padding: 8px 14px; background: var(--bg); border-bottom: 1px solid var(--line); }
+  .m-selectall-box { display: flex; align-items: center; gap: 10px; flex: 1; min-width: 0; min-height: 44px; padding: 0 12px 0 10px; border: 1px solid var(--line-strong); border-radius: 10px; background: var(--paper); font-size: 14.5px; font-weight: 600; color: var(--ink); }
+  .m-selectall-box input { width: 20px; height: 20px; flex: 0 0 auto; }
+  .m-selectall-box span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .m-sortpick { width: auto; flex: 0 0 auto; max-width: 46%; min-height: 44px; }
+  /* The toolbar card is just search + reload on phones */
+  .tt-toolbar { box-shadow: none; }
+}
+
+/* ── Insight Nội dung: Page picker ── */
+.pagepick { position: relative; }
+.pagepick-btn { max-width: 260px; }
+.pagepick-btn.picked { border-color: var(--accent); background: var(--accent-soft); color: var(--ink); font-weight: 600; }
+.pagepick-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pagepick-pop { position: absolute; left: 0; top: calc(100% + 6px); z-index: 35; width: 340px; max-width: calc(100vw - 32px); padding: 8px; background: var(--paper); border: 1px solid var(--line); border-radius: 12px; box-shadow: var(--shadow-pop); display: flex; flex-direction: column; gap: 6px; }
+.pagepick-search { max-width: none; }
+.pagepick-list { list-style: none; margin: 0; padding: 0; max-height: 340px; overflow-y: auto; overscroll-behavior: contain; }
+.pagepick-item { appearance: none; display: flex; align-items: center; gap: 8px; width: 100%; min-height: 38px; padding: 6px 10px; border: 0; border-radius: 8px; background: transparent; color: var(--ink); font: inherit; font-size: 13.5px; text-align: left; }
+.pagepick-item:hover { background: var(--bg-2); }
+.pagepick-item svg { color: var(--accent); flex: 0 0 auto; }
+.pagepick-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pagepick-count { flex: 0 0 auto; font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.pagepick-empty { padding: 12px 10px; font-size: 13px; color: var(--muted); }
+
+@media (max-width: 768px) {
+  .pagepick { flex: 1 1 100%; }
+  .pagepick-btn { width: 100%; max-width: none; min-height: 44px; justify-content: space-between; }
+  /* The list slides up from the bottom on phones */
+  .pagepick-pop { position: fixed; left: 0; right: 0; top: auto; bottom: 0; width: 100%; max-width: none; z-index: 60; border-radius: 18px 18px 0 0; padding: 14px 12px calc(14px + env(safe-area-inset-bottom)); animation: sheet-up 0.22s ease-out; box-shadow: 0 -12px 40px rgba(23, 32, 51, 0.25); }
+  .pagepick-list { max-height: 55vh; }
+  .pagepick-item { min-height: 48px; font-size: 15px; }
+
+  /* Post cards */
+  .m-post { display: flex; gap: 12px; padding: 10px; background: var(--paper); border: 1px solid var(--line); border-radius: 14px; color: inherit; text-decoration: none; box-shadow: var(--shadow-1); }
+  .m-post-img { flex: 0 0 auto; width: 72px; height: 72px; border-radius: 10px; object-fit: cover; background: var(--bg-2); }
+  .m-post-body { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 4px; }
+  .m-post-msg { font-size: 14.5px; color: var(--ink); line-height: 1.4; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+  .m-post-stats { display: flex; flex-wrap: wrap; gap: 4px 12px; font-size: 12.5px; color: var(--muted); font-variant-numeric: tabular-nums; }
+  .m-post-stats b { color: var(--ink); }
+}
+
+@media (max-width: 768px) {
+  /* Insight › Nội dung: the Page picker is the most-used filter — first, full width */
+  .content-tools > .pagepick { order: -2; flex: 1 1 100%; }
+  .content-tools > .pagepick .pagepick-btn { width: 100%; min-height: 48px; font-size: 15px; }
+  .content-tools > .btn-group:first-child { order: -1; }
+  .content-tools > select[aria-label="Xem theo nhóm"] { flex: 1 1 0; min-width: 0; max-width: none !important; }
+}

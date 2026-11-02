@@ -17,7 +17,6 @@ import {
   FolderOpen,
   Play,
   MoreHorizontal,
-  ListChecks,
   Inbox,
   SearchX,
   FolderMinus,
@@ -1402,7 +1401,44 @@ export default function Dashboard() {
             {total.toLocaleString("vi-VN")} tài khoản · {groups.length} nhóm · {statusesList.length} trạng thái
           </p>
         </div>
-        <div className="tt-head-actions">
+        <div className="tt-head-phone only-phone">
+          <Link href="/import" className="btn btn-primary" aria-label="Nhập tài khoản">
+            <Plus size={18} aria-hidden="true" />
+            Nhập
+          </Link>
+          <details className="menu">
+            <summary className="btn btn-icon" aria-label="Thao tác khác">
+              <MoreHorizontal size={20} aria-hidden="true" />
+            </summary>
+            <div className="menu-pop" role="menu">
+              <button
+                type="button"
+                role="menuitem"
+                className="menu-item"
+                disabled={action !== null}
+                onClick={(e) => {
+                  (e.currentTarget.closest("details") as HTMLDetailsElement).open = false;
+                  triggerAutoFetch();
+                }}
+              >
+                <RefreshCw size={16} aria-hidden="true" />
+                Đồng bộ tất cả tài khoản
+              </button>
+              <label className="menu-item">
+                <input type="checkbox" checked={idleCfg.enabled} onChange={(e) => setIdleCfg({ ...idleCfg, enabled: e.target.checked })} />
+                Hiện số ngày chưa đăng
+              </label>
+              <div className="menu-sep" role="separator" />
+              {CATALOG.map(({ href, label, icon: Icon }) => (
+                <Link key={href} href={href} role="menuitem" className="menu-item">
+                  <Icon size={16} aria-hidden="true" />
+                  {label}
+                </Link>
+              ))}
+            </div>
+          </details>
+        </div>
+        <div className="tt-head-actions only-wide">
           <details className="menu">
             <summary className="btn" aria-label="Danh mục">
               <SlidersHorizontal size={15} aria-hidden="true" />
@@ -1492,7 +1528,9 @@ export default function Dashboard() {
             <button onClick={load} disabled={loading} className="btn btn-icon" aria-label="Tải lại danh sách" title="Tải lại danh sách">
               <RotateCw size={15} aria-hidden="true" className={loading ? "spin" : undefined} />
             </button>
-            <IdleDaysMenu cfg={idleCfg} onChange={setIdleCfg} open={idleCfgOpen} onOpenChange={setIdleCfgOpen} />
+            <span className="only-wide">
+              <IdleDaysMenu cfg={idleCfg} onChange={setIdleCfg} open={idleCfgOpen} onOpenChange={setIdleCfgOpen} />
+            </span>
           </div>
 
           {selected.size > 0 ? (
@@ -2034,6 +2072,39 @@ export default function Dashboard() {
 
         {/* Phones: one card per account instead of the wide table. */}
         <div className="m-list only-phone" aria-label="Danh sách tài khoản">
+          {filtered.length > 0 && (
+            <div className="m-listbar">
+              <label className="m-selectall-box">
+                <input
+                  type="checkbox"
+                  checked={allSelected}
+                  ref={(el) => {
+                    if (el) el.indeterminate = selected.size > 0 && !allSelected;
+                  }}
+                  onChange={toggleAll}
+                />
+                <span>{allSelected ? "Bỏ chọn tất cả" : `Chọn tất cả (${filtered.length})`}</span>
+              </label>
+              <select
+                className="input m-sortpick"
+                aria-label="Sắp xếp"
+                value={`${sortKey}:${sortDir}`}
+                onChange={(e) => {
+                  const [k, d] = e.target.value.split(":") as [SortKey, SortDir];
+                  setSortKey(k);
+                  setSortDir(d);
+                }}
+              >
+                <option value="createdAt:desc">Mới thêm</option>
+                <option value="follower:desc">Follower nhiều</option>
+                <option value="follower:asc">Follower ít</option>
+                <option value="video:desc">Nhiều video</option>
+                <option value="username:asc">Tên A → Z</option>
+                <option value="group:asc">Theo nhóm</option>
+                <option value="status:asc">Theo trạng thái</option>
+              </select>
+            </div>
+          )}
           {filtered.length === 0 && loading &&
             Array.from({ length: 5 }, (_, i) => (
               <div key={i} className="m-card" aria-hidden="true">
@@ -2145,12 +2216,6 @@ export default function Dashboard() {
               </article>
             );
           })}
-          {filtered.length > 0 && selected.size === 0 && (
-            <button type="button" className="btn m-selectall" onClick={toggleAll}>
-              <ListChecks size={16} aria-hidden="true" />
-              Chọn tất cả {filtered.length} tài khoản trên trang
-            </button>
-          )}
         </div>
 
         {/* Phones: selection actions pinned above the tab bar. */}
