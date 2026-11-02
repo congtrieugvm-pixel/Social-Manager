@@ -1863,3 +1863,50 @@ details.menu[open] > summary { background: var(--bg-2); }
   .bulk-select { flex: 1 1 140px; }
   .menu-pop { right: auto; left: 0; }
 }
+
+/* ── Skeleton loading ── */
+.sk { display: inline-block; height: 10px; width: 60%; border-radius: 6px; background: linear-gradient(90deg, var(--bg-2) 25%, var(--bg-3) 50%, var(--bg-2) 75%); background-size: 200% 100%; animation: sk-shimmer 1.3s ease-in-out infinite; vertical-align: middle; }
+@keyframes sk-shimmer { from { background-position: 200% 0; } to { background-position: -200% 0; } }
+.sk-tr td { padding-top: 16px; padding-bottom: 16px; }
+.sk-card { display: flex; flex-direction: column; gap: 14px; }
+.sk-caption { font-size: 13px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.sk-line { display: flex; align-items: center; gap: 12px; }
+.sk-line .sk-dot { width: 28px; height: 28px; border-radius: 50%; flex: 0 0 auto; }
+.sk-line .sk-num { width: 56px; margin-left: auto; flex: 0 0 auto; }
+
+/* ── Table density (html[data-density="compact"]) ── */
+html[data-density="compact"] .table { font-size: 13px; }
+html[data-density="compact"] .table thead th { padding-top: 7px; padding-bottom: 7px; }
+html[data-density="compact"] .table tbody td { padding-top: 5px; padding-bottom: 5px; }
+html[data-density="compact"] .avatar, html[data-density="compact"] .avatar-fallback { width: 26px; height: 26px; font-size: 12px; }
+html[data-density="compact"] .video-thumb, html[data-density="compact"] .video-thumb-placeholder { width: 24px; height: 34px; }
+html[data-density="compact"] .table .input, html[data-density="compact"] .table select { min-height: 28px; padding-top: 3px; padding-bottom: 3px; }
+.density-toggle .btn-seg { min-height: 26px; padding: 3px 10px; }
+
+/* ── TikTok table: checkbox, STT and account stay put while scrolling sideways ── */
+.tt-table th:nth-child(1), .tt-table td:nth-child(1) { width: 44px; min-width: 44px; max-width: 44px; padding-left: 14px; padding-right: 14px; }
+.tt-table th:nth-child(2), .tt-table td:nth-child(2) { width: 56px; min-width: 56px; max-width: 56px; padding-left: 6px; padding-right: 14px; }
+.tt-table th:nth-child(-n+3), .tt-table td:nth-child(-n+3) { position: sticky; z-index: 2; background: var(--paper); }
+.tt-table thead th:nth-child(-n+3) { z-index: 3; background: var(--bg-1); }
+.tt-table th:nth-child(1), .tt-table td:nth-child(1) { left: 0; }
+.tt-table th:nth-child(2), .tt-table td:nth-child(2) { left: 44px; }
+.tt-table th:nth-child(3), .tt-table td:nth-child(3) { left: 100px; box-shadow: inset -1px 0 0 var(--line); }
+.tt-table tbody tr:hover td:nth-child(-n+3) { background: var(--bg-1); }
+.tt-table tbody tr.selected td:nth-child(-n+3) { background: color-mix(in srgb, var(--accent) 9%, var(--paper)); }
+.tt-table tbody tr.selected:hover td:nth-child(-n+3) { background: color-mix(in srgb, var(--accent) 18%, var(--paper)); }
+.tt-table td.empty-cell { position: static; width: auto; min-width: 0; max-width: none; box-shadow: none; }
+@media (max-width: 768px) {
+  .tt-table th:nth-child(-n+3), .tt-table td:nth-child(-n+3) { position: static; box-shadow: none; }
+}
+
+/* ── Empty states: say what is going on and offer the next step ── */
+.empty-cell { padding: 0 !important; }
+.empty-state { display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 48px 20px; text-align: center; color: var(--muted); }
+.empty-state svg { color: var(--dim); margin-bottom: 4px; }
+.empty-state h3 { margin: 0; font-size: 16px; font-weight: 650; color: var(--ink); }
+.empty-state p { margin: 0 0 8px; font-size: 13.5px; max-width: 46ch; line-height: 1.5; }
+
+/* ── Keyboard hints ── */
+kbd { display: inline-flex; align-items: center; justify-content: center; min-width: 20px; height: 20px; padding: 0 5px; border: 1px solid var(--line-strong); border-bottom-width: 2px; border-radius: 5px; background: var(--bg-1); color: var(--muted); font-family: var(--font-sans); font-size: 11.5px; font-weight: 600; line-height: 1; }
+.search-field kbd { flex: 0 0 auto; }
+@media (hover: none) { .search-field kbd { display: none; } }

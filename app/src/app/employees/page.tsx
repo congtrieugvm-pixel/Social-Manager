@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { encodeBodyHeader } from "@/lib/req-body";
+import { confirmDialog, notify } from "@/app/_components/notify";
 
 interface EmployeeRow {
   id: number;
@@ -68,7 +69,7 @@ export default function EmployeesPage() {
   async function submit() {
     const name = formName.trim();
     if (!name) {
-      alert("Tên nhân viên không được trống");
+      notify("Tên nhân viên không được trống");
       return;
     }
     const payload = {
@@ -89,7 +90,7 @@ export default function EmployeesPage() {
           });
     if (!res.ok) {
       const err = await res.json().catch(() => ({ error: "Lỗi" }));
-      alert(err.error ?? "Lỗi");
+      notify(err.error ?? "Lỗi");
       return;
     }
     resetForm();
@@ -101,7 +102,7 @@ export default function EmployeesPage() {
       count > 0
         ? `Xóa nhân viên này? ${count} tài khoản đang gán sẽ về "Chưa đặt".`
         : "Xóa nhân viên này?";
-    if (!confirm(msg)) return;
+    if (!(await confirmDialog({ message: msg, confirmLabel: "Xoá", danger: true }))) return;
     await fetch(`/api/employees/${id}`, { method: "DELETE" });
     if (editingId === id) resetForm();
     await load();

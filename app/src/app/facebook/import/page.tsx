@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { encodeBodyHeader } from "@/lib/req-body";
+import { notify } from "@/app/_components/notify";
 
 type FieldKey =
   | "username"
@@ -193,7 +194,7 @@ ${SHORT_EXAMPLE}`;
 
   async function handlePreview() {
     if (!hasUsername) {
-      alert("Phải chọn ít nhất 1 cột là Username");
+      notify("Phải chọn ít nhất 1 cột là Username");
       return;
     }
     setLoading(true);

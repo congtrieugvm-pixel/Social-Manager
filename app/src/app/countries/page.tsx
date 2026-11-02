@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { encodeBodyHeader } from "@/lib/req-body";
+import { confirmDialog, notify } from "@/app/_components/notify";
 
 interface CountryRow {
   id: number;
@@ -68,7 +69,7 @@ export default function CountriesPage() {
   async function submit() {
     const name = formName.trim();
     if (!name) {
-      alert("Tên quốc gia không được trống");
+      notify("Tên quốc gia không được trống");
       return;
     }
     const payload = {
@@ -89,7 +90,7 @@ export default function CountriesPage() {
           });
     if (!res.ok) {
       const err = await res.json().catch(() => ({ error: "Lỗi" }));
-      alert(err.error ?? "Lỗi");
+      notify(err.error ?? "Lỗi");
       return;
     }
     resetForm();
@@ -101,7 +102,7 @@ export default function CountriesPage() {
       count > 0
         ? `Xóa quốc gia này? ${count} tài khoản đang gán sẽ về "Chưa đặt".`
         : "Xóa quốc gia này?";
-    if (!confirm(msg)) return;
+    if (!(await confirmDialog({ message: msg, confirmLabel: "Xoá", danger: true }))) return;
     await fetch(`/api/countries/${id}`, { method: "DELETE" });
     if (editingId === id) resetForm();
     await load();

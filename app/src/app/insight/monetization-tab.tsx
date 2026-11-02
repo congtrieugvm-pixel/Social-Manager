@@ -1,6 +1,7 @@
 "use client";
 
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
+import { ChevronDown, ChevronRight, ExternalLink, RefreshCw } from "lucide-react";
 
 // "Kiếm tiền" tab of Insight: Meta's "Kiếm tiền từ nội dung — Tiêu chí của
 // danh sách chờ" checklist for every page, read with the Insight tokens (see
@@ -229,7 +230,7 @@ function WaitlistCard({ page, data, period }: { page: Page; data: Monet; period:
             </details>
           )}
           <button className="monet-card-toggle" onClick={() => setOpen((o) => !o)} aria-expanded={open}>
-            Tiêu chí của danh sách chờ {open ? "▼" : "▶"}
+            Tiêu chí của danh sách chờ {open ? <ChevronDown size={14} aria-hidden="true" /> : <ChevronRight size={14} aria-hidden="true" />}
           </button>
           {open && (
             <ul className="monet-criteria">
@@ -249,7 +250,7 @@ function WaitlistCard({ page, data, period }: { page: Page; data: Monet; period:
         <div className="monet-card-side">
           <div>{active ? "Đang kiếm tiền" : last ? "Không có doanh thu > 15 ngày" : "Chỉ dành cho người được mời"}</div>
           <a href={monetizationUrl(page.id)} target="_blank" rel="noreferrer" className="btn" style={{ ...smallBtn, textDecoration: "none", marginTop: 8 }}>
-            Xem lời mời trong Business Suite ↗
+            Xem lời mời trong Business Suite <ExternalLink size={12} aria-hidden="true" />
           </a>
         </div>
       </div>
@@ -606,7 +607,8 @@ export function MonetizationTab({
       <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", marginBottom: 12 }}>
         <input
           className="input"
-          placeholder="Tìm Trang theo tên hoặc ID…"
+          placeholder="Tìm Trang theo tên hoặc ID"
+          data-search
           value={search}
           onChange={(e) => setSearch(e.target.value)}
           style={{ flex: "1 1 200px", maxWidth: 280 }}
@@ -667,7 +669,8 @@ export function MonetizationTab({
           onClick={() => loadAll()}
           title="Đọc lại số liệu kiếm tiền của mọi Trang từ Facebook (tự động khi số liệu cũ hơn 2 giờ)"
         >
-          {progress ? `Đang tải ${progress.done}/${progress.total}…` : "⟳ Load kiếm tiền"}
+          <RefreshCw size={14} aria-hidden="true" className={progress ? "spin" : undefined} />
+          {progress ? `Đang tải ${progress.done}/${progress.total}…` : "Load kiếm tiền"}
         </button>
         <button className="btn" style={smallBtn} onClick={exportCsv} disabled={list.length === 0}>
           Xuất CSV
@@ -759,7 +762,7 @@ export function MonetizationTab({
                         style={{ padding: "3px 8px", fontSize: 12, textDecoration: "none", whiteSpace: "nowrap" }}
                         title="Mở mục Kiếm tiền của Trang trong Meta Business Suite (xem lời mời)"
                       >
-                        Kiếm tiền ↗
+                        Kiếm tiền <ExternalLink size={12} aria-hidden="true" />
                       </a>
                     </td>
                   </tr>

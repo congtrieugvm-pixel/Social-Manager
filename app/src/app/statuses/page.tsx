@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { encodeBodyHeader } from "@/lib/req-body";
+import { confirmDialog, notify } from "@/app/_components/notify";
 
 interface StatusRow {
   id: number;
@@ -64,7 +65,7 @@ export default function StatusesPage() {
   async function submit() {
     const name = formName.trim();
     if (!name) {
-      alert("Tên trạng thái không được trống");
+      notify("Tên trạng thái không được trống");
       return;
     }
     const payload = { name, color: formColor, sortOrder: formOrder };
@@ -80,7 +81,7 @@ export default function StatusesPage() {
           });
     if (!res.ok) {
       const err = await res.json().catch(() => ({ error: "Lỗi" }));
-      alert(err.error ?? "Lỗi");
+      notify(err.error ?? "Lỗi");
       return;
     }
     resetForm();
@@ -92,7 +93,7 @@ export default function StatusesPage() {
       count > 0
         ? `Xóa trạng thái này? ${count} tài khoản đang dùng sẽ về "Chưa đặt".`
         : "Xóa trạng thái này?";
-    if (!confirm(msg)) return;
+    if (!(await confirmDialog({ message: msg, confirmLabel: "Xoá", danger: true }))) return;
     await fetch(`/api/statuses/${id}`, { method: "DELETE" });
     if (editingId === id) resetForm();
     await load();

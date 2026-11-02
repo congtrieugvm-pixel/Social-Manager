@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { encodeBodyHeader } from "@/lib/req-body";
+import { confirmDialog, notify } from "@/app/_components/notify";
 
 interface GroupRow {
   id: number;
@@ -64,7 +65,7 @@ export default function GroupsPage() {
   async function submit() {
     const name = formName.trim();
     if (!name) {
-      alert("Tên nhóm không được trống");
+      notify("Tên nhóm không được trống");
       return;
     }
     const payload = { name, color: formColor, description: formDesc.trim() };
@@ -81,12 +82,12 @@ export default function GroupsPage() {
               headers: { "X-Body": encodeBodyHeader(payload) },
             });
     } catch (e) {
-      alert("Không gửi được: " + (e instanceof Error ? e.message : String(e)));
+      notify("Không gửi được: " + (e instanceof Error ? e.message : String(e)));
       return;
     }
     if (!res.ok) {
       const err = await res.json().catch(() => ({ error: "Lỗi" }));
-      alert(err.error ?? "Lỗi");
+      notify(err.error ?? "Lỗi");
       return;
     }
     resetForm();
@@ -98,7 +99,7 @@ export default function GroupsPage() {
       count > 0
         ? `Xóa nhóm này? ${count} tài khoản sẽ chuyển về "không nhóm".`
         : "Xóa nhóm này?";
-    if (!confirm(msg)) return;
+    if (!(await confirmDialog({ message: msg, confirmLabel: "Xoá", danger: true }))) return;
     await fetch(`/api/groups/${id}`, { method: "DELETE" });
     if (editingId === id) resetForm();
     await load();

@@ -6,6 +6,10 @@ import { LineChart, Sparkline, ddmm, type DayPoint } from "./charts";
 import { MonetizationTab } from "./monetization-tab";
 import { ContentTab } from "./content-tab";
 import { AutoCommentTab } from "./autocomment-tab";
+import { confirmDialog, promptDialog } from "@/app/_components/notify";
+import { Plus, RefreshCw, Settings, X } from "lucide-react";
+import { SkeletonCard } from "@/app/_components/skeleton";
+import { DensityToggle } from "@/app/_components/density-toggle";
 
 type Range = "today" | "7d" | "28d";
 type Filter = "all" | "none" | number; // number = group id
@@ -516,7 +520,7 @@ export default function InsightPage() {
   }
 
   async function deleteToken(t: Token) {
-    if (!confirm(`Xóa token “${t.label}”? Các Trang chỉ đọc được qua token này sẽ biến mất khỏi Insight.`)) return;
+    if (!(await confirmDialog({ message: `Xóa token “${t.label}”? Các Trang chỉ đọc được qua token này sẽ biến mất khỏi Insight.`, confirmLabel: "Xoá", danger: true }))) return;
     const r = await api(`/api/insight/tokens/${t.id}`, { method: "DELETE" });
     if (!r.ok) return setNotice({ tone: "err", text: r.data.error ?? "Không xóa được token" });
     setTokens((prev) => prev?.filter((x) => x.id !== t.id) ?? prev);
@@ -556,7 +560,7 @@ export default function InsightPage() {
 
   async function deleteGroup(g: Group) {
     const n = counts.byGroup[g.id] ?? 0;
-    if (!confirm(`Xóa nhóm “${g.name}”?${n ? ` ${n} Trang trong nhóm sẽ về “Chưa phân nhóm”.` : ""}`)) return;
+    if (!(await confirmDialog({ message: `Xóa nhóm “${g.name}”?${n ? ` ${n} Trang trong nhóm sẽ về “Chưa phân nhóm”.` : ""}`, confirmLabel: "Xoá", danger: true }))) return;
     const r = await api(`/api/insight/groups/${g.id}`, { method: "DELETE" });
     if (!r.ok) return setNotice({ tone: "err", text: r.data.error ?? "Không xóa được nhóm" });
     setGroups((prev) => prev.filter((x) => x.id !== g.id));
@@ -814,7 +818,7 @@ export default function InsightPage() {
         >
           <span style={{ flex: 1 }}>{notice.text}</span>
           <button className="btn" style={{ padding: "2px 8px", fontSize: 12 }} onClick={() => setNotice(null)} aria-label="Đóng">
-            ✕
+            <X size={14} aria-hidden="true" />
           </button>
         </div>
       )}
@@ -837,35 +841,33 @@ export default function InsightPage() {
         )
       ) : tab === "content" ? (
         tokens === null || !booted || (pagesProgress && pages.length === 0) ? (
-          <div className="card mono" style={{ color: "var(--muted)", fontSize: 12 }}>Đang tải…</div>
+          <SkeletonCard />
         ) : (
           <ContentTab pages={pages} groups={groups} assignments={assignments} username={username} />
         )
       ) : tab === "comment" ? (
         tokens === null || !booted || (pagesProgress && pages.length === 0) ? (
-          <div className="card mono" style={{ color: "var(--muted)", fontSize: 12 }}>Đang tải…</div>
+          <SkeletonCard />
         ) : (
           <AutoCommentTab pages={pages} groups={groups} assignments={assignments} />
         )
       ) : tab === "monet" ? (
         tokens === null || !booted || (pagesProgress && pages.length === 0) ? (
-          <div className="card mono" style={{ color: "var(--muted)", fontSize: 12 }}>
-            {pagesProgress ? `Đang tải danh sách Trang ${pagesProgress.done}/${pagesProgress.total} token…` : "Đang tải…"}
-          </div>
+          <SkeletonCard caption={pagesProgress ? `Đang tải danh sách Trang ${pagesProgress.done}/${pagesProgress.total} token…` : undefined} />
         ) : (
           <MonetizationTab pages={pages} groups={groups} assignments={assignments} username={username} />
         )
       ) : tokens === null || !booted || (pagesProgress && pages.length === 0) ? (
-        <div className="card mono" style={{ color: "var(--muted)", fontSize: 12 }}>
-          {pagesProgress ? `Đang tải danh sách Trang ${pagesProgress.done}/${pagesProgress.total} token…` : "Đang tải…"}
-        </div>
+        <SkeletonCard caption={pagesProgress ? `Đang tải danh sách Trang ${pagesProgress.done}/${pagesProgress.total} token…` : undefined} />
       ) : tokens.length === 0 ? (
-        <div className="card" style={{ color: "var(--muted)", lineHeight: 1.6 }}>
-          Chưa có token. Mở tab{" "}
-          <button className="btn" style={{ padding: "2px 8px", fontSize: 11 }} onClick={() => setTab("tokens")}>
-            Quản lý token
-          </button>{" "}
-          để nhập System User Token / User Token.
+        <div className="card empty-state">
+          <Settings size={28} aria-hidden="true" />
+          <h3>Chưa có token Facebook</h3>
+          <p>Thêm System User Token hoặc User Token để Insight đọc được các Trang bạn quản lý.</p>
+          <button className="btn btn-primary" onClick={() => setTab("tokens")}>
+            <Plus size={16} aria-hidden="true" />
+            Thêm token
+          </button>
         </div>
       ) : pages.length === 0 ? (
         <div className="card" style={{ color: "var(--muted)" }}>
@@ -896,7 +898,7 @@ export default function InsightPage() {
                 color="var(--dim)"
               />
               <button className="btn" style={smallBtn} onClick={() => setShowGroups((v) => !v)} aria-expanded={showGroups}>
-                {showGroups ? "Đóng quản lý nhóm" : "＋ / ✎ Nhóm"}
+                {showGroups ? "Đóng quản lý nhóm" : "Quản lý nhóm"}
               </button>
             </div>
             {showGroups && (
@@ -908,7 +910,8 @@ export default function InsightPage() {
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", marginBottom: 14 }}>
             <input
               className="input"
-              placeholder="Tìm Trang theo tên hoặc ID…"
+              placeholder="Tìm Trang theo tên hoặc ID"
+              data-search
               value={search}
               onChange={(e) => setSearch(e.target.value)}
               style={{ flex: "1 1 220px", maxWidth: 340 }}
@@ -921,12 +924,14 @@ export default function InsightPage() {
             <span className="mono" style={{ fontSize: 11, color: "var(--muted)" }} title="Tự động cập nhật khi số liệu cũ hơn 2 giờ">
               {updatedLabel}
             </span>
+            <DensityToggle />
             <button className="btn btn-primary" style={smallBtn} onClick={() => loadAll()} disabled={loadingAll}>
-              {loadingAll ? (progress ? `Đang tải ${progress.done}/${progress.total}…` : "Đang tải…") : "⟳ Load Insight"}
+              <RefreshCw size={14} aria-hidden="true" className={loadingAll ? "spin" : undefined} />
+              {loadingAll ? (progress ? `Đang tải ${progress.done}/${progress.total}…` : "Đang tải…") : "Load Insight"}
             </button>
             {typeof effectiveFilter === "number" && (
               <button className="btn btn-primary" style={smallBtn} onClick={() => setPickerGroupId(effectiveFilter)}>
-                ＋ Thêm Trang vào nhóm
+                <Plus size={14} aria-hidden="true" /> Thêm Trang vào nhóm
               </button>
             )}
             <button className="btn" style={smallBtn} onClick={exportCsv} disabled={tableRows.length === 0}>
@@ -941,7 +946,7 @@ export default function InsightPage() {
               </span>
               {typeof effectiveFilter === "number" && !search && (
                 <button className="btn btn-primary" style={smallBtn} onClick={() => setPickerGroupId(effectiveFilter)}>
-                  ＋ Thêm Trang vào nhóm này
+                  <Plus size={14} aria-hidden="true" /> Thêm Trang vào nhóm này
                 </button>
               )}
             </div>
@@ -1192,7 +1197,7 @@ function GroupSelect({
         const v = e.target.value;
         if (v === "") return;
         if (v === "new") {
-          const name = prompt("Tên nhóm mới:")?.trim();
+          const name = (await promptDialog({ title: "Tạo nhóm mới", label: "Tên nhóm", placeholder: "Ví dụ: Nhóm Việt Nam", confirmLabel: "Tạo nhóm" }))?.trim();
           if (!name) return;
           const g = await onCreate(name, GROUP_COLORS[groups.length % GROUP_COLORS.length]);
           if (g) onChange(g.id);
@@ -1208,7 +1213,7 @@ function GroupSelect({
           {g.name}
         </option>
       ))}
-      <option value="new">＋ Nhóm mới…</option>
+      <option value="new">+ Nhóm mới…</option>
     </select>
   );
 }
@@ -1477,7 +1482,7 @@ function GroupManager({
           style={{ width: 34, height: 30, border: 0, background: "transparent", padding: 0 }}
         />
         <button type="button" className="btn" style={smallBtn} onClick={() => setPicker("new")}>
-          {newPages.length ? `Đã chọn ${newPages.length} Trang ✎` : "＋ Chọn Trang"}
+          {newPages.length ? `Đã chọn ${newPages.length} Trang` : "Chọn Trang"}
         </button>
         <button className="btn btn-primary" style={smallBtn} disabled={!name.trim() || busy}>
           {busy ? "Đang tạo…" : newPages.length ? `Tạo nhóm + gán ${newPages.length} Trang` : "Tạo nhóm"}
@@ -1530,7 +1535,7 @@ function GroupManager({
                   </button>
                   <GroupStatChips stat={stats[g.id]} />
                   <button className="btn btn-primary" style={{ padding: "3px 8px", fontSize: 11 }} onClick={() => setPicker(g.id)}>
-                    ＋ Thêm Trang
+                    <Plus size={14} aria-hidden="true" /> Thêm Trang
                   </button>
                   <button className="btn btn-danger" style={{ padding: "3px 8px", fontSize: 12 }} onClick={() => onDelete(g)}>
                     Xóa

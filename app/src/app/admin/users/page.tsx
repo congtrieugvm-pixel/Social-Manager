@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { encodeBodyHeader } from "@/lib/req-body";
+import { confirmDialog, notify, promptDialog } from "@/app/_components/notify";
 
 interface UserRow {
   id: number;
@@ -140,10 +141,7 @@ export default function AdminUsersPage() {
   }
 
   async function resetPassword(u: UserRow) {
-    const next = window.prompt(
-      `Đặt mật khẩu mới cho @${u.username} (tối thiểu 6 ký tự):`,
-      "",
-    );
+    const next = (await promptDialog({ title: `Đặt mật khẩu mới cho @${u.username}`, label: "Mật khẩu mới (tối thiểu 6 ký tự)", confirmLabel: "Đặt mật khẩu" }));
     if (next == null) return;
     if (next.length < 6) {
       setRowError((b) => ({ ...b, [u.id]: "Mật khẩu tối thiểu 6 ký tự" }));
@@ -151,12 +149,12 @@ export default function AdminUsersPage() {
     }
     const ok = await patchUser(u.id, { password: next }, "pwd");
     if (ok) {
-      window.alert(`Đã đổi mật khẩu cho @${u.username}. Mọi phiên cũ đã bị huỷ.`);
+      notify(`Đã đổi mật khẩu cho @${u.username}. Mọi phiên cũ đã bị huỷ.`);
     }
   }
 
   async function removeUser(u: UserRow) {
-    if (!window.confirm(`Xoá user @${u.username}? Không thể phục hồi.`)) return;
+    if (!(await confirmDialog({ message: `Xoá user @${u.username}? Không thể phục hồi.`, confirmLabel: "Xoá", danger: true }))) return;
     setRowBusy((b) => ({ ...b, [u.id]: "delete" }));
     setRowError((b) => ({ ...b, [u.id]: null }));
     try {

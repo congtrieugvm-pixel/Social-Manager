@@ -14,6 +14,9 @@ import {
   ExternalLink,
   Film,
   Folder,
+  FolderOpen,
+  Inbox,
+  SearchX,
   FolderMinus,
   Globe,
   Image as ImageIcon,
@@ -34,6 +37,8 @@ import {
 import { generateTotpCode } from "@/lib/totp";
 import { encodeBodyHeader } from "@/lib/req-body";
 import { confirmDialog, notify, promptDialog } from "./_components/notify";
+import { SkeletonRows } from "./_components/skeleton";
+import { DensityToggle } from "./_components/density-toggle";
 
 interface Video {
   id: string;
@@ -455,6 +460,43 @@ export default function Dashboard() {
       setSelected(new Set(filtered.map((r) => r.id)));
     }
   }
+
+  // Shift + click selects (or clears) every row between the last click and this one.
+  const lastIdxRef = useRef<number | null>(null);
+  const shiftRef = useRef(false);
+  function toggleAt(idx: number, id: number) {
+    const last = lastIdxRef.current;
+    if (shiftRef.current && last !== null && last !== idx) {
+      const [a, b] = last < idx ? [last, idx] : [idx, last];
+      const ids = filtered.slice(a, b + 1).map((x) => x.id);
+      const on = !selected.has(id);
+      setSelected((prev) => {
+        const next = new Set(prev);
+        for (const i of ids) {
+          if (on) next.add(i);
+          else next.delete(i);
+        }
+        return next;
+      });
+    } else {
+      toggleOne(id);
+    }
+    lastIdxRef.current = idx;
+    shiftRef.current = false;
+  }
+
+  // Esc clears the selection (unless a dialog or menu is open, or you are typing).
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      if (e.key !== "Escape" || selected.size === 0) return;
+      if (document.querySelector('[role="dialog"], details.menu[open], .idle-pop')) return;
+      const el = e.target as HTMLElement | null;
+      if (el && /^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName) && el.getAttribute("type") !== "checkbox") return;
+      setSelected(new Set());
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [selected.size]);
 
   function toggleOne(id: number) {
     setSelected((prev) => {
@@ -1400,10 +1442,12 @@ export default function Dashboard() {
               <input
                 type="search"
                 placeholder="Tìm username hoặc ghi chú"
-                aria-label="Tìm tài khoản"
+                aria-label="Tìm tài khoản (phím tắt /)"
+                data-search
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
               />
+              {!search && <kbd title="Bấm / để tìm">/</kbd>}
             </label>
             <span className="tt-count">
               {total > 0 ? `${total.toLocaleString("vi-VN")} tài khoản · trang ${page}/${totalPages}` : "Chưa có tài khoản"}
@@ -1418,6 +1462,7 @@ export default function Dashboard() {
                 Chọn
               </button>
             </div>
+            <DensityToggle />
             <button onClick={load} disabled={loading} className="btn btn-icon" aria-label="Tải lại danh sách" title="Tải lại danh sách">
               <RotateCw size={15} aria-hidden="true" className={loading ? "spin" : undefined} />
             </button>
@@ -1429,7 +1474,7 @@ export default function Dashboard() {
               <span className="tt-selcount">
                 <b>{selected.size}</b> đã chọn
               </span>
-              <button className="btn btn-quiet" onClick={() => setSelected(new Set())}>
+              <button className="btn btn-quiet" onClick={() => setSelected(new Set())} title="Bỏ chọn (Esc)">
                 <X size={14} aria-hidden="true" />
                 Bỏ chọn
               </button>
@@ -1505,12 +1550,14 @@ export default function Dashboard() {
               </button>
             </div>
           ) : (
-            <p className="tt-hint">Chọn tài khoản trong bảng, hoặc chọn theo STT, để lấy dữ liệu, đổi nhóm, xuất hay xoá.</p>
+            <p className="tt-hint">
+              Chọn tài khoản trong bảng (giữ <kbd>Shift</kbd> để chọn cả dải), hoặc chọn theo STT, để lấy dữ liệu, đổi nhóm, xuất hay xoá.
+            </p>
           )}
         </div>
 
         <div className="table-wrap">
-          <table className="table">
+          <table className="table tt-table">
             <thead>
               <tr>
                 <th style={{ width: 44 }}>
@@ -1521,7 +1568,7 @@ export default function Dashboard() {
                     aria-label="Chọn tất cả"
                   />
                 </th>
-                <th style={{ width: 50 }} className="right">STT</th>
+                <th style={{ width: 56 }} className="right">STT</th>
                 <SortableTh
                   label="Tài khoản"
                   sortKey="username"
@@ -1588,28 +1635,35 @@ export default function Dashboard() {
               </tr>
             </thead>
             <tbody>
+              {filtered.length === 0 && loading && <SkeletonRows rows={8} cols={11} />}
               {filtered.length === 0 && !loading && (
                 <tr>
-                  <td colSpan={11} style={{ padding: 56, textAlign: "center" }}>
-                    <div className="section-label" style={{ marginBottom: 12 }}>
-                      Trống
-                    </div>
-                    <div
-                      style={{
-                        fontFamily: "var(--font-serif)",
-                        fontSize: 18,
-                        fontStyle: "italic",
-                        color: "var(--muted)",
-                      }}
-                    >
-                      {total === 0 ? (
-                        <>
-                          Chưa có tài khoản. <Link href="/import" className="text-accent">Nhập tài khoản</Link>
-                        </>
-                      ) : (
-                        "Không tìm thấy kết quả"
-                      )}
-                    </div>
+                  <td colSpan={11} className="empty-cell">
+                    {search.trim() ? (
+                      <div className="empty-state">
+                        <SearchX size={28} aria-hidden="true" />
+                        <h3>Không có tài khoản khớp “{search.trim()}”</h3>
+                        <p>Thử tìm theo phần khác của username hoặc ghi chú.</p>
+                        <button className="btn" onClick={() => setSearch("")}>Xoá tìm kiếm</button>
+                      </div>
+                    ) : groupFilter !== "all" ? (
+                      <div className="empty-state">
+                        <FolderOpen size={28} aria-hidden="true" />
+                        <h3>{groupFilter === "none" ? "Mọi tài khoản đều đã có nhóm" : "Nhóm này chưa có tài khoản"}</h3>
+                        <p>Chọn tài khoản ở “Tất cả” rồi dùng “Chuyển nhóm” để thêm vào nhóm.</p>
+                        <button className="btn" onClick={() => setGroupFilter("all")}>Xem tất cả tài khoản</button>
+                      </div>
+                    ) : (
+                      <div className="empty-state">
+                        <Inbox size={28} aria-hidden="true" />
+                        <h3>Chưa có tài khoản TikTok nào</h3>
+                        <p>Dán danh sách tài khoản (username, mật khẩu, email…) để bắt đầu quản lý.</p>
+                        <Link href="/import" className="btn btn-primary">
+                          <Plus size={16} aria-hidden="true" />
+                          Nhập tài khoản
+                        </Link>
+                      </div>
+                    )}
                   </td>
                 </tr>
               )}
@@ -1623,7 +1677,9 @@ export default function Dashboard() {
                     <input
                       type="checkbox"
                       checked={selected.has(r.id)}
-                      onChange={() => toggleOne(r.id)}
+                      aria-label={`Chọn @${r.username}`}
+                      onClick={(e) => (shiftRef.current = e.shiftKey)}
+                      onChange={() => toggleAt(idx, r.id)}
                     />
                   </td>
                   <td className="right">

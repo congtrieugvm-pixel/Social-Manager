@@ -3,6 +3,8 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { encodeBodyHeader } from "@/lib/req-body";
+import { confirmDialog } from "@/app/_components/notify";
+import { ExternalLink, Inbox, Plus, X } from "lucide-react";
 
 interface FacebookRow {
   id: number;
@@ -237,7 +239,7 @@ export default function FacebookPage() {
   }, [ctx]);
 
   async function deleteAccount(id: number, username: string) {
-    if (!confirm(`Xóa @${username}? Không thể phục hồi.`)) return;
+    if (!(await confirmDialog({ message: `Xóa @${username}? Không thể phục hồi.`, confirmLabel: "Xoá", danger: true }))) return;
     await fetch(`/api/facebook/accounts/${id}`, { method: "DELETE" });
     setCtx(null);
     await load();
@@ -264,9 +266,7 @@ export default function FacebookPage() {
     const ids = Array.from(selected);
     if (ids.length === 0) return;
     if (
-      !confirm(
-        `Xóa vĩnh viễn ${ids.length} tài khoản Facebook?`,
-      )
+      !(await confirmDialog({ message: `Xóa vĩnh viễn ${ids.length} tài khoản Facebook?`, confirmLabel: "Xoá", danger: true }))
     ) {
       return;
     }
@@ -545,7 +545,8 @@ export default function FacebookPage() {
       <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10, flexWrap: "wrap" }}>
         <input
           type="search"
-          placeholder="Tìm username / fb_name / note…"
+          placeholder="Tìm username, tên Facebook hoặc ghi chú"
+          data-search
           value={search}
           onChange={(e) => setSearch(e.target.value)}
           className="input"
@@ -674,13 +675,16 @@ export default function FacebookPage() {
             <tbody>
               {rows.length === 0 && !loading && (
                 <tr>
-                  <td colSpan={8} style={{ padding: 56, textAlign: "center" }}>
-                    <div className="section-label" style={{ marginBottom: 12 }}>
-                      Trống
+                  <td colSpan={8} className="empty-cell">
+                    <div className="empty-state">
+                      <Inbox size={28} aria-hidden="true" />
+                      <h3>Chưa có tài khoản Facebook nào</h3>
+                      <p>Dán danh sách tài khoản để bắt đầu quản lý.</p>
+                      <Link href="/facebook/import" className="btn btn-primary">
+                        <Plus size={16} aria-hidden="true" />
+                        Nhập tài khoản
+                      </Link>
                     </div>
-                    <Link href="/facebook/import" className="text-accent">
-                      Import ngay →
-                    </Link>
                   </td>
                 </tr>
               )}
@@ -931,7 +935,7 @@ export default function FacebookPage() {
               rel="noreferrer"
               style={{ color: "inherit", textDecoration: "none" }}
             >
-              @{ctx.username} ↗
+              @{ctx.username} <ExternalLink size={13} aria-hidden="true" style={{ verticalAlign: "-1px" }} />
             </a>
           </div>
           {ctx.loading && <div style={{ padding: 10, color: "var(--muted)" }}>Đang tải…</div>}
@@ -974,7 +978,7 @@ export default function FacebookPage() {
                         ? "Đang mở Chromium…"
                         : "Login Hotmail (Chromium)"}
                     </span>
-                    <span className="mono" style={{ fontSize: 12, color: "var(--muted)" }}>↗</span>
+                    <ExternalLink size={14} aria-hidden="true" style={{ color: "var(--muted)" }} />
                   </button>
                   {ctx.browserMessage && (
                     <div style={{ padding: "0 10px 4px", fontSize: 11, color: "var(--accent)" }}>
@@ -1025,7 +1029,7 @@ export default function FacebookPage() {
                   onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
                 >
                   <span>Xóa tài khoản</span>
-                  <span className="mono" style={{ fontSize: 12 }}>✕</span>
+                  <X size={14} aria-hidden="true" />
                 </button>
               </div>
             );

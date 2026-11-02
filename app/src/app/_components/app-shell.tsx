@@ -46,6 +46,22 @@ export function AppShell({ user, children }: AppShellProps) {
     return () => window.removeEventListener("keydown", onKey);
   }, [open]);
 
+  // "/" jumps to the page's search box (any input marked data-search).
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      if (e.key !== "/" || e.ctrlKey || e.metaKey || e.altKey) return;
+      const el = e.target as HTMLElement | null;
+      if (el && (el.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName))) return;
+      const box = document.querySelector<HTMLInputElement>("input[data-search]");
+      if (!box) return;
+      e.preventDefault();
+      box.focus();
+      box.select();
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
+
   return (
     <div className="shell">
       {/* Mobile-only top bar with hamburger + brand. Hidden on desktop. */}

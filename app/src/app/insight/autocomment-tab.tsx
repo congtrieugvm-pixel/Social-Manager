@@ -2,6 +2,9 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { encodeBodyHeader } from "@/lib/req-body";
+import { confirmDialog } from "@/app/_components/notify";
+import { MessageSquarePlus, Play, Plus, X } from "lucide-react";
+import { SkeletonCard } from "@/app/_components/skeleton";
 
 // Insight "Comment tự động": rules (a Page or a Page group + several comment
 // texts). Every new post of those Pages gets one random text as a comment
@@ -109,7 +112,7 @@ export function AutoCommentTab({ pages, groups, assignments }: { pages: Page[]; 
     await load();
   }
   async function remove(r: Rule) {
-    if (!confirm(`Xoá cài đặt comment cho "${targetName(r)}"?`)) return;
+    if (!(await confirmDialog({ message: `Xoá cài đặt comment cho "${targetName(r)}"?`, confirmLabel: "Xoá", danger: true }))) return;
     try {
       await send(`/api/insight/autocomment/${r.id}`, "DELETE");
       await load();
@@ -140,10 +143,12 @@ export function AutoCommentTab({ pages, groups, assignments }: { pages: Page[]; 
         </div>
         <div className="ac-intro-actions">
           <button className="btn" style={smallBtn} onClick={() => void runNow()} disabled={running || !rules?.some((r) => r.enabled)}>
-            {running ? "Đang chạy…" : "▶ Chạy ngay"}
+            <Play size={14} aria-hidden="true" />
+            {running ? "Đang chạy…" : "Chạy ngay"}
           </button>
           <button className="btn btn-primary" style={smallBtn} onClick={() => setEditing("new")}>
-            + Thêm cài đặt
+            <Plus size={14} aria-hidden="true" />
+            Thêm cài đặt
           </button>
         </div>
       </div>
@@ -178,10 +183,16 @@ export function AutoCommentTab({ pages, groups, assignments }: { pages: Page[]; 
 
       <div className="section-label" style={{ margin: "14px 0 8px" }}>Cài đặt ({rules?.length ?? 0})</div>
       {rules === null ? (
-        <div className="card mono" style={{ color: "var(--muted)", fontSize: 12 }}>Đang tải…</div>
+        <SkeletonCard rows={3} />
       ) : rules.length === 0 ? (
-        <div className="card" style={{ color: "var(--muted)", fontSize: 13 }}>
-          Chưa có cài đặt nào. Bấm <b>+ Thêm cài đặt</b> để chọn Trang / nhóm Trang và soạn nội dung comment.
+        <div className="card empty-state">
+          <MessageSquarePlus size={28} aria-hidden="true" />
+          <h3>Chưa có cài đặt comment nào</h3>
+          <p>Chọn Trang hoặc nhóm Trang và soạn vài nội dung; mỗi bài mới sẽ được Trang comment một nội dung ngẫu nhiên.</p>
+          <button className="btn btn-primary" onClick={() => setEditing("new")}>
+            <Plus size={16} aria-hidden="true" />
+            Thêm cài đặt
+          </button>
         </div>
       ) : (
         <div className="ac-rules">
@@ -366,7 +377,7 @@ function RuleForm({
           />
           {texts.length > 1 && (
             <button type="button" className="btn" style={smallBtn} title="Xoá mẫu" onClick={() => setTexts((list) => list.filter((_, j) => j !== i))}>
-              ✕
+              <X size={14} aria-hidden="true" />
             </button>
           )}
         </div>

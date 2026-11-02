@@ -2,6 +2,9 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { patchJson, postJson, safeJson } from "@/lib/req-body";
+import { confirmDialog } from "@/app/_components/notify";
+import { BookmarkPlus, Plus, RotateCw, X } from "lucide-react";
+import { SkeletonCard } from "@/app/_components/skeleton";
 
 // Bookmark Key: saved links of any kind. YouTube channels, TikTok profiles
 // and sites with an RSS/Atom feed are tracked: a small red badge counts items
@@ -165,7 +168,7 @@ export default function YoutubePage() {
   );
 
   const removeChannel = useCallback(async (c: Channel) => {
-    if (!confirm(`Xoá "${c.title}" khỏi Bookmark?`)) return;
+    if (!(await confirmDialog({ message: `Xoá "${c.title}" khỏi Bookmark?`, confirmLabel: "Xoá", danger: true }))) return;
     const res = await fetch(`/api/youtube/channels/${c.id}`, { method: "DELETE" });
     const data = await safeJson(res);
     if (data.error) setError(data.error);
@@ -208,13 +211,15 @@ export default function YoutubePage() {
         </div>
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
           <button className="btn" onClick={() => void refresh()} disabled={!!refreshing || !channels?.some(tracked)}>
-            {refreshing ? `Đang kiểm tra ${refreshing.done}/${refreshing.total}…` : "⟳ Kiểm tra bài mới"}
+            <RotateCw size={14} aria-hidden="true" className={refreshing ? "spin" : undefined} />
+            {refreshing ? `Đang kiểm tra ${refreshing.done}/${refreshing.total}…` : "Kiểm tra bài mới"}
           </button>
           <button className={`btn${showGroups ? " btn-accent" : ""}`} onClick={() => setShowGroups((v) => !v)}>
             Nhóm ({groups.length})
           </button>
           <button className="btn btn-primary" onClick={() => setShowAdd((v) => !v)}>
-            + Thêm link
+            <Plus size={14} aria-hidden="true" />
+            Thêm link
           </button>
         </div>
       </header>
@@ -277,7 +282,7 @@ export default function YoutubePage() {
           )}
         </div>
         <div className="yt-tools">
-          <input className="input" placeholder="Tìm tên / link / ghi chú…" value={query} onChange={(e) => setQuery(e.target.value)} />
+          <input className="input" placeholder="Tìm tên, link hoặc ghi chú" data-search value={query} onChange={(e) => setQuery(e.target.value)} />
           <label className="yt-check">
             <input type="checkbox" checked={onlyNew} onChange={(e) => setOnlyNew(e.target.checked)} /> Chỉ mục có bài mới
           </label>
@@ -291,10 +296,16 @@ export default function YoutubePage() {
       )}
 
       {channels === null ? (
-        <div className="card mono" style={{ color: "var(--muted)", fontSize: 12 }}>Đang tải…</div>
+        <SkeletonCard rows={4} />
       ) : channels.length === 0 ? (
-        <div className="card" style={{ color: "var(--muted)", lineHeight: 1.6 }}>
-          Chưa có link nào. Bấm <strong>+ Thêm link</strong> và dán link bất kì. Kênh YouTube, TikTok @profile và trang có RSS sẽ báo số đỏ khi có bài mới.
+        <div className="card empty-state">
+          <BookmarkPlus size={28} aria-hidden="true" />
+          <h3>Chưa lưu link nào</h3>
+          <p>Dán link bất kì. Kênh YouTube, TikTok @profile và trang có RSS sẽ báo số đỏ khi có bài mới.</p>
+          <button className="btn btn-primary" onClick={() => setShowAdd(true)}>
+            <Plus size={16} aria-hidden="true" />
+            Thêm link
+          </button>
         </div>
       ) : visible.length === 0 ? (
         <div className="card" style={{ color: "var(--muted)" }}>Không có link nào khớp bộ lọc.</div>
@@ -427,7 +438,7 @@ function GroupManager(props: {
   }
 
   async function remove(g: Group) {
-    if (!confirm(`Xoá nhóm "${g.name}"? Các kênh trong nhóm sẽ thành "Chưa có nhóm".`)) return;
+    if (!(await confirmDialog({ message: `Xoá nhóm "${g.name}"? Các kênh trong nhóm sẽ thành "Chưa có nhóm".`, confirmLabel: "Xoá", danger: true }))) return;
     const res = await fetch(`/api/youtube/groups/${g.id}`, { method: "DELETE" });
     const data = await safeJson(res);
     if (data.error) return onError(data.error);
@@ -523,8 +534,8 @@ function ChannelCard(props: {
           </div>
         </div>
         <div className="yt-actions">
-          {tracked(c) && <button className="btn yt-icon" title="Kiểm tra lại" onClick={props.onRefresh}>⟳</button>}
-          <button className="btn yt-icon" title="Xoá" onClick={() => props.onRemove(c)}>✕</button>
+          {tracked(c) && <button className="btn yt-icon" title="Kiểm tra lại" aria-label="Kiểm tra lại" onClick={props.onRefresh}><RotateCw size={14} aria-hidden="true" /></button>}
+          <button className="btn yt-icon" title="Xoá" aria-label="Xoá" onClick={() => props.onRemove(c)}><X size={14} aria-hidden="true" /></button>
         </div>
       </div>
 

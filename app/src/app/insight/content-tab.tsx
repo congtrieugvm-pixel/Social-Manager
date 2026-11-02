@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { encodeBodyHeader } from "@/lib/req-body";
+import { ExternalLink, FileText, RefreshCw } from "lucide-react";
 
 // "Nội dung" tab of Insight: the latest 25 posts of every page (lifetime
 // reach / views + engagement), filterable by group, and a per-group content
@@ -392,7 +393,13 @@ export function ContentTab({
   const changeColor = change == null ? undefined : change >= 0 ? "var(--good)" : "var(--danger)";
 
   if (pages.length === 0) {
-    return <div className="card" style={{ color: "var(--muted)" }}>Chưa có Trang nào — thêm token ở tab Quản lý token.</div>;
+    return (
+      <div className="card empty-state">
+        <FileText size={28} aria-hidden="true" />
+        <h3>Chưa có Trang nào để xem bài</h3>
+        <p>Thêm token ở tab “Quản lý token”; bài viết của các Trang sẽ hiện ở đây.</p>
+      </div>
+    );
   }
 
   return (
@@ -462,13 +469,14 @@ export function ContentTab({
             </option>
           ))}
         </select>
-        <input className="input" placeholder="Tìm theo nội dung / tên Trang…" value={search} onChange={(e) => setSearch(e.target.value)} style={{ flex: "1 1 180px", maxWidth: 260 }} />
+        <input className="input" placeholder="Tìm theo nội dung hoặc tên Trang" data-search value={search} onChange={(e) => setSearch(e.target.value)} style={{ flex: "1 1 180px", maxWidth: 260 }} />
         <span style={{ flex: 1 }} />
         <span className="mono" style={{ fontSize: 11, color: "var(--muted)" }} title="Tự động cập nhật khi số liệu cũ hơn 2 giờ">
           {updated ? `Cập nhật ${updated}` : "Chưa tải"}
         </span>
         <button className="btn btn-primary" style={smallBtn} onClick={() => loadAll()} disabled={!!progress}>
-          {progress ? `Đang tải ${progress.done}/${progress.total}…` : "⟳ Load nội dung"}
+          <RefreshCw size={14} aria-hidden="true" className={progress ? "spin" : undefined} />
+          {progress ? `Đang tải ${progress.done}/${progress.total}…` : "Load nội dung"}
         </button>
       </div>
 
@@ -640,7 +648,7 @@ export function ContentTab({
                   <td className="right">
                     {p.permalink && (
                       <a href={p.permalink} target="_blank" rel="noreferrer" className="btn" style={{ padding: "3px 8px", fontSize: 12, textDecoration: "none" }}>
-                        Mở ↗
+                        Mở <ExternalLink size={12} aria-hidden="true" />
                       </a>
                     )}
                   </td>
@@ -762,7 +770,7 @@ function ScheduledView(props: {
                   <td className="right">
                     {p.permalink && (
                       <a href={p.permalink} target="_blank" rel="noreferrer" className="btn" style={{ padding: "3px 8px", fontSize: 12, textDecoration: "none" }}>
-                        Mở ↗
+                        Mở <ExternalLink size={12} aria-hidden="true" />
                       </a>
                     )}
                   </td>

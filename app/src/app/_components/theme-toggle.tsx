@@ -7,10 +7,10 @@ export const THEME_KEY = "sm_theme";
 type Theme = "light" | "dark";
 
 /**
- * Inline <head> script: applies the saved theme before first paint so a dark
- * user never sees a light flash. Light is the default.
+ * Inline <head> script: applies the saved theme (and table density) before
+ * first paint so a dark user never sees a light flash. Light is the default.
  */
-export const THEME_BOOT = `try{var t=localStorage.getItem("${THEME_KEY}");if(t==="dark")document.documentElement.dataset.theme="dark"}catch(e){}`;
+export const THEME_BOOT = `try{var d=document.documentElement,t=localStorage.getItem("${THEME_KEY}");if(t==="dark")d.dataset.theme="dark";if(localStorage.getItem("sm_density")==="compact")d.dataset.density="compact"}catch(e){}`;
 
 export function ThemeToggle({ compact = false }: { compact?: boolean }) {
   const [theme, setTheme] = useState<Theme>("light");
