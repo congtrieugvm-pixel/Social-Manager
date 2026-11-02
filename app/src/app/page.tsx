@@ -2138,7 +2138,18 @@ export default function Dashboard() {
                 <label className="m-check">
                   <input type="checkbox" checked={on} onChange={() => toggleAt(idx, r.id)} aria-label={`Chọn @${r.username}`} />
                 </label>
-                <button type="button" className="m-main" onClick={() => (selected.size > 0 ? toggleAt(idx, r.id) : openDetail(r.id))}>
+                <button
+                  type="button"
+                  className="m-main"
+                  onClick={(e) => {
+                    if (selected.size > 0) return toggleAt(idx, r.id);
+                    // Tap on the avatar / @username → that user's TikTok (opens the app on a phone).
+                    // Tap anywhere else on the card → account details.
+                    if ((e.target as HTMLElement).closest(".m-row")) {
+                      window.open(`https://www.tiktok.com/@${encodeURIComponent(r.username)}`, "_blank", "noopener,noreferrer");
+                    } else openDetail(r.id);
+                  }}
+                >
                   <span className="m-row">
                     {r.avatarUrl ? (
                       // eslint-disable-next-line @next/next/no-img-element

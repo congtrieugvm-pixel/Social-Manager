@@ -3,7 +3,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { encodeBodyHeader } from "@/lib/req-body";
 import { LineChart, Sparkline, ddmm, type DayPoint } from "./charts";
-import { MonetizationTab } from "./monetization-tab";
 import { ContentTab } from "./content-tab";
 import { AutoCommentTab } from "./autocomment-tab";
 import { confirmDialog, promptDialog } from "@/app/_components/notify";
@@ -215,7 +214,7 @@ export default function InsightPage() {
   const [loadingAll, setLoadingAll] = useState(false);
   const [sort, setSort] = useState<{ key: SortKey; dir: "asc" | "desc" }>({ key: "reach", dir: "desc" });
   const [checked, setChecked] = useState<Set<string>>(new Set());
-  const [tab, setTab] = useState<"reach" | "content" | "monet" | "comment" | "tokens">("reach");
+  const [tab, setTab] = useState<"reach" | "content" | "comment" | "tokens">("reach");
   const [showGroups, setShowGroups] = useState(false);
   const [pickerGroupId, setPickerGroupId] = useState<number | null>(null);
   const runRef = useRef(0);
@@ -776,9 +775,6 @@ export default function InsightPage() {
             <button role="tab" aria-selected={tab === "content"} className={`btn-seg${tab === "content" ? " active" : ""}`} onClick={() => setTab("content")}>
               Nội dung
             </button>
-            <button role="tab" aria-selected={tab === "monet"} className={`btn-seg${tab === "monet" ? " active" : ""}`} onClick={() => setTab("monet")}>
-              Kiếm tiền
-            </button>
             <button role="tab" aria-selected={tab === "comment"} className={`btn-seg${tab === "comment" ? " active" : ""}`} onClick={() => setTab("comment")}>
               Comment tự động
             </button>
@@ -850,12 +846,6 @@ export default function InsightPage() {
           <SkeletonCard />
         ) : (
           <AutoCommentTab pages={pages} groups={groups} assignments={assignments} />
-        )
-      ) : tab === "monet" ? (
-        tokens === null || !booted || (pagesProgress && pages.length === 0) ? (
-          <SkeletonCard caption={pagesProgress ? `Đang tải danh sách Trang ${pagesProgress.done}/${pagesProgress.total} token…` : undefined} />
-        ) : (
-          <MonetizationTab pages={pages} groups={groups} assignments={assignments} username={username} />
         )
       ) : tokens === null || !booted || (pagesProgress && pages.length === 0) ? (
         <SkeletonCard caption={pagesProgress ? `Đang tải danh sách Trang ${pagesProgress.done}/${pagesProgress.total} token…` : undefined} />

@@ -1,10 +1,7 @@
 // Facebook Graph API wrapper. Read-only: fetch user info, owned pages, page insights.
 // No browser automation or write operations.
 
-// v23 introduced `content_monetization_earnings` (May 2025) — the consolidated
-// earnings metric that replaces `page_daily_video_ad_break_earnings` and friends.
-// All previously-working v21 endpoints (insights, /me/accounts, /me/permissions)
-// continue to work on v23 unchanged.
+// Graph v23: insights, /me/accounts and /me/permissions work unchanged from v21.
 // `FB_GRAPH_BASE` lets tests point every Graph call at a fake server.
 export const GRAPH_BASE =
   process.env.FB_GRAPH_BASE || "https://graph.facebook.com/v23.0";

@@ -66,8 +66,6 @@ function ago(iso: string | number): string {
   return new Date(t).toLocaleDateString("vi-VN");
 }
 
-const isNew = (v: Video, c: Channel) => Date.parse(v.published) / 1000 > c.lastSeenAt;
-const itemUrl = (v: Video, c: Channel) => v.url ?? (c.kind === "youtube" ? `https://www.youtube.com/watch?v=${v.id}` : c.url);
 const tracked = (c: Channel) => c.kind !== "link";
 
 export default function YoutubePage() {
@@ -504,12 +502,10 @@ function ChannelCard(props: {
   onRefresh: () => void;
 }) {
   const { c, groups, onSeen, onUpdate } = props;
-  const [open, setOpen] = useState(false);
   const [note, setNote] = useState(c.note ?? "");
   useEffect(() => setNote(c.note ?? ""), [c.note]);
   const group = groups.find((g) => g.id === c.groupId);
   const latest = c.videos[0];
-  const shown = open ? c.videos : c.videos.slice(0, Math.max(1, Math.min(c.unread, 5)));
   const [iconBroken, setIconBroken] = useState(false);
   const noun = ITEM_NOUN[c.kind] ?? "bài";
 
@@ -539,25 +535,15 @@ function ChannelCard(props: {
         </div>
       </div>
 
-      {latest ? (
-        <ul className="yt-videos">
-          {shown.map((v) => (
-            <li key={v.id} className={isNew(v, c) ? "new" : undefined}>
-              <a href={itemUrl(v, c)} target="_blank" rel="noreferrer" onClick={() => onSeen(c)}>
-                {isNew(v, c) && <span className="yt-new">Mới</span>}
-                <span className="yt-vtitle">{v.title}</span>
-              </a>
-              <span className="yt-when">{ago(v.published)}</span>
-            </li>
-          ))}
-        </ul>
-      ) : (
-        <div className="yt-sub yt-wrap">{tracked(c) ? `Chưa có ${noun} nào.` : c.url}</div>
-      )}
-      {c.videos.length > shown.length || open ? (
-        <button className="yt-more" onClick={() => setOpen((v) => !v)}>
-          {open ? "Thu gọn" : `Xem ${c.videos.length} ${noun} gần nhất`}
-        </button>
+      {tracked(c) ? (
+        <a href={c.url} target="_blank" rel="noreferrer" className={`yt-count${c.unread > 0 ? " has-new" : ""}`} onClick={() => onSeen(c)}>
+          {c.unread > 0 ? (
+            <strong>{c.unread > 99 ? "99+" : c.unread} {noun} mới</strong>
+          ) : (
+            <span>Không có {noun} mới</span>
+          )}
+          {latest && <span className="yt-when">mới nhất {ago(latest.published)}</span>}
+        </a>
       ) : null}
 
       <div className="yt-foot">

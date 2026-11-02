@@ -35,6 +35,8 @@ export async function GET() {
           comments: parseComments(r.comments),
           enabled: r.enabled,
           activeSince: r.activeSince,
+          backfillDays: r.backfillDays,
+          gapMinutes: r.gapMinutes,
           lastRunAt: r.lastRunAt,
           stats: { ok: Number(byRule.get(r.id)?.ok ?? 0), error: Number(byRule.get(r.id)?.error ?? 0), last: byRule.get(r.id)?.last ?? null },
         })),
@@ -63,6 +65,8 @@ export async function POST(req: Request) {
         targetId: v.targetId,
         comments: v.comments,
         enabled: r.value.enabled ?? true,
+        backfillDays: r.value.backfillDays ?? 0,
+        gapMinutes: r.value.gapMinutes ?? 0,
         activeSince: Math.floor(Date.now() / 1000),
       })
       .returning({ id: fbCommentRules.id });

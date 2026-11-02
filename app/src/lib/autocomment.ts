@@ -10,7 +10,7 @@
 //     cooling, next token on permission errors)
 // Bounded so one Worker invocation stays under the Free plan's 50 subrequests.
 
-import { and, desc, eq, inArray } from "drizzle-orm";
+import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { fbCommentLog, fbCommentRules, insightPageAssignments, insightPageGroups } from "@/lib/db/schema";
 import { graphPost, parseGraphError } from "@/lib/facebook";
@@ -26,6 +26,9 @@ const MAX_PAGES_PER_RUN = 30;
 /** Never look further back than this (cron down for a while → no backlog flood). */
 const LOOKBACK_S = 24 * 3600;
 const IN_CHUNK = 90;
+/** Choices offered in the UI. */
+export const BACKFILL_DAYS = [0, 1, 3, 7, 14, 30, 90] as const;
+export const GAP_MINUTES = [0, 5, 10, 15, 30, 60, 120, 240] as const;
 
 export interface RunSummary {
   owners: number;
@@ -132,10 +135,17 @@ export async function runAutoComment(opts: { ownerId?: number; maxComments?: num
       const candOf = (pageId: string): ReachCandidate[] =>
         (tokensOf.get(pageId) ?? []).map((t) => byToken.get(t)).filter((c): c is ReachCandidate => !!c);
 
-      const sinceOf = (pageId: string) => Math.max(ruleOf.get(pageId)!.activeSince, nowS - LOOKBACK_S);
+      // New posts only: since the rule went on (at most 24 h back if the cron was
+      // down). Old posts too: N days before the rule went on — the newest 100 per
+      // Page; posts already in the log are skipped below.
+      const sinceOf = (pageId: string) => {
+        const r = ruleOf.get(pageId)!;
+        return r.backfillDays > 0 ? r.activeSince - r.backfillDays * 86400 : Math.max(r.activeSince, nowS - LOOKBACK_S);
+      };
       const posts = await fetchPageBatch<PostRow[]>(
         pageIds.map((pageId) => ({ pageId, candidates: candOf(pageId) })),
-        (pageId) => `/${pageId}/published_posts?fields=id,created_time,message&since=${sinceOf(pageId)}&limit=25`,
+        (pageId) =>
+          `/${pageId}/published_posts?fields=id,created_time,message&since=${sinceOf(pageId)}&limit=${ruleOf.get(pageId)!.backfillDays > 0 ? 100 : 25}`,
         (data) => ((data as { data?: PostRow[] })?.data ?? []),
       );
       sum.pagesChecked += pageIds.length;
@@ -160,8 +170,21 @@ export async function runAutoComment(opts: { ownerId?: number; maxComments?: num
           .where(and(eq(fbCommentLog.ownerUserId, ownerId), inArray(fbCommentLog.postId, ids.slice(i, i + IN_CHUNK))));
         for (const r of rows) done.add(r.postId);
       }
-      const todo = fresh.filter((f) => !done.has(f.post.id)).sort((a, b) => a.post.created_time.localeCompare(b.post.created_time));
+      // Newest first, so a new post is not stuck behind a long backlog of old ones.
+      const todo = fresh.filter((f) => !done.has(f.post.id)).sort((a, b) => b.post.created_time.localeCompare(a.post.created_time));
       sum.newPosts += todo.length;
+
+      // Spacing: last successful comment per Page (only for rules with a gap).
+      const gapPages = [...new Set(todo.map((t) => t.pageId))].filter((p) => ruleOf.get(p)!.gapMinutes > 0);
+      const lastAt = new Map<string, number>();
+      for (let i = 0; i < gapPages.length; i += IN_CHUNK) {
+        const rows = await db
+          .select({ pageId: fbCommentLog.pageId, last: sql<number>`MAX(${fbCommentLog.createdAt})` })
+          .from(fbCommentLog)
+          .where(and(eq(fbCommentLog.ownerUserId, ownerId), eq(fbCommentLog.status, "ok"), inArray(fbCommentLog.pageId, gapPages.slice(i, i + IN_CHUNK))))
+          .groupBy(fbCommentLog.pageId);
+        for (const r of rows) lastAt.set(r.pageId, Number(r.last));
+      }
 
       const logRows: Array<typeof fbCommentLog.$inferInsert> = [];
       for (const { pageId, post } of todo) {
@@ -169,8 +192,14 @@ export async function runAutoComment(opts: { ownerId?: number; maxComments?: num
           sum.skipped++;
           continue;
         }
-        budget--;
         const rule = ruleOf.get(pageId)!;
+        // Too soon after this Page's last comment → wait for a later run.
+        // (The cron ticks every 5 minutes; 30 s slack so a 5-minute gap is not pushed to 10.)
+        if (rule.gapMinutes > 0 && lastAt.has(pageId) && nowS - lastAt.get(pageId)! < rule.gapMinutes * 60 - 30) {
+          sum.skipped++;
+          continue;
+        }
+        budget--;
         const text = pick(parseComments(rule.comments));
         const base = { ownerUserId: ownerId, ruleId: rule.id, pageId, postId: post.id, postMessage: post.message?.slice(0, 300) ?? null, comment: text, createdAt: nowS };
         try {
@@ -181,6 +210,7 @@ export async function runAutoComment(opts: { ownerId?: number; maxComments?: num
           } else {
             logRows.push({ ...base, status: "ok", commentId: r.value.id });
             sum.commented++;
+            lastAt.set(pageId, nowS);
           }
         } catch (e) {
           if (isTransient(e)) {
@@ -218,11 +248,13 @@ export interface RuleInput {
   targetId?: unknown;
   comments?: unknown;
   enabled?: unknown;
+  backfillDays?: unknown;
+  gapMinutes?: unknown;
 }
 
 /** Validate a rule body; returns the clean fields or an error message. */
 export async function cleanRule(ownerId: number, b: RuleInput, partial = false) {
-  const out: { targetType?: string; targetId?: string; comments?: string; enabled?: boolean } = {};
+  const out: { targetType?: string; targetId?: string; comments?: string; enabled?: boolean; backfillDays?: number; gapMinutes?: number } = {};
   if (b.targetType !== undefined || !partial) {
     if (b.targetType !== "page" && b.targetType !== "group") return { error: "Chọn Trang hoặc nhóm Trang" };
     const id = typeof b.targetId === "string" || typeof b.targetId === "number" ? String(b.targetId) : "";
@@ -247,5 +279,13 @@ export async function cleanRule(ownerId: number, b: RuleInput, partial = false) 
     out.comments = JSON.stringify(list);
   }
   if (typeof b.enabled === "boolean") out.enabled = b.enabled;
+  if (b.backfillDays !== undefined) {
+    if (!(BACKFILL_DAYS as readonly number[]).includes(Number(b.backfillDays))) return { error: "Số ngày bài cũ không hợp lệ" };
+    out.backfillDays = Number(b.backfillDays);
+  }
+  if (b.gapMinutes !== undefined) {
+    if (!(GAP_MINUTES as readonly number[]).includes(Number(b.gapMinutes))) return { error: "Khoảng cách comment không hợp lệ" };
+    out.gapMinutes = Number(b.gapMinutes);
+  }
   return { value: out };
 }

@@ -30,6 +30,8 @@ interface Rule {
   comments: string[];
   enabled: boolean;
   activeSince: number;
+  backfillDays: number;
+  gapMinutes: number;
   lastRunAt: number | null;
   stats: { ok: number; error: number; last: number | null };
 }
@@ -57,6 +59,26 @@ interface Summary {
 }
 
 const smallBtn = { padding: "5px 10px", fontSize: 11 } as const;
+const BACKFILL: Array<[number, string]> = [
+  [0, "Chỉ bài mới"],
+  [1, "Thêm bài 1 ngày trước"],
+  [3, "Thêm bài 3 ngày trước"],
+  [7, "Thêm bài 7 ngày trước"],
+  [14, "Thêm bài 14 ngày trước"],
+  [30, "Thêm bài 30 ngày trước"],
+  [90, "Thêm bài 90 ngày trước"],
+];
+const GAPS: Array<[number, string]> = [
+  [0, "Không chờ"],
+  [5, "5 phút"],
+  [10, "10 phút"],
+  [15, "15 phút"],
+  [30, "30 phút"],
+  [60, "1 giờ"],
+  [120, "2 giờ"],
+  [240, "4 giờ"],
+];
+const gapLabel = (m: number) => GAPS.find(([v]) => v === m)?.[1] ?? `${m} phút`;
 const when = (s: number | null) =>
   s ? new Date(s * 1000).toLocaleString("vi-VN", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" }) : "—";
 
@@ -138,8 +160,8 @@ export function AutoCommentTab({ pages, groups, assignments }: { pages: Page[]; 
       <div className="card ac-intro">
         <div>
           <strong>Comment tự động</strong> — chọn Trang hoặc nhóm Trang và soạn sẵn vài nội dung. Mỗi bài <b>mới lên</b> (bài lên lịch hoặc
-          đăng tay, sau khi bật cài đặt) sẽ được Trang comment một nội dung chọn ngẫu nhiên. Server kiểm tra 5 phút một lần, mỗi bài chỉ comment 1
-          lần. Token cần quyền <b>pages_manage_engagement</b>.
+          đăng tay, sau khi bật cài đặt) — và tuỳ chọn cả <b>bài cũ</b> — sẽ được Trang comment một nội dung chọn ngẫu nhiên, cách nhau theo khoảng
+          bạn chọn. Server kiểm tra 5 phút một lần, mỗi bài chỉ comment 1 lần. Token cần quyền <b>pages_manage_engagement</b>.
         </div>
         <div className="ac-intro-actions">
           <button className="btn" style={smallBtn} onClick={() => void runNow()} disabled={running || !rules?.some((r) => r.enabled)}>
@@ -220,7 +242,9 @@ export function AutoCommentTab({ pages, groups, assignments }: { pages: Page[]; 
                   <span>{r.comments.length} mẫu</span>
                   <span>· đã comment <b style={{ color: "var(--good)" }}>{r.stats.ok}</b></span>
                   {r.stats.error > 0 && <span>· lỗi <b style={{ color: "var(--danger)" }}>{r.stats.error}</b></span>}
-                  <span>· {r.enabled ? `áp dụng bài từ ${when(r.activeSince)}` : "đang tắt"}</span>
+                  <span>· {r.enabled ? `áp dụng bài từ ${when(r.activeSince - r.backfillDays * 86400)}` : "đang tắt"}</span>
+                  {r.backfillDays > 0 && <span>· gồm bài cũ {r.backfillDays} ngày</span>}
+                  {r.gapMinutes > 0 && <span>· cách {gapLabel(r.gapMinutes)}/Trang</span>}
                   <span style={{ flex: 1 }} />
                   <button className="btn" style={smallBtn} onClick={() => setEditing(r)}>Sửa</button>
                   <button className="btn btn-danger" style={smallBtn} onClick={() => void remove(r)}>Xoá</button>
@@ -289,6 +313,8 @@ function RuleForm({
   const [targetId, setTargetId] = useState(rule?.targetId ?? "");
   const [pageSearch, setPageSearch] = useState("");
   const [texts, setTexts] = useState<string[]>(rule?.comments.length ? rule.comments : ["", ""]);
+  const [backfillDays, setBackfillDays] = useState(rule?.backfillDays ?? 0);
+  const [gapMinutes, setGapMinutes] = useState(rule?.gapMinutes ?? 0);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const shownPages = pages
@@ -302,7 +328,7 @@ function RuleForm({
     setBusy(true);
     setErr(null);
     try {
-      const body = { targetType, targetId, comments };
+      const body = { targetType, targetId, comments, backfillDays, gapMinutes };
       if (rule) await send(`/api/insight/autocomment/${rule.id}`, "PATCH", body);
       else await send("/api/insight/autocomment", "POST", { ...body, enabled: true });
       onSaved();
@@ -363,6 +389,32 @@ function RuleForm({
       </div>
       {targetType === "group" && groups.length === 0 && <div className="ac-dim">Chưa có nhóm Trang — tạo nhóm ở tab Reach hoặc chọn "Một Trang".</div>}
 
+      <div className="ac-opts">
+        <label className="ac-opt">
+          <span className="ac-opt-label">Bài được comment</span>
+          <select className="input" value={backfillDays} onChange={(e) => setBackfillDays(Number(e.target.value))} aria-label="Bài được comment">
+            {BACKFILL.map(([v, l]) => (
+              <option key={v} value={v}>{l}</option>
+            ))}
+          </select>
+          <span className="ac-dim">
+            {backfillDays > 0
+              ? `Comment cả bài đã đăng trong ${backfillDays} ngày trước khi bật (tối đa 100 bài gần nhất mỗi Trang), mỗi bài 1 lần.`
+              : "Chỉ bài lên sau khi bật."}
+          </span>
+        </label>
+        <label className="ac-opt">
+          <span className="ac-opt-label">Khoảng cách giữa 2 comment (cùng một Trang)</span>
+          <select className="input" value={gapMinutes} onChange={(e) => setGapMinutes(Number(e.target.value))} aria-label="Khoảng cách giữa 2 comment">
+            {GAPS.map(([v, l]) => (
+              <option key={v} value={v}>{l}</option>
+            ))}
+          </select>
+          <span className="ac-dim">
+            {gapMinutes > 0 ? `Mỗi Trang comment tối đa 1 lần mỗi ${gapLabel(gapMinutes)} — đỡ bị Facebook coi là spam.` : "Comment ngay khi thấy bài (tối đa 15 comment mỗi 5 phút)."}
+          </span>
+        </label>
+      </div>
       <div className="section-label" style={{ marginTop: 4 }}>Nội dung comment — mỗi bài lấy ngẫu nhiên 1 mẫu</div>
       {texts.map((t, i) => (
         <div key={i} className="ac-text-row">
@@ -393,7 +445,7 @@ function RuleForm({
           {busy ? "Đang lưu…" : rule ? "Lưu" : "Lưu & bật"}
         </button>
       </div>
-      {!rule && <div className="ac-dim">Chỉ những bài lên <b>sau khi lưu</b> mới được comment — bài cũ không bị đụng tới.</div>}
+      {!rule && backfillDays === 0 && <div className="ac-dim">Chỉ những bài lên <b>sau khi lưu</b> mới được comment — bài cũ không bị đụng tới.</div>}
     </div>
   );
 }

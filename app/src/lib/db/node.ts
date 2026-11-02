@@ -255,6 +255,8 @@ export function initNodeDb(): BetterSQLite3Database<typeof schema> {
       PRIMARY KEY (owner_user_id, kind, key)
     );
   `);
+  // Monetization ("Kiếm tiền") was removed 2026-11-03 — drop its saved data.
+  sqlite.exec("DELETE FROM insight_snapshots WHERE kind = 'monet'");
 
   // Multi-tenant ownership column added in migration 0002. Local dev DBs
   // bootstrapped before this migration must be ALTERed to match. NULL ok
@@ -297,6 +299,8 @@ export function initNodeDb(): BetterSQLite3Database<typeof schema> {
         .run(firstAdmin.id);
     }
   }
+  ensureColumn("fb_comment_rules", "backfill_days", "backfill_days INTEGER NOT NULL DEFAULT 0");
+  ensureColumn("fb_comment_rules", "gap_minutes", "gap_minutes INTEGER NOT NULL DEFAULT 0");
   ensureColumn("accounts", "group_id", "group_id INTEGER REFERENCES groups(id) ON DELETE SET NULL");
   ensureColumn("accounts", "status_id", "status_id INTEGER REFERENCES statuses(id) ON DELETE SET NULL");
   ensureColumn("accounts", "country_id", "country_id INTEGER REFERENCES countries(id) ON DELETE SET NULL");

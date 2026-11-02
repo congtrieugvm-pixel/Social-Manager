@@ -221,7 +221,7 @@ export const insightPageAssignments = sqliteTable("insight_page_assignments", {
 });
 
 // Last fetched Insight data per owner, so a page reload shows it instantly
-// instead of re-reading every page from Graph. kind: 'reach' | 'monet'
+// instead of re-reading every page from Graph. kind: 'reach' | 'pages' | 'posts'
 // (key = page id) or 'pages' (key = "t:<tokenId>", the token's page list).
 export const insightSnapshots = sqliteTable("insight_snapshots", {
   ownerUserId: integer("owner_user_id")
@@ -283,6 +283,8 @@ export const fbCommentRules = sqliteTable("fb_comment_rules", {
   comments: text("comments").notNull(), // JSON string[]
   enabled: integer("enabled", { mode: "boolean" }).notNull().default(true),
   activeSince: integer("active_since").notNull(), // unix s
+  backfillDays: integer("backfill_days").notNull().default(0), // also posts of N days before activeSince
+  gapMinutes: integer("gap_minutes").notNull().default(0), // min minutes between 2 comments on one Page
   lastRunAt: integer("last_run_at"),
   createdAt: integer("created_at", { mode: "timestamp" })
     .notNull()
