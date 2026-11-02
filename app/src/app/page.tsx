@@ -2,8 +2,38 @@
 
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import Link from "next/link";
+import {
+  ArrowDown,
+  ArrowRightLeft,
+  ArrowUp,
+  ArrowUpDown,
+  BriefcaseBusiness,
+  Check,
+  ChevronDown,
+  Download,
+  ExternalLink,
+  Film,
+  Folder,
+  FolderMinus,
+  Globe,
+  Image as ImageIcon,
+  Pencil,
+  Plus,
+  RefreshCw,
+  RotateCw,
+  Search,
+  Settings2,
+  SlidersHorizontal,
+  Smartphone,
+  Tag,
+  Trash2,
+  UsersRound,
+  X,
+  type LucideIcon,
+} from "lucide-react";
 import { generateTotpCode } from "@/lib/totp";
 import { encodeBodyHeader } from "@/lib/req-body";
+import { confirmDialog, notify, promptDialog } from "./_components/notify";
 
 interface Video {
   id: string;
@@ -130,6 +160,50 @@ type SortKey =
   | "video";
 type SortDir = "asc" | "desc";
 
+/** Lists that classify accounts — each has its own management page. */
+const CATALOG: Array<{ href: string; label: string; icon: LucideIcon }> = [
+  { href: "/groups", label: "Nhóm", icon: Folder },
+  { href: "/statuses", label: "Trạng thái", icon: Tag },
+  { href: "/countries", label: "Quốc gia", icon: Globe },
+  { href: "/machines", label: "Máy", icon: Smartphone },
+  { href: "/employees", label: "Nhân viên", icon: BriefcaseBusiness },
+];
+
+/** One bulk "change X" picker in the selection bar; resets after each pick. */
+function BulkSelect({
+  label,
+  clearLabel,
+  options,
+  onPick,
+}: {
+  label: string;
+  clearLabel?: string;
+  options: Array<{ value: number; label: string }>;
+  onPick: (value: number | null) => void;
+}) {
+  return (
+    <select
+      className="input bulk-select"
+      value=""
+      aria-label={label}
+      onChange={(e) => {
+        const v = e.target.value;
+        if (!v) return;
+        onPick(v === "none" ? null : Number(v));
+        e.target.value = "";
+      }}
+    >
+      <option value="">{label}…</option>
+      {clearLabel && <option value="none">{clearLabel}</option>}
+      {options.map((o) => (
+        <option key={o.value} value={o.value}>
+          {o.label}
+        </option>
+      ))}
+    </select>
+  );
+}
+
 type ExportField = "username" | "password" | "email" | "twofa" | "emailPassword";
 
 const EXPORT_FIELD_LABELS: Record<ExportField, string> = {
@@ -235,6 +309,15 @@ export default function Dashboard() {
   const [sortDir, setSortDir] = useState<SortDir>("desc");
   const [idleCfg, setIdleCfg] = useIdleDaysSettings();
   const [idleCfgOpen, setIdleCfgOpen] = useState(false);
+  useEffect(() => {
+    const close = (e: MouseEvent) => {
+      document.querySelectorAll<HTMLDetailsElement>("details.menu[open]").forEach((d) => {
+        if (!d.contains(e.target as Node)) d.open = false;
+      });
+    };
+    document.addEventListener("mousedown", close);
+    return () => document.removeEventListener("mousedown", close);
+  }, []);
 
   const [exportOpen, setExportOpen] = useState(false);
   const [transferOpen, setTransferOpen] = useState(false);
@@ -392,7 +475,7 @@ export default function Dashboard() {
       if (stt >= from && stt <= to) ids.push(r.id);
     });
     if (ids.length === 0) {
-      alert(`Không có tài khoản nào có STT từ ${from} đến ${to} trên trang hiện tại`);
+      notify(`Không có tài khoản nào có STT từ ${from} đến ${to} trên trang hiện tại`);
       return;
     }
     setSelected(new Set(ids));
@@ -401,7 +484,7 @@ export default function Dashboard() {
   async function runFetchBulk(endpoint: "fetch-follow" | "fetch-videos" | "fetch-avatar") {
     const ids = Array.from(selected);
     if (ids.length === 0) {
-      alert("Chưa chọn tài khoản nào");
+      notify("Chưa chọn tài khoản nào");
       return;
     }
     setAction(endpoint);
@@ -447,11 +530,11 @@ export default function Dashboard() {
       const all = ids.map((id) => final.get(id)).filter((r): r is Res => !!r);
       const failed = all.filter((r) => !r.ok);
       if (failed.length === 0) {
-        alert(`Hoàn tất: ${all.length}/${all.length} thành công`);
+        notify(`Hoàn tất: ${all.length}/${all.length} thành công`);
       } else {
         const lines = failed.slice(0, 8).map((r) => `• ${r.username ?? `#${r.id}`}: ${r.error ?? "lỗi"}`);
         if (failed.length > 8) lines.push(`… và ${failed.length - 8} tài khoản khác`);
-        alert(`Hoàn tất: ${all.length - failed.length}/${all.length} thành công\n\nChưa lấy được:\n${lines.join("\n")}`);
+        notify.warn(`Hoàn tất: ${all.length - failed.length}/${all.length} thành công\n\nChưa lấy được:\n${lines.join("\n")}`);
       }
       await load();
     } finally {
@@ -470,7 +553,7 @@ export default function Dashboard() {
   async function moveSelectedToGroup(newGroupId: number | null) {
     const ids = Array.from(selected);
     if (ids.length === 0) {
-      alert("Chưa chọn tài khoản nào");
+      notify("Chưa chọn tài khoản nào");
       return;
     }
     await fetch(`/api/accounts/move-group`, {
@@ -484,7 +567,7 @@ export default function Dashboard() {
   async function updateSelectedStatus(statusId: number | null) {
     const ids = Array.from(selected);
     if (ids.length === 0) {
-      alert("Chưa chọn tài khoản nào");
+      notify("Chưa chọn tài khoản nào");
       return;
     }
     await fetch(`/api/accounts/bulk-update`, {
@@ -498,7 +581,7 @@ export default function Dashboard() {
   async function updateSelectedCountry(countryId: number | null) {
     const ids = Array.from(selected);
     if (ids.length === 0) {
-      alert("Chưa chọn tài khoản nào");
+      notify("Chưa chọn tài khoản nào");
       return;
     }
     await fetch(`/api/accounts/bulk-update`, {
@@ -512,7 +595,7 @@ export default function Dashboard() {
   async function updateSelectedMachine(machineId: number | null) {
     const ids = Array.from(selected);
     if (ids.length === 0) {
-      alert("Chưa chọn tài khoản nào");
+      notify("Chưa chọn tài khoản nào");
       return;
     }
     await fetch(`/api/accounts/bulk-update`, {
@@ -526,7 +609,7 @@ export default function Dashboard() {
   async function updateSelectedEmployee(employeeId: number | null) {
     const ids = Array.from(selected);
     if (ids.length === 0) {
-      alert("Chưa chọn tài khoản nào");
+      notify("Chưa chọn tài khoản nào");
       return;
     }
     await fetch(`/api/accounts/bulk-update`, {
@@ -540,23 +623,26 @@ export default function Dashboard() {
   async function removeSelectedFromGroup() {
     const ids = Array.from(selected);
     if (ids.length === 0) {
-      alert("Chưa chọn tài khoản nào");
+      notify("Chưa chọn tài khoản nào");
       return;
     }
-    if (!confirm(`Xóa ${ids.length} tài khoản khỏi nhóm hiện tại?`)) return;
+    if (!(await confirmDialog({ message: `Bỏ ${ids.length} tài khoản khỏi nhóm hiện tại? Tài khoản vẫn được giữ.`, confirmLabel: "Bỏ khỏi nhóm" }))) return;
     await moveSelectedToGroup(null);
   }
 
   async function deleteSelected() {
     const ids = Array.from(selected);
     if (ids.length === 0) {
-      alert("Chưa chọn tài khoản nào");
+      notify("Chưa chọn tài khoản nào");
       return;
     }
     if (
-      !confirm(
-        `Xóa vĩnh viễn ${ids.length} tài khoản? Hành động này không thể hoàn tác.`
-      )
+      !(await confirmDialog({
+        title: "Xoá vĩnh viễn",
+        message: `Xoá vĩnh viễn ${ids.length} tài khoản? Không thể hoàn tác.`,
+        confirmLabel: `Xoá ${ids.length} tài khoản`,
+        danger: true,
+      }))
     )
       return;
     setAction("delete");
@@ -567,7 +653,7 @@ export default function Dashboard() {
       });
       if (!res.ok) {
         const err = await res.json().catch(() => ({ error: "Lỗi" }));
-        alert(err.error ?? "Lỗi xóa tài khoản");
+        notify(err.error ?? "Lỗi xóa tài khoản");
         return;
       }
       setSelected(new Set());
@@ -580,7 +666,7 @@ export default function Dashboard() {
   async function openExportSelected() {
     const ids = Array.from(selected);
     if (ids.length === 0) {
-      alert("Chưa chọn tài khoản nào");
+      notify("Chưa chọn tài khoản nào");
       return;
     }
     setExportOpen(true);
@@ -594,7 +680,7 @@ export default function Dashboard() {
       });
       if (!res.ok) {
         const err = await res.json().catch(() => ({ error: "Lỗi" }));
-        alert(err.error ?? "Lỗi xuất dữ liệu");
+        notify(err.error ?? "Lỗi xuất dữ liệu");
         setExportOpen(false);
         return;
       }
@@ -840,7 +926,7 @@ export default function Dashboard() {
       `width=${w},height=${h},left=${left},top=${top}`,
     );
     if (!popup) {
-      alert(
+      notify(
         "Trình duyệt chặn popup. Vui lòng cho phép popup cho site này rồi thử lại.",
       );
       return;
@@ -880,7 +966,7 @@ export default function Dashboard() {
   }
 
   async function disconnectHotmail(accountId: number) {
-    if (!confirm("Ngắt kết nối Hotmail (xoá OAuth token) cho tài khoản này?")) return;
+    if (!(await confirmDialog({ message: "Ngắt kết nối Hotmail của tài khoản này? Lần sau phải đăng nhập Hotmail lại.", confirmLabel: "Ngắt kết nối", danger: true }))) return;
     await fetch(`/api/accounts/${accountId}/hotmail-code`, { method: "DELETE" });
     setCtxMenu((prev) =>
       prev && prev.id === accountId
@@ -1040,16 +1126,16 @@ export default function Dashboard() {
   }
 
   async function triggerAutoFetch() {
-    if (!confirm("Đồng bộ ngay tất cả tài khoản? (follower + 3 video gần nhất)")) return;
+    if (!(await confirmDialog({ title: "Đồng bộ tất cả", message: "Lấy follower và 3 video gần nhất cho mọi tài khoản ngay bây giờ?", confirmLabel: "Đồng bộ" }))) return;
     setAction("auto-fetch");
     try {
       const res = await fetch("/api/scheduler", { method: "POST" });
       if (!res.ok) {
         const err = await res.json().catch(() => ({ error: "Lỗi" }));
-        alert(err.error ?? "Lỗi");
+        notify(err.error ?? "Lỗi");
         return;
       }
-      alert("Đã khởi chạy đồng bộ ở nền. Refresh để xem kết quả sau vài phút.");
+      notify("Đã khởi chạy đồng bộ ở nền. Refresh để xem kết quả sau vài phút.");
     } finally {
       setAction(null);
     }
@@ -1080,7 +1166,7 @@ export default function Dashboard() {
   }
 
   async function createGroupFromCtx(id: number) {
-    const name = window.prompt("Tên nhóm mới:")?.trim();
+    const name = (await promptDialog({ title: "Tạo nhóm mới", label: "Tên nhóm", placeholder: "Ví dụ: Tài khoản Việt Nam", confirmLabel: "Tạo nhóm" }))?.trim();
     if (!name) return;
     try {
       const res = await fetch("/api/groups", {
@@ -1089,7 +1175,7 @@ export default function Dashboard() {
       });
       if (!res.ok) {
         const err = await res.json().catch(() => ({ error: "Lỗi" }));
-        alert(err.error ?? "Không tạo được nhóm");
+        notify(err.error ?? "Không tạo được nhóm");
         return;
       }
       const created = ((await res.json()) as { group: { id: number } }).group;
@@ -1100,7 +1186,7 @@ export default function Dashboard() {
       }
       await moveOneToGroup(id, created.id);
     } catch (e) {
-      alert("Lỗi: " + (e instanceof Error ? e.message : String(e)));
+      notify("Lỗi: " + (e instanceof Error ? e.message : String(e)));
     }
   }
 
@@ -1223,7 +1309,7 @@ export default function Dashboard() {
   }
 
   async function deleteAccount(id: number) {
-    if (!confirm("Xóa tài khoản này?")) return;
+    if (!(await confirmDialog({ message: "Xoá tài khoản này? Không thể hoàn tác.", confirmLabel: "Xoá", danger: true }))) return;
     await fetch(`/api/accounts/${id}`, { method: "DELETE" });
     setDetail(null);
     await load();
@@ -1242,443 +1328,185 @@ export default function Dashboard() {
 
   return (
     <>
-      <header
-        className="page-header"
-        style={{
-          paddingBottom: 10,
-          marginBottom: 12,
-          alignItems: "center",
-        }}
-      >
-        <div className="page-header-left" style={{ display: "flex", alignItems: "center", gap: 14 }}>
-          <h1 className="h1-serif" style={{ fontSize: 20, margin: 0 }}>
-            Danh sách tài khoản
-          </h1>
-          <span
-            className="mono"
-            style={{
-              fontSize: 12,
-              color: "var(--muted)",
-            }}
-          >
-            {groups.length} nhóm · {statusesList.length} trạng thái
-          </span>
+      <header className="page-header tt-head">
+        <div className="page-header-left">
+          <h1 className="h1-serif">Tài khoản TikTok</h1>
+          <p className="tt-sub">
+            {total.toLocaleString("vi-VN")} tài khoản · {groups.length} nhóm · {statusesList.length} trạng thái
+          </p>
         </div>
-        <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-          <Link href="/groups" className="btn" style={{ padding: "6px 12px", fontSize: 12 }}>
-            Nhóm
-          </Link>
-          <Link href="/statuses" className="btn" style={{ padding: "6px 12px", fontSize: 12 }}>
-            Trạng thái
-          </Link>
-          <Link href="/countries" className="btn" style={{ padding: "6px 12px", fontSize: 12 }}>
-            Quốc gia
-          </Link>
-          <Link href="/machines" className="btn" style={{ padding: "6px 12px", fontSize: 12 }}>
-            Máy
-          </Link>
-          <Link href="/employees" className="btn" style={{ padding: "6px 12px", fontSize: 12 }}>
-            Nhân viên
-          </Link>
-          <Link href="/import" className="btn btn-primary" style={{ padding: "6px 14px", fontSize: 11 }}>
-            + Import
+        <div className="tt-head-actions">
+          <details className="menu">
+            <summary className="btn">
+              <SlidersHorizontal size={15} aria-hidden="true" />
+              Danh mục
+              <ChevronDown size={14} aria-hidden="true" />
+            </summary>
+            <div className="menu-pop" role="menu">
+              {CATALOG.map(({ href, label, icon: Icon }) => (
+                <Link
+                  key={href}
+                  href={href}
+                  role="menuitem"
+                  className="menu-item"
+                  onClick={(e) => ((e.currentTarget.closest("details") as HTMLDetailsElement).open = false)}
+                >
+                  <Icon size={16} aria-hidden="true" />
+                  {label}
+                </Link>
+              ))}
+            </div>
+          </details>
+          <button
+            onClick={triggerAutoFetch}
+            disabled={action !== null}
+            title="Lấy follower và 3 video mới nhất cho mọi tài khoản ngay bây giờ"
+            className="btn"
+          >
+            <RefreshCw size={15} aria-hidden="true" className={action === "auto-fetch" ? "spin" : undefined} />
+            {action === "auto-fetch" ? "Đang đồng bộ…" : "Đồng bộ tất cả"}
+          </button>
+          <Link href="/import" className="btn btn-primary">
+            <Plus size={16} aria-hidden="true" />
+            Nhập tài khoản
           </Link>
         </div>
       </header>
 
-      <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 10 }}>
+      <div className="fchips" role="tablist" aria-label="Lọc theo nhóm">
         {filterChips.map((chip) => {
           const active = groupFilter === chip.key;
           return (
             <button
               key={String(chip.key)}
+              role="tab"
+              aria-selected={active}
               onClick={() => setGroupFilter(chip.key)}
-              className="pill"
-              style={{
-                cursor: "pointer",
-                borderColor: active ? "var(--ink)" : "var(--line-strong)",
-                background: active ? "var(--ink)" : "var(--bg-2)",
-                color: active ? "var(--bg)" : "var(--ink-soft)",
-                padding: "4px 10px",
-                fontSize: 12,
-              }}
+              className={`fchip${active ? " active" : ""}`}
             >
-              {chip.color && (
-                <span
-                  className="dot"
-                  style={{
-                    background: chip.color,
-                    width: 7,
-                    height: 7,
-                    borderRadius: 999,
-                    display: "inline-block",
-                    marginRight: 5,
-                  }}
-                />
-              )}
+              {chip.color && <span className="fchip-dot" style={{ background: chip.color }} />}
               {chip.label}
-              {chip.count > 0 && (
-                <span
-                  className="mono"
-                  style={{
-                    marginLeft: 6,
-                    fontSize: 12,
-                    opacity: 0.7,
-                  }}
-                >
-                  {chip.count}
-                </span>
-              )}
+              {chip.count > 0 && <span className="fchip-count">{chip.count}</span>}
             </button>
           );
         })}
       </div>
 
       <section className="section" style={{ marginBottom: 20 }}>
-        <div
-          style={{
-            display: "flex",
-            flexDirection: "column",
-            gap: 6,
-            padding: "8px 12px",
-            marginBottom: 12,
-            border: "1px solid var(--line)",
-            borderRadius: 10,
-            background: "var(--paper)",
-          }}
-        >
-          <div
-            style={{
-              display: "flex",
-              alignItems: "center",
-              gap: 8,
-              flexWrap: "nowrap",
-              overflowX: "auto",
-            }}
-          >
-            <span
-              className="mono"
-              style={{
-                fontSize: 12,
-                color: "var(--muted)",
-                whiteSpace: "nowrap",
-                flexShrink: 0,
-              }}
-            >
-              {selected.size > 0
-                ? `Đã chọn ${selected.size} / ${filtered.length}`
-                : total > 0
-                  ? `${total.toLocaleString()} tài khoản · ${page}/${totalPages}`
-                  : `Chưa có tài khoản`}
-            </span>
-            <input
-              type="search"
-              placeholder="Tìm username hoặc note…"
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              className="input"
-              style={{
-                flex: 1,
-                minWidth: 180,
-                maxWidth: 360,
-                padding: "6px 12px",
-                fontSize: 12,
-              }}
-            />
-            <div style={{ flex: 1 }} />
-            <button
-              onClick={() => runFetchBulk("fetch-follow")}
-              disabled={action !== null || selected.size === 0}
-              className="btn btn-accent"
-              style={{ padding: "6px 12px", fontSize: 12, flexShrink: 0 }}
-            >
-              {fetchLabel("fetch-follow", "Lấy Follow")}
-            </button>
-            <button
-              onClick={() => runFetchBulk("fetch-avatar")}
-              disabled={action !== null || selected.size === 0}
-              title="Chỉ làm mới avatar — dùng khi avt bị mất / hết hạn URL"
-              className="btn"
-              style={{ padding: "6px 12px", fontSize: 12, flexShrink: 0 }}
-            >
-              {fetchLabel("fetch-avatar", "Lấy AVT")}
-            </button>
-            <button
-              onClick={() => runFetchBulk("fetch-videos")}
-              disabled={action !== null || selected.size === 0}
-              className="btn btn-primary"
-              style={{ padding: "6px 12px", fontSize: 12, flexShrink: 0 }}
-            >
-              {fetchLabel("fetch-videos", "Lấy Video")}
-            </button>
-            <button
-              onClick={triggerAutoFetch}
-              disabled={action !== null}
-              title="Đồng bộ tất cả tài khoản ngay (follower + 3 video)"
-              className="btn"
-              style={{ padding: "6px 12px", fontSize: 12, flexShrink: 0 }}
-            >
-              {action === "auto-fetch" ? "Đang kích hoạt…" : "Đồng bộ 4h"}
-            </button>
-            <button
-              onClick={load}
-              disabled={loading}
-              className="btn"
-              style={{ padding: "6px 12px", fontSize: 12, flexShrink: 0 }}
-            >
-              Refresh
-            </button>
-            <IdleDaysMenu
-              cfg={idleCfg}
-              onChange={setIdleCfg}
-              open={idleCfgOpen}
-              onOpenChange={setIdleCfgOpen}
-            />
-          </div>
-          <div
-            style={{
-              display: "flex",
-              alignItems: "center",
-              gap: 6,
-              flexWrap: "nowrap",
-              overflowX: "auto",
-              paddingTop: 2,
-              borderTop: "1px solid var(--line)",
-              marginTop: 2,
-            }}
-          >
-            <span
-              className="mono"
-              style={{
-                fontSize: 12,
-                color: "var(--muted)",
-                whiteSpace: "nowrap",
-                paddingRight: 4,
-                flexShrink: 0,
-              }}
-            >
-              Bulk
-            </span>
-            <select
-              className="input"
-              value=""
-              disabled={selected.size === 0}
-              onChange={(e) => {
-                const v = e.target.value;
-                if (!v) return;
-                moveSelectedToGroup(v === "none" ? null : Number(v));
-                e.target.value = "";
-              }}
-              style={{ width: "auto", minWidth: 120, padding: "5px 8px", fontSize: 11, flexShrink: 0 }}
-            >
-              <option value="">Chuyển nhóm…</option>
-              {groups.map((g) => (
-                <option key={g.id} value={g.id}>
-                  {g.name}
-                </option>
-              ))}
-            </select>
-            <select
-              className="input"
-              value=""
-              disabled={selected.size === 0}
-              onChange={(e) => {
-                const v = e.target.value;
-                if (!v) return;
-                updateSelectedStatus(v === "none" ? null : Number(v));
-                e.target.value = "";
-              }}
-              style={{ width: "auto", minWidth: 130, padding: "5px 8px", fontSize: 11, flexShrink: 0 }}
-            >
-              <option value="">Đổi trạng thái…</option>
-              <option value="none">— Bỏ trạng thái —</option>
-              {statusesList.map((s) => (
-                <option key={s.id} value={s.id}>
-                  {s.name}
-                </option>
-              ))}
-            </select>
-            <select
-              className="input"
-              value=""
-              disabled={selected.size === 0}
-              onChange={(e) => {
-                const v = e.target.value;
-                if (!v) return;
-                updateSelectedCountry(v === "none" ? null : Number(v));
-                e.target.value = "";
-              }}
-              style={{ width: "auto", minWidth: 130, padding: "5px 8px", fontSize: 11, flexShrink: 0 }}
-            >
-              <option value="">Đổi quốc gia…</option>
-              <option value="none">— Bỏ quốc gia —</option>
-              {countriesList.map((c) => (
-                <option key={c.id} value={c.id}>
-                  {c.code ? `${c.code} · ${c.name}` : c.name}
-                </option>
-              ))}
-            </select>
-            <select
-              className="input"
-              value=""
-              disabled={selected.size === 0}
-              onChange={(e) => {
-                const v = e.target.value;
-                if (!v) return;
-                updateSelectedMachine(v === "none" ? null : Number(v));
-                e.target.value = "";
-              }}
-              style={{ width: "auto", minWidth: 120, padding: "5px 8px", fontSize: 11, flexShrink: 0 }}
-            >
-              <option value="">Đổi máy…</option>
-              <option value="none">— Bỏ máy —</option>
-              {machinesList.map((m) => (
-                <option key={m.id} value={m.id}>
-                  {m.name}
-                </option>
-              ))}
-            </select>
-            <select
-              className="input"
-              value=""
-              disabled={selected.size === 0}
-              onChange={(e) => {
-                const v = e.target.value;
-                if (!v) return;
-                updateSelectedEmployee(v === "none" ? null : Number(v));
-                e.target.value = "";
-              }}
-              style={{ width: "auto", minWidth: 130, padding: "5px 8px", fontSize: 11, flexShrink: 0 }}
-            >
-              <option value="">Đổi nhân viên…</option>
-              <option value="none">— Bỏ nhân viên —</option>
-              {employeesList.map((emp) => (
-                <option key={emp.id} value={emp.id}>
-                  {emp.name}
-                </option>
-              ))}
-            </select>
-            <button
-              onClick={openExportSelected}
-              disabled={selected.size === 0 || exportBusy}
-              title="Xuất thông tin tài khoản đã chọn (User|Pass|Email|2FA|Pass Email)"
-              className="btn"
-              style={{ padding: "5px 10px", fontSize: 12, flexShrink: 0 }}
-            >
-              {exportBusy ? "Đang xuất…" : `Xuất (${selected.size})`}
-            </button>
-            <button
-              onClick={() => setTransferOpen(true)}
-              disabled={selected.size === 0}
-              title="Chuyển / sao chép thông tin các tài khoản đã chọn sang user khác"
-              className="btn"
-              style={{ padding: "5px 10px", fontSize: 12, flexShrink: 0 }}
-            >
-              Chuyển user
-            </button>
-            <button
-              onClick={removeSelectedFromGroup}
-              disabled={selected.size === 0}
-              title="Xóa khỏi nhóm (giữ tài khoản)"
-              className="btn"
-              style={{ padding: "5px 10px", fontSize: 12, flexShrink: 0 }}
-            >
-              Bỏ nhóm
-            </button>
-            <button
-              onClick={deleteSelected}
-              disabled={action !== null || selected.size === 0}
-              title="Xóa vĩnh viễn các tài khoản đã chọn"
-              className="btn btn-danger"
-              style={{ padding: "5px 10px", fontSize: 12, flexShrink: 0 }}
-            >
-              {action === "delete" ? "Đang xóa…" : "Xóa vĩnh viễn"}
-            </button>
-            <div style={{ flex: 1 }} />
-            <div
-              style={{
-                display: "inline-flex",
-                alignItems: "stretch",
-                border: "1px solid var(--line-strong)",
-                borderRadius: 6,
-                overflow: "hidden",
-                background: "var(--bg-1)",
-                flexShrink: 0,
-              }}
-            >
+        <div className={`tt-toolbar${selected.size > 0 ? " has-selection" : ""}`}>
+          <div className="tt-row">
+            <label className="search-field">
+              <Search size={16} aria-hidden="true" />
               <input
-                type="number"
-                min={1}
-                value={pickFrom}
-                onChange={(e) => setPickFrom(Number(e.target.value) || 1)}
-                title="Từ STT"
-                placeholder="Từ"
-                style={{
-                  width: 46,
-                  background: "transparent",
-                  border: 0,
-                  color: "var(--ink)",
-                  fontFamily: "var(--font-mono)",
-                  fontSize: 11,
-                  textAlign: "center",
-                  padding: "0 4px",
-                  outline: "none",
-                }}
+                type="search"
+                placeholder="Tìm username hoặc ghi chú"
+                aria-label="Tìm tài khoản"
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
               />
-              <span
-                style={{
-                  display: "inline-flex",
-                  alignItems: "center",
-                  padding: "0 4px",
-                  color: "var(--muted)",
-                  fontFamily: "var(--font-mono)",
-                  fontSize: 11,
-                  borderLeft: "1px solid var(--line)",
-                  borderRight: "1px solid var(--line)",
-                }}
-              >
-                →
-              </span>
-              <input
-                type="number"
-                min={1}
-                value={pickTo}
-                onChange={(e) => setPickTo(Number(e.target.value) || 1)}
-                title="Đến STT"
-                placeholder="Đến"
-                style={{
-                  width: 46,
-                  background: "transparent",
-                  border: 0,
-                  color: "var(--ink)",
-                  fontFamily: "var(--font-mono)",
-                  fontSize: 11,
-                  textAlign: "center",
-                  padding: "0 4px",
-                  outline: "none",
-                }}
-              />
-              <button
-                onClick={pickRange}
-                disabled={filtered.length === 0}
-                title={`Chọn tài khoản có STT từ ${pickFrom} đến ${pickTo}`}
-                style={{
-                  border: 0,
-                  borderLeft: "1px solid var(--line-strong)",
-                  background: "var(--bg-2)",
-                  color: "var(--ink)",
-                  padding: "5px 10px",
-                  fontSize: 12,
-                  fontFamily: "var(--font-sans)",
-                  fontWeight: 500,
-                  cursor: filtered.length === 0 ? "not-allowed" : "pointer",
-                  opacity: filtered.length === 0 ? 0.4 : 1,
-                }}
-              >
-                Chọn {pickFrom}→{pickTo}
+            </label>
+            <span className="tt-count">
+              {total > 0 ? `${total.toLocaleString("vi-VN")} tài khoản · trang ${page}/${totalPages}` : "Chưa có tài khoản"}
+            </span>
+            <span className="tt-spacer" />
+            <div className="range-pick" title="Chọn nhanh các tài khoản theo số thứ tự trên trang này">
+              <span>Chọn STT</span>
+              <input type="number" min={1} value={pickFrom} onChange={(e) => setPickFrom(Number(e.target.value) || 1)} aria-label="Từ STT" />
+              <span aria-hidden="true">–</span>
+              <input type="number" min={1} value={pickTo} onChange={(e) => setPickTo(Number(e.target.value) || 1)} aria-label="Đến STT" />
+              <button type="button" onClick={pickRange} disabled={filtered.length === 0}>
+                Chọn
               </button>
             </div>
+            <button onClick={load} disabled={loading} className="btn btn-icon" aria-label="Tải lại danh sách" title="Tải lại danh sách">
+              <RotateCw size={15} aria-hidden="true" className={loading ? "spin" : undefined} />
+            </button>
+            <IdleDaysMenu cfg={idleCfg} onChange={setIdleCfg} open={idleCfgOpen} onOpenChange={setIdleCfgOpen} />
           </div>
+
+          {selected.size > 0 ? (
+            <div className="tt-selbar" role="toolbar" aria-label="Thao tác với tài khoản đã chọn">
+              <span className="tt-selcount">
+                <b>{selected.size}</b> đã chọn
+              </span>
+              <button className="btn btn-quiet" onClick={() => setSelected(new Set())}>
+                <X size={14} aria-hidden="true" />
+                Bỏ chọn
+              </button>
+              <span className="tt-sep" aria-hidden="true" />
+              <button onClick={() => runFetchBulk("fetch-videos")} disabled={action !== null} className="btn btn-primary">
+                <Film size={15} aria-hidden="true" />
+                {fetchLabel("fetch-videos", "Lấy video")}
+              </button>
+              <button onClick={() => runFetchBulk("fetch-follow")} disabled={action !== null} className="btn btn-accent">
+                <UsersRound size={15} aria-hidden="true" />
+                {fetchLabel("fetch-follow", "Lấy follow")}
+              </button>
+              <button
+                onClick={() => runFetchBulk("fetch-avatar")}
+                disabled={action !== null}
+                title="Chỉ làm mới ảnh đại diện — dùng khi ảnh bị mất hoặc hết hạn"
+                className="btn"
+              >
+                <ImageIcon size={15} aria-hidden="true" />
+                {fetchLabel("fetch-avatar", "Lấy ảnh đại diện")}
+              </button>
+              <span className="tt-sep" aria-hidden="true" />
+              <BulkSelect
+                label="Chuyển nhóm"
+                onPick={(v) => moveSelectedToGroup(v)}
+                options={groups.map((g) => ({ value: g.id, label: g.name }))}
+              />
+              <BulkSelect
+                label="Đổi trạng thái"
+                clearLabel="Bỏ trạng thái"
+                onPick={(v) => updateSelectedStatus(v)}
+                options={statusesList.map((s) => ({ value: s.id, label: s.name }))}
+              />
+              <BulkSelect
+                label="Đổi quốc gia"
+                clearLabel="Bỏ quốc gia"
+                onPick={(v) => updateSelectedCountry(v)}
+                options={countriesList.map((c) => ({ value: c.id, label: c.code ? `${c.code} · ${c.name}` : c.name }))}
+              />
+              <BulkSelect
+                label="Đổi máy"
+                clearLabel="Bỏ máy"
+                onPick={(v) => updateSelectedMachine(v)}
+                options={machinesList.map((m) => ({ value: m.id, label: m.name }))}
+              />
+              <BulkSelect
+                label="Đổi nhân viên"
+                clearLabel="Bỏ nhân viên"
+                onPick={(v) => updateSelectedEmployee(v)}
+                options={employeesList.map((emp) => ({ value: emp.id, label: emp.name }))}
+              />
+              <span className="tt-sep" aria-hidden="true" />
+              <button
+                onClick={openExportSelected}
+                disabled={exportBusy}
+                title="Xuất thông tin đăng nhập của tài khoản đã chọn"
+                className="btn"
+              >
+                <Download size={15} aria-hidden="true" />
+                {exportBusy ? "Đang xuất…" : "Xuất"}
+              </button>
+              <button onClick={() => setTransferOpen(true)} title="Chuyển hoặc sao chép tài khoản đã chọn sang user khác" className="btn">
+                <ArrowRightLeft size={15} aria-hidden="true" />
+                Chuyển user
+              </button>
+              <button onClick={removeSelectedFromGroup} title="Bỏ khỏi nhóm, vẫn giữ tài khoản" className="btn">
+                <FolderMinus size={15} aria-hidden="true" />
+                Bỏ nhóm
+              </button>
+              <button onClick={deleteSelected} disabled={action !== null} className="btn btn-danger">
+                <Trash2 size={15} aria-hidden="true" />
+                {action === "delete" ? "Đang xoá…" : "Xoá"}
+              </button>
+            </div>
+          ) : (
+            <p className="tt-hint">Chọn tài khoản trong bảng, hoặc chọn theo STT, để lấy dữ liệu, đổi nhóm, xuất hay xoá.</p>
+          )}
         </div>
 
         <div className="table-wrap">
@@ -1776,7 +1604,7 @@ export default function Dashboard() {
                     >
                       {total === 0 ? (
                         <>
-                          Chưa có tài khoản. <Link href="/import" className="text-accent">Import ngay →</Link>
+                          Chưa có tài khoản. <Link href="/import" className="text-accent">Nhập tài khoản</Link>
                         </>
                       ) : (
                         "Không tìm thấy kết quả"
@@ -1884,9 +1712,9 @@ export default function Dashboard() {
                                 bottom: 0,
                                 padding: "2px 3px",
                                 textAlign: "center",
-                                fontFamily: "var(--font-mono)",
-                                fontSize: 12,
-                                letterSpacing: "0.02em",
+                                fontVariantNumeric: "tabular-nums",
+                                fontSize: 10,
+                                fontWeight: 600,
                                 color: "#fff",
                                 background:
                                   "linear-gradient(to top, rgba(0,0,0,0.85) 0%, rgba(0,0,0,0.45) 60%, rgba(0,0,0,0) 100%)",
@@ -1967,7 +1795,6 @@ export default function Dashboard() {
                           padding: "4px 8px",
                           fontSize: 12,
                           minWidth: 140,
-                          fontFamily: "var(--font-mono)",
                           color: r.statusColor ?? "var(--muted)",
                           borderColor: r.statusColor ?? "var(--line)",
                         }}
@@ -2213,7 +2040,7 @@ export default function Dashboard() {
                       ((e.target as HTMLAnchorElement).style.color = "inherit")
                     }
                   >
-                    @{detail.username} ↗
+                    @{detail.username} <ExternalLink size={13} aria-hidden="true" style={{ verticalAlign: "-1px" }} />
                   </a>
                 </h2>
               </div>
@@ -2425,7 +2252,7 @@ export default function Dashboard() {
                   color: "var(--accent)",
                 }}
               >
-                Xem trên TikTok →
+                Xem trên TikTok <ExternalLink size={14} aria-hidden="true" style={{ verticalAlign: "-2px" }} />
               </a>
             </div>
           </div>
@@ -2560,7 +2387,6 @@ export default function Dashboard() {
                   padding: "4px 6px",
                   fontSize: 12,
                   textAlign: "center",
-                  fontFamily: "var(--font-mono)",
                 }}
               />
             </div>
@@ -2598,7 +2424,7 @@ export default function Dashboard() {
                 className="btn"
                 style={{ padding: "6px 14px", fontSize: 11 }}
               >
-                {copiedLabel === "export" ? "✓ Đã copy" : "Copy tất cả"}
+                {copiedLabel === "export" ? <><Check size={14} aria-hidden="true" /> Đã chép</> : "Chép tất cả"}
               </button>
               <button
                 onClick={downloadExport}
@@ -2874,7 +2700,7 @@ export default function Dashboard() {
                 ((e.target as HTMLAnchorElement).style.color = "var(--muted)")
               }
             >
-              @{ctxMenu.username} ↗
+              @{ctxMenu.username} <ExternalLink size={13} aria-hidden="true" style={{ verticalAlign: "-1px" }} />
             </a>
           </div>
           {ctxMenu.loading && (
@@ -2935,7 +2761,7 @@ export default function Dashboard() {
                   onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
                 >
                   <span>Sửa thông tin…</span>
-                  <span className="mono" style={{ fontSize: 12, color: "var(--muted)" }}>✎</span>
+                  <Pencil size={14} aria-hidden="true" style={{ color: "var(--muted)" }} />
                 </button>
 
                 <div style={{ padding: "6px 10px 4px" }}>
@@ -3064,7 +2890,7 @@ export default function Dashboard() {
                           color: copied ? "var(--accent)" : "var(--muted)",
                         }}
                       >
-                        {copied ? "✓" : disabled ? "—" : ""}
+                        {copied ? <Check size={14} aria-hidden="true" /> : disabled ? "—" : ""}
                       </span>
                     </button>
                   );
@@ -3120,12 +2946,7 @@ export default function Dashboard() {
                         ? "Đang mở Chromium…"
                         : "Login Hotmail (Chromium)"}
                     </span>
-                    <span
-                      className="mono"
-                      style={{ fontSize: 12, color: "var(--muted)" }}
-                    >
-                      ↗
-                    </span>
+                    <ExternalLink size={14} aria-hidden="true" style={{ color: "var(--muted)" }} />
                   </button>
                   {ctxMenu.browserLoginMessage && (
                     <div
@@ -3206,7 +3027,7 @@ export default function Dashboard() {
                     }}
                   >
                     {copiedLabel === `ctx-${ctxMenu.id}-full`
-                      ? "✓"
+                      ? <Check size={14} aria-hidden="true" />
                       : "user|pass|email|2fa|pmail"}
                   </span>
                 </button>
@@ -3293,7 +3114,7 @@ function HotmailMenuRow({
           className="mono"
           style={{ fontSize: 12, color: "var(--muted)" }}
         >
-          {hasToken ? (msEmail ?? "✓") : "✱"}
+          {hasToken ? (msEmail ?? <Check size={14} aria-hidden="true" />) : "Chưa kết nối"}
         </span>
       </button>
       {result && (
@@ -3341,7 +3162,7 @@ function HotmailMenuRow({
             className="mono"
             style={{ fontSize: 12, color: copied ? "var(--accent)" : "var(--muted)" }}
           >
-            {copied ? "✓ copied" : "copy"}
+            {copied ? "Đã chép" : "Chép"}
           </span>
         </div>
       )}
@@ -3414,32 +3235,17 @@ function SortableTh({
   width?: number;
 }) {
   const isActive = active === sortKey;
-  const arrow = isActive ? (dir === "asc" ? "↑" : "↓") : "";
+  const Arrow = isActive ? (dir === "asc" ? ArrowUp : ArrowDown) : ArrowUpDown;
   return (
     <th
-      onClick={() => onToggle(sortKey)}
       className={align === "right" ? "right" : undefined}
-      style={{
-        cursor: "pointer",
-        userSelect: "none",
-        width,
-        color: isActive ? "var(--accent)" : undefined,
-      }}
-      title={`Sắp xếp theo ${label}`}
+      style={{ width }}
+      aria-sort={isActive ? (dir === "asc" ? "ascending" : "descending") : "none"}
     >
-      <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+      <button type="button" className={`th-sort${isActive ? " active" : ""}`} onClick={() => onToggle(sortKey)} title={`Sắp xếp theo ${label}`}>
         <span>{label}</span>
-        <span
-          className="mono"
-          style={{
-            fontSize: 11,
-            color: isActive ? "var(--accent)" : "var(--line-strong)",
-            minWidth: 10,
-          }}
-        >
-          {arrow || "⇅"}
-        </span>
-      </span>
+        <Arrow size={13} aria-hidden="true" />
+      </button>
     </th>
   );
 }
@@ -3642,7 +3448,7 @@ function TransferModal({
           Chuyển tài khoản
         </div>
         <h2 style={{ fontFamily: "var(--font-serif)", fontSize: 22, margin: "6px 0 16px", letterSpacing: "-0.01em" }}>
-          {ids.length} tài khoản → user khác
+          {ids.length} tài khoản sang user khác
         </h2>
 
         {result ? (
@@ -3790,7 +3596,7 @@ function TotpMenuButton({
           </>
         )}
         <span className="mono" style={{ fontSize: 12, color: copied ? "var(--accent)" : "var(--muted)" }}>
-          {copied ? "✓" : totp ? "" : "—"}
+          {copied ? <Check size={14} aria-hidden="true" /> : totp ? "" : "—"}
         </span>
       </span>
     </button>
@@ -3896,7 +3702,8 @@ function IdleDaysMenu({
         onClick={() => onOpenChange(!open)}
         title="Cài đặt hiển thị số ngày chưa đăng video"
       >
-        ⚙ Số ngày chưa đăng
+        <Settings2 size={14} aria-hidden="true" />
+        Số ngày chưa đăng
       </button>
       {open && pos && (
         <div className="idle-pop" style={{ top: pos.top, right: pos.right }} role="dialog" aria-label="Cài đặt số ngày chưa đăng video">

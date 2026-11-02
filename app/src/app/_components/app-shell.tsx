@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { usePathname } from "next/navigation";
 import { Sidebar } from "./sidebar";
+import { Notifier } from "./notify";
 
 interface AppShellProps {
   user: { username: string; role: string };
@@ -87,6 +88,7 @@ export function AppShell({ user, children }: AppShellProps) {
       )}
 
       <main className="main">{children}</main>
+      <Notifier />
     </div>
   );
 }
