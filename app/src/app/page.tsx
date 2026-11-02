@@ -15,6 +15,7 @@ import {
   Film,
   Folder,
   FolderOpen,
+  Play,
   MoreHorizontal,
   ListChecks,
   Inbox,
@@ -287,6 +288,13 @@ interface EditState {
 }
 
 const PAGE_SIZE = 50;
+
+function ageShort(unixSec: number): string {
+  const s = Math.max(0, Date.now() / 1000 - unixSec);
+  if (s < 3600) return `${Math.max(1, Math.round(s / 60))} phút`;
+  if (s < 86400) return `${Math.round(s / 3600)} giờ`;
+  return `${Math.round(s / 86400)} ngày`;
+}
 
 function fmtNum(n: number | null | undefined): string {
   if (n == null) return "—";
@@ -605,6 +613,9 @@ export default function Dashboard() {
       : fetchProgress
         ? `${fetchProgress.retry ? "Thử lại" : "Đang lấy"} ${fetchProgress.done}/${fetchProgress.total}…`
         : "Đang lấy…";
+  // Phone action bar: just "3/9" while running (the spinning icon says what is running).
+  const fetchLabelShort = (endpoint: string, idle: string) =>
+    action !== endpoint ? idle : fetchProgress ? `${fetchProgress.done}/${fetchProgress.total}` : "…";
 
   async function moveSelectedToGroup(newGroupId: number | null) {
     const ids = Array.from(selected);
@@ -2101,6 +2112,36 @@ export default function Dashboard() {
                 >
                   <MoreHorizontal size={20} aria-hidden="true" />
                 </button>
+                <div className="m-videos">
+                  {r.lastVideos && r.lastVideos.length > 0 ? (
+                    r.lastVideos.slice(0, 3).map((v) => (
+                      <a
+                        key={v.id}
+                        href={`https://www.tiktok.com/@${r.username}/video/${v.id}`}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="m-video"
+                        aria-label={`Video ${v.caption ? `“${v.caption.slice(0, 40)}”` : ""} — ${fmtNum(v.viewCount)} lượt xem`}
+                      >
+                        {v.coverUrl ? (
+                          // eslint-disable-next-line @next/next/no-img-element
+                          <img src={v.coverUrl} alt="" referrerPolicy="no-referrer" loading="lazy" />
+                        ) : (
+                          <span className="m-video-ph" />
+                        )}
+                        <span className="m-video-views">
+                          <Play size={10} aria-hidden="true" fill="currentColor" />
+                          {fmtNum(v.viewCount)}
+                        </span>
+                        {v.postedAt > 0 && <span className="m-video-age">{ageShort(v.postedAt)}</span>}
+                      </a>
+                    ))
+                  ) : (
+                    <span className="m-videos-empty">
+                      {r.lastVideos ? "Không có video công khai" : "Chưa lấy video"}
+                    </span>
+                  )}
+                </div>
               </article>
             );
           })}
@@ -2120,15 +2161,14 @@ export default function Dashboard() {
               <b>{selected.size}</b>
             </button>
             <button onClick={() => runFetchBulk("fetch-videos")} disabled={action !== null} className="btn btn-primary">
-              <Film size={16} aria-hidden="true" />
-              {fetchLabel("fetch-videos", "Lấy video")}
+              <Film size={16} aria-hidden="true" className={action === "fetch-videos" ? "spin-soft" : undefined} />
+              <span className="m-ab-label" aria-live="polite">{fetchLabelShort("fetch-videos", "Lấy video")}</span>
             </button>
             <button onClick={() => runFetchBulk("fetch-follow")} disabled={action !== null} className="btn btn-accent">
-              {fetchLabel("fetch-follow", "Follow")}
+              <span className="m-ab-label" aria-live="polite">{fetchLabelShort("fetch-follow", "Follow")}</span>
             </button>
-            <button className="btn" onClick={() => setActionsOpen(true)}>
-              <MoreHorizontal size={16} aria-hidden="true" />
-              Thêm
+            <button className="btn m-ab-more" onClick={() => setActionsOpen(true)} aria-label="Thêm thao tác" title="Thêm thao tác">
+              <MoreHorizontal size={20} aria-hidden="true" />
             </button>
           </div>
         )}
