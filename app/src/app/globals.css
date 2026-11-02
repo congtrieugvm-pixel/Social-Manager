@@ -1910,3 +1910,140 @@ html[data-density="compact"] .table .input, html[data-density="compact"] .table 
 kbd { display: inline-flex; align-items: center; justify-content: center; min-width: 20px; height: 20px; padding: 0 5px; border: 1px solid var(--line-strong); border-bottom-width: 2px; border-radius: 5px; background: var(--bg-1); color: var(--muted); font-family: var(--font-sans); font-size: 11.5px; font-weight: 600; line-height: 1; }
 .search-field kbd { flex: 0 0 auto; }
 @media (hover: none) { .search-field kbd { display: none; } }
+
+/* =========================================================
+   Phone UI (max 768px): its own layout. Bottom tab bar, cards
+   instead of wide tables, bottom sheets for menus and dialogs.
+   ========================================================= */
+.only-phone { display: none !important; }
+.tabbar { display: none; }
+.mobile-topbar-spacer { flex: 1; }
+
+@media (max-width: 768px) {
+  .only-wide { display: none !important; }
+  .only-phone { display: revert !important; }
+  .m-list.only-phone { display: flex !important; }
+  .m-actionbar.only-phone { display: flex !important; }
+
+  html { -webkit-tap-highlight-color: transparent; }
+  body { touch-action: manipulation; }
+  .main { padding: 14px 14px calc(88px + env(safe-area-inset-bottom)); }
+
+  /* iOS zooms into inputs under 16px */
+  .input, .textarea, .select, .search-field input, .range-pick input { font-size: 16px; }
+
+  /* Top bar: brand + theme switch; navigation moves to the bottom. */
+  .hamburger { display: none !important; }
+  .mobile-topbar { padding-top: env(safe-area-inset-top); }
+  .mobile-topbar .theme-toggle.compact { width: 44px; min-height: 44px; justify-content: center; padding: 0; border-color: var(--line); color: var(--ink); }
+  .mobile-topbar .theme-toggle.compact:hover { background: var(--bg-2); }
+
+  /* Bottom tab bar */
+  .tabbar { display: grid; grid-template-columns: repeat(5, 1fr); position: fixed; left: 0; right: 0; bottom: 0; z-index: 45; background: var(--paper); border-top: 1px solid var(--line); padding: 4px 4px calc(4px + env(safe-area-inset-bottom)); box-shadow: 0 -4px 16px rgba(23, 32, 51, 0.06); }
+  .tab { appearance: none; border: 0; background: transparent; font: inherit; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px; min-height: 52px; border-radius: 10px; color: var(--muted); text-decoration: none; font-size: 12px; font-weight: 500; }
+  .tab.active { color: var(--accent); font-weight: 700; }
+  .tab.active svg { stroke-width: 2.4; }
+  .tab:active { background: var(--bg-2); }
+
+  /* Page header */
+  .page-header { padding-bottom: 12px; margin-bottom: 12px; gap: 12px; }
+  .tt-head-actions .btn { min-height: 40px; }
+  .fchips { flex-wrap: nowrap; overflow-x: auto; margin: 0 -14px 10px; padding: 0 14px 2px; scrollbar-width: none; }
+  .fchips::-webkit-scrollbar { display: none; }
+  .fchip { flex: 0 0 auto; min-height: 36px; }
+
+  /* TikTok toolbar: search + a few tools; table-only tools hidden */
+  .tt-toolbar { padding: 10px; gap: 8px; }
+  .tt-toolbar .range-pick, .tt-toolbar .density-toggle, .tt-count { display: none; }
+  .tt-toolbar .btn-icon { min-width: 44px; min-height: 44px; }
+  .search-field { min-height: 44px; }
+
+  /* Account cards */
+  .m-list { flex-direction: column; gap: 8px; }
+  .m-card { position: relative; display: flex; align-items: flex-start; gap: 4px; background: var(--paper); border: 1px solid var(--line); border-radius: 14px; padding: 6px 4px 6px 2px; box-shadow: var(--shadow-1); }
+  .m-card.selected { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 6%, var(--paper)); }
+  .m-check { flex: 0 0 auto; display: flex; align-items: center; justify-content: center; width: 44px; height: 52px; }
+  .m-check input { width: 20px; height: 20px; }
+  .m-main { appearance: none; flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 8px; padding: 8px 4px; border: 0; background: transparent; color: inherit; font: inherit; text-align: left; }
+  .m-row { display: flex; align-items: center; gap: 10px; min-width: 0; }
+  .m-avatar { width: 40px !important; height: 40px !important; flex: 0 0 auto; }
+  .m-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+  .m-title { font-size: 15.5px; font-weight: 650; color: var(--ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .m-meta { font-size: 13px; color: var(--muted); font-variant-numeric: tabular-nums; }
+  .m-meta b { color: var(--ink-soft); font-weight: 600; }
+  .m-tags { display: flex; flex-wrap: wrap; gap: 6px; }
+  .m-tag { display: inline-flex; align-items: center; gap: 5px; padding: 2px 8px; border: 1px solid var(--line-strong); border-radius: 999px; font-size: 12px; font-weight: 500; color: var(--ink-soft); background: var(--bg-1); }
+  .m-note { font-size: 13px; color: var(--muted); display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+  .m-more { appearance: none; flex: 0 0 auto; width: 44px; height: 52px; display: flex; align-items: center; justify-content: center; border: 0; background: transparent; color: var(--muted); border-radius: 10px; }
+  .m-more:active { background: var(--bg-2); }
+  .m-selectall { min-height: 44px; margin-top: 4px; }
+
+  /* Selection actions above the tab bar */
+  .m-actionbar { position: fixed; left: 10px; right: 10px; bottom: calc(68px + env(safe-area-inset-bottom)); z-index: 44; gap: 8px; align-items: center; padding: 8px; background: var(--paper); border: 1px solid var(--accent-strong); border-radius: 14px; box-shadow: var(--shadow-pop); }
+  .m-actionbar .btn { min-height: 44px; flex: 1; padding: 6px 10px; }
+  .m-ab-count { appearance: none; display: inline-flex; align-items: center; gap: 6px; min-height: 44px; padding: 0 10px; border: 0; border-radius: 10px; background: var(--accent-soft); color: var(--accent); font: inherit; font-size: 15px; }
+
+  /* Toasts sit above the tab bar */
+  .toasts { bottom: calc(76px + env(safe-area-inset-bottom)); }
+
+  /* Every dialog becomes a bottom sheet */
+  .modal-overlay { align-items: flex-end; padding: 0; }
+  .modal { max-width: none; width: 100%; max-height: 88vh; border-radius: 18px 18px 0 0; padding: 20px 16px calc(20px + env(safe-area-inset-bottom)); animation: sheet-up 0.22s ease-out; overscroll-behavior: contain; }
+  .modal .btn { min-height: 44px; }
+  .dialog-actions { flex-direction: column-reverse; }
+  .dialog-actions .btn { width: 100%; }
+
+  /* Row menu (more button) as a bottom sheet */
+  .ctx-backdrop { position: fixed; inset: 0; z-index: 999; background: var(--overlay); }
+  .ctx-menu { top: auto !important; left: 0 !important; right: 0; bottom: 0; width: 100%; min-width: 0 !important; max-height: 80vh !important; border-radius: 18px 18px 0 0 !important; padding: 8px 8px calc(12px + env(safe-area-inset-bottom)) !important; font-size: 15px !important; animation: sheet-up 0.22s ease-out; overscroll-behavior: contain; }
+  .ctx-menu button { min-height: 44px; font-size: 15px !important; }
+  .ctx-menu select, .ctx-menu input { min-height: 40px; font-size: 16px !important; }
+}
+
+/* Bottom sheet (components/sheet) */
+.sheet-overlay { position: fixed; inset: 0; z-index: 60; background: var(--overlay); display: flex; align-items: flex-end; }
+.sheet { width: 100%; max-height: 85vh; overflow-y: auto; overscroll-behavior: contain; background: var(--paper); border-radius: 18px 18px 0 0; padding: 0 14px calc(16px + env(safe-area-inset-bottom)); box-shadow: var(--shadow-pop); animation: sheet-up 0.22s ease-out; }
+.sheet-head { position: sticky; top: 0; background: var(--paper); display: flex; align-items: center; gap: 8px; padding: 18px 0 10px; }
+.sheet-grip { position: absolute; top: 7px; left: 50%; width: 40px; height: 4px; margin-left: -20px; border-radius: 4px; background: var(--line-strong); }
+.sheet-head h2 { flex: 1; margin: 0; font-size: 17px; font-weight: 700; color: var(--ink); }
+.sheet-x { appearance: none; width: 44px; height: 44px; display: inline-flex; align-items: center; justify-content: center; border: 0; border-radius: 10px; background: transparent; color: var(--muted); }
+.sheet-actions { display: flex; flex-direction: column; gap: 4px; margin-bottom: 12px; }
+.sheet-btn { appearance: none; display: flex; align-items: center; gap: 14px; width: 100%; min-height: 52px; padding: 0 12px; border: 0; border-radius: 12px; background: transparent; color: var(--ink); font: inherit; font-size: 15.5px; font-weight: 500; text-align: left; }
+.sheet-btn svg { color: var(--muted); }
+.sheet-btn:active { background: var(--bg-2); }
+.sheet-btn.danger { color: var(--danger); margin-top: 8px; border-top: 1px solid var(--line); border-radius: 0 0 12px 12px; }
+.sheet-btn.danger svg { color: var(--danger); }
+.sheet-btn:disabled { opacity: 0.45; }
+.sheet-fields { display: grid; grid-template-columns: 1fr; gap: 8px; }
+.sheet-fields .bulk-select { width: 100%; min-height: 48px; font-size: 16px; }
+@keyframes sheet-up { from { transform: translateY(24px); opacity: 0.6; } to { transform: none; opacity: 1; } }
+
+@media (max-width: 768px) {
+  /* Icon-only secondary buttons on phones; the primary action keeps its label. */
+  .btn-label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+  .tt-head-actions { flex-wrap: nowrap; }
+  .tt-head-actions details.menu > summary, .tt-head-actions > .btn:not(.btn-primary) { min-width: 44px; min-height: 44px; padding: 0 10px; }
+  .tt-head-actions .btn-primary { min-height: 44px; }
+  .tt-row { flex-wrap: nowrap; }
+  .tt-row .search-field { flex: 1 1 auto; min-width: 0; }
+  .tt-row .tt-spacer { display: none; }
+  .idle-menu > .btn { min-width: 44px; min-height: 44px; }
+}
+
+@media (max-width: 768px) {
+  .user-form { grid-template-columns: 1fr !important; }
+  .user-form .btn { min-height: 44px; }
+  .m-sort { display: flex; align-items: center; gap: 10px; font-size: 13px; font-weight: 600; color: var(--muted); }
+  .m-sort .input { flex: 1; min-height: 44px; }
+  .m-figure { margin-left: auto; display: flex; flex-direction: column; align-items: flex-end; gap: 2px; flex: 0 0 auto; font-size: 12.5px; font-variant-numeric: tabular-nums; }
+  .m-figure b { font-size: 16px; color: var(--ink); }
+  .m-card a.m-title { text-decoration: none; }
+  .m-main > .m-tags select { min-height: 32px; font-size: 14px; }
+}
+
+@media (max-width: 768px) {
+  /* More list, less chrome: cards ignore table density; titles shrink. */
+  .density-toggle { display: none !important; }
+  .page-header-left .eyebrow { display: none; }
+  .h1-serif { font-size: 22px; }
+}

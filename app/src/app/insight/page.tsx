@@ -1028,7 +1028,62 @@ export default function InsightPage() {
               )}
 
               <section className="section">
-                <div className="table-wrap insight-table-wrap">
+                {/* Phones: one card per Page; sorting via a picker instead of column heads. */}
+                <div className="m-list only-phone">
+                  <label className="m-sort">
+                    Sắp xếp
+                    <select
+                      className="input"
+                      value={`${sort.key}:${sort.dir}`}
+                      onChange={(e) => {
+                        const [key, dir] = e.target.value.split(":") as [SortKey, "asc" | "desc"];
+                        setSort({ key, dir });
+                      }}
+                    >
+                      <option value="reach:desc">Reach cao nhất</option>
+                      <option value="reach:asc">Reach thấp nhất</option>
+                      <option value="change:desc">Tăng nhiều nhất</option>
+                      <option value="change:asc">Giảm nhiều nhất</option>
+                      <option value="name:asc">Tên A → Z</option>
+                      <option value="group:asc">Theo nhóm</option>
+                      <option value="status:asc">Theo trạng thái</option>
+                    </select>
+                  </label>
+                  {tableRows.map((x) => {
+                    const ch = changeView(x.change);
+                    const on = checked.has(x.page.id);
+                    return (
+                      <article key={x.page.id} className={`m-card${on ? " selected" : ""}`}>
+                        <label className="m-check">
+                          <input type="checkbox" checked={on} onChange={() => toggleOne(x.page.id)} aria-label={`Chọn ${x.page.name}`} />
+                        </label>
+                        <div className="m-main">
+                          <span className="m-row">
+                            <PageAvatar page={x.page} color={x.group?.color ?? null} />
+                            <span className="m-text">
+                              <a className="m-title" href={`https://facebook.com/${x.page.id}`} target="_blank" rel="noreferrer">
+                                {x.page.name}
+                              </a>
+                              <span className="m-meta">{x.data?.via ?? x.page.id}</span>
+                            </span>
+                            <span className="m-figure">
+                              <b>{range === "today" && x.r?.todayPending ? "—" : fmt(x.reach)}</b>
+                              <span style={{ color: ch.color }}>{ch.text}</span>
+                            </span>
+                          </span>
+                          <span className="m-tags">
+                            {x.r && range !== "today" && <Sparkline points={x.r.daily} />}
+                            <span className={`pill${x.status.tone === "ok" ? " ok" : x.status.tone === "err" ? " err" : ""}`} title={x.status.title}>
+                              {x.status.label}
+                            </span>
+                            <GroupSelect groups={groups} value={x.group?.id ?? null} onChange={(gid) => assign([x.page.id], gid)} onCreate={createGroup} compact />
+                          </span>
+                        </div>
+                      </article>
+                    );
+                  })}
+                </div>
+                <div className="table-wrap insight-table-wrap only-wide">
                   <table className="table insight-table">
                     <thead>
                       <tr>

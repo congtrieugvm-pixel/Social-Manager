@@ -1,4 +1,4 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import { Be_Vietnam_Pro, JetBrains_Mono } from "next/font/google";
 import "./globals.css";
 import { AppShell } from "./_components/app-shell";
@@ -17,6 +17,17 @@ const jbMono = JetBrains_Mono({
   subsets: ["latin"],
   weight: ["400", "500", "600"],
 });
+
+// viewport-fit=cover lets the phone tab bar sit above the home indicator (safe-area insets).
+export const viewport: Viewport = {
+  width: "device-width",
+  initialScale: 1,
+  viewportFit: "cover",
+  themeColor: [
+    { media: "(prefers-color-scheme: light)", color: "#f3f5f7" },
+    { media: "(prefers-color-scheme: dark)", color: "#15181d" },
+  ],
+};
 
 export const metadata: Metadata = {
   title: "Social Manager",

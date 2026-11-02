@@ -1,8 +1,18 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Sidebar } from "./sidebar";
+import { BarChart3, Bookmark, Menu } from "lucide-react";
+import { FacebookIcon, Sidebar, TikTokIcon } from "./sidebar";
+import { ThemeToggle } from "./theme-toggle";
+
+const TABS: Array<{ href: string; label: string; icon: (p: { size?: number }) => React.ReactNode }> = [
+  { href: "/", label: "TikTok", icon: TikTokIcon },
+  { href: "/facebook", label: "Facebook", icon: FacebookIcon },
+  { href: "/insight", label: "Insight", icon: ({ size }) => <BarChart3 size={size} aria-hidden="true" /> },
+  { href: "/youtube", label: "Bookmark", icon: ({ size }) => <Bookmark size={size} aria-hidden="true" /> },
+];
 import { Notifier } from "./notify";
 
 interface AppShellProps {
@@ -82,6 +92,8 @@ export function AppShell({ user, children }: AppShellProps) {
           <img src="/logo.png" alt="" className="brand-logo" />
           <span>Social Manager</span>
         </div>
+        <span className="mobile-topbar-spacer" />
+        <ThemeToggle compact />
       </header>
 
       {/* Sidebar — sticky on desktop, off-canvas drawer on mobile. */}
@@ -105,6 +117,23 @@ export function AppShell({ user, children }: AppShellProps) {
 
       <main className="main">{children}</main>
       <Notifier />
+
+      {/* Phones: thumb-reach tab bar. "Thêm" opens the drawer (users, theme, sign out). */}
+      <nav className="tabbar" aria-label="Điều hướng chính">
+        {TABS.map(({ href, label, icon: Icon }) => {
+          const active = href === "/" ? pathname === "/" : pathname === href || pathname.startsWith(`${href}/`);
+          return (
+            <Link key={href} href={href} prefetch className={`tab${active ? " active" : ""}`} aria-current={active ? "page" : undefined}>
+              <Icon size={22} />
+              <span>{label}</span>
+            </Link>
+          );
+        })}
+        <button type="button" className={`tab${open ? " active" : ""}`} onClick={() => setOpen(true)} aria-expanded={open} aria-controls="app-sidebar">
+          <Menu size={22} aria-hidden="true" />
+          <span>Thêm</span>
+        </button>
+      </nav>
     </div>
   );
 }

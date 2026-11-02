@@ -15,6 +15,8 @@ import {
   Film,
   Folder,
   FolderOpen,
+  MoreHorizontal,
+  ListChecks,
   Inbox,
   SearchX,
   FolderMinus,
@@ -39,6 +41,7 @@ import { encodeBodyHeader } from "@/lib/req-body";
 import { confirmDialog, notify, promptDialog } from "./_components/notify";
 import { SkeletonRows } from "./_components/skeleton";
 import { DensityToggle } from "./_components/density-toggle";
+import { Sheet } from "./_components/sheet";
 
 interface Video {
   id: string;
@@ -314,6 +317,7 @@ export default function Dashboard() {
   const [sortDir, setSortDir] = useState<SortDir>("desc");
   const [idleCfg, setIdleCfg] = useIdleDaysSettings();
   const [idleCfgOpen, setIdleCfgOpen] = useState(false);
+  const [actionsOpen, setActionsOpen] = useState(false);
   useEffect(() => {
     const close = (e: MouseEvent) => {
       document.querySelectorAll<HTMLDetailsElement>("details.menu[open]").forEach((d) => {
@@ -427,17 +431,27 @@ export default function Dashboard() {
     function close() {
       setCtxMenu(null);
     }
+    // On phones the menu is a bottom sheet: scrolling inside it, or the
+    // keyboard opening (resize), must not close it.
+    function onScroll(e: Event) {
+      if (ctxMenuRef.current?.contains(e.target as Node)) return;
+      if (window.innerWidth <= 768) return;
+      close();
+    }
+    function onResize() {
+      if (window.innerWidth > 768) close();
+    }
     function onKey(e: KeyboardEvent) {
       if (e.key === "Escape") close();
     }
     window.addEventListener("click", close);
-    window.addEventListener("scroll", close, true);
-    window.addEventListener("resize", close);
+    window.addEventListener("scroll", onScroll, true);
+    window.addEventListener("resize", onResize);
     window.addEventListener("keydown", onKey);
     return () => {
       window.removeEventListener("click", close);
-      window.removeEventListener("scroll", close, true);
-      window.removeEventListener("resize", close);
+      window.removeEventListener("scroll", onScroll, true);
+      window.removeEventListener("resize", onResize);
       window.removeEventListener("keydown", onKey);
     };
   }, [ctxMenu]);
@@ -1379,9 +1393,9 @@ export default function Dashboard() {
         </div>
         <div className="tt-head-actions">
           <details className="menu">
-            <summary className="btn">
+            <summary className="btn" aria-label="Danh mục">
               <SlidersHorizontal size={15} aria-hidden="true" />
-              Danh mục
+              <span className="btn-label">Danh mục</span>
               <ChevronDown size={14} aria-hidden="true" />
             </summary>
             <div className="menu-pop" role="menu">
@@ -1403,10 +1417,11 @@ export default function Dashboard() {
             onClick={triggerAutoFetch}
             disabled={action !== null}
             title="Lấy follower và 3 video mới nhất cho mọi tài khoản ngay bây giờ"
+            aria-label="Đồng bộ tất cả"
             className="btn"
           >
             <RefreshCw size={15} aria-hidden="true" className={action === "auto-fetch" ? "spin" : undefined} />
-            {action === "auto-fetch" ? "Đang đồng bộ…" : "Đồng bộ tất cả"}
+            <span className="btn-label">{action === "auto-fetch" ? "Đang đồng bộ…" : "Đồng bộ tất cả"}</span>
           </button>
           <Link href="/import" className="btn btn-primary">
             <Plus size={16} aria-hidden="true" />
@@ -1470,7 +1485,7 @@ export default function Dashboard() {
           </div>
 
           {selected.size > 0 ? (
-            <div className="tt-selbar" role="toolbar" aria-label="Thao tác với tài khoản đã chọn">
+            <div className="tt-selbar only-wide" role="toolbar" aria-label="Thao tác với tài khoản đã chọn">
               <span className="tt-selcount">
                 <b>{selected.size}</b> đã chọn
               </span>
@@ -1550,13 +1565,13 @@ export default function Dashboard() {
               </button>
             </div>
           ) : (
-            <p className="tt-hint">
+            <p className="tt-hint only-wide">
               Chọn tài khoản trong bảng (giữ <kbd>Shift</kbd> để chọn cả dải), hoặc chọn theo STT, để lấy dữ liệu, đổi nhóm, xuất hay xoá.
             </p>
           )}
         </div>
 
-        <div className="table-wrap">
+        <div className="table-wrap only-wide">
           <table className="table tt-table">
             <thead>
               <tr>
@@ -2005,6 +2020,144 @@ export default function Dashboard() {
             </tbody>
           </table>
         </div>
+
+        {/* Phones: one card per account instead of the wide table. */}
+        <div className="m-list only-phone" aria-label="Danh sách tài khoản">
+          {filtered.length === 0 && loading &&
+            Array.from({ length: 5 }, (_, i) => (
+              <div key={i} className="m-card" aria-hidden="true">
+                <span className="sk sk-dot" style={{ width: 40, height: 40, borderRadius: "50%" }} />
+                <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: 8 }}>
+                  <span className="sk" style={{ width: "55%" }} />
+                  <span className="sk" style={{ width: "35%" }} />
+                </div>
+              </div>
+            ))}
+          {filtered.length === 0 && !loading && (
+            <div className="card empty-state">
+              <Inbox size={28} aria-hidden="true" />
+              <h3>{search.trim() ? `Không có tài khoản khớp “${search.trim()}”` : total === 0 ? "Chưa có tài khoản TikTok nào" : "Không có tài khoản trong mục này"}</h3>
+              {search.trim() ? (
+                <button className="btn" onClick={() => setSearch("")}>Xoá tìm kiếm</button>
+              ) : total === 0 ? (
+                <Link href="/import" className="btn btn-primary">
+                  <Plus size={16} aria-hidden="true" />
+                  Nhập tài khoản
+                </Link>
+              ) : (
+                <button className="btn" onClick={() => setGroupFilter("all")}>Xem tất cả tài khoản</button>
+              )}
+            </div>
+          )}
+          {filtered.map((r, idx) => {
+            const on = selected.has(r.id);
+            return (
+              <article key={r.id} className={`m-card${on ? " selected" : ""}`}>
+                <label className="m-check">
+                  <input type="checkbox" checked={on} onChange={() => toggleAt(idx, r.id)} aria-label={`Chọn @${r.username}`} />
+                </label>
+                <button type="button" className="m-main" onClick={() => (selected.size > 0 ? toggleAt(idx, r.id) : openDetail(r.id))}>
+                  <span className="m-row">
+                    {r.avatarUrl ? (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img src={r.avatarUrl} alt="" referrerPolicy="no-referrer" className="avatar m-avatar" />
+                    ) : (
+                      <span className="avatar-fallback m-avatar">{r.username[0]?.toUpperCase() || "?"}</span>
+                    )}
+                    <span className="m-text">
+                      <span className="m-title">@{r.username}</span>
+                      <span className="m-meta">
+                        <b>{fmtNum(r.followerCount)}</b> follower
+                        {r.videoCount != null && <> · <b>{fmtNum(r.videoCount)}</b> video</>}
+                      </span>
+                    </span>
+                  </span>
+                  <span className="m-tags">
+                    {idleCfg.enabled && <IdleDaysBadge videos={r.lastVideos} cfg={idleCfg} />}
+                    {r.groupName && (
+                      <span className="m-tag">
+                        <span className="fchip-dot" style={{ background: r.groupColor ?? "var(--dim)" }} />
+                        {r.groupName}
+                      </span>
+                    )}
+                    {r.statusName && (
+                      <span className="m-tag" style={{ color: r.statusColor ?? undefined, borderColor: r.statusColor ?? undefined }}>
+                        {r.statusName}
+                      </span>
+                    )}
+                    {r.countryCode && <span className="m-tag">{r.countryCode}</span>}
+                  </span>
+                  {r.note && <span className="m-note">{r.note}</span>}
+                </button>
+                <button
+                  type="button"
+                  className="m-more"
+                  aria-label={`Thao tác cho @${r.username}`}
+                  onClick={(e) => {
+                    // Keep this tap from reaching the "click outside closes the menu" listener.
+                    e.stopPropagation();
+                    openRowContextMenu(e, r);
+                  }}
+                >
+                  <MoreHorizontal size={20} aria-hidden="true" />
+                </button>
+              </article>
+            );
+          })}
+          {filtered.length > 0 && selected.size === 0 && (
+            <button type="button" className="btn m-selectall" onClick={toggleAll}>
+              <ListChecks size={16} aria-hidden="true" />
+              Chọn tất cả {filtered.length} tài khoản trên trang
+            </button>
+          )}
+        </div>
+
+        {/* Phones: selection actions pinned above the tab bar. */}
+        {selected.size > 0 && (
+          <div className="m-actionbar only-phone" role="toolbar" aria-label="Thao tác với tài khoản đã chọn">
+            <button type="button" className="m-ab-count" onClick={() => setSelected(new Set())} aria-label="Bỏ chọn">
+              <X size={18} aria-hidden="true" />
+              <b>{selected.size}</b>
+            </button>
+            <button onClick={() => runFetchBulk("fetch-videos")} disabled={action !== null} className="btn btn-primary">
+              <Film size={16} aria-hidden="true" />
+              {fetchLabel("fetch-videos", "Lấy video")}
+            </button>
+            <button onClick={() => runFetchBulk("fetch-follow")} disabled={action !== null} className="btn btn-accent">
+              {fetchLabel("fetch-follow", "Follow")}
+            </button>
+            <button className="btn" onClick={() => setActionsOpen(true)}>
+              <MoreHorizontal size={16} aria-hidden="true" />
+              Thêm
+            </button>
+          </div>
+        )}
+        <Sheet open={actionsOpen && selected.size > 0} title={`${selected.size} tài khoản đã chọn`} onClose={() => setActionsOpen(false)}>
+          <div className="sheet-actions">
+            <button className="sheet-btn" disabled={action !== null} onClick={() => { setActionsOpen(false); runFetchBulk("fetch-avatar"); }}>
+              <ImageIcon size={20} aria-hidden="true" /> Lấy ảnh đại diện
+            </button>
+            <button className="sheet-btn" disabled={exportBusy} onClick={() => { setActionsOpen(false); openExportSelected(); }}>
+              <Download size={20} aria-hidden="true" /> Xuất thông tin đăng nhập
+            </button>
+            <button className="sheet-btn" onClick={() => { setActionsOpen(false); setTransferOpen(true); }}>
+              <ArrowRightLeft size={20} aria-hidden="true" /> Chuyển sang user khác
+            </button>
+            <button className="sheet-btn" onClick={() => { setActionsOpen(false); removeSelectedFromGroup(); }}>
+              <FolderMinus size={20} aria-hidden="true" /> Bỏ khỏi nhóm
+            </button>
+          </div>
+          <div className="sheet-fields">
+            <BulkSelect label="Chuyển nhóm" onPick={(v) => { setActionsOpen(false); moveSelectedToGroup(v); }} options={groups.map((g) => ({ value: g.id, label: g.name }))} />
+            <BulkSelect label="Đổi trạng thái" clearLabel="Bỏ trạng thái" onPick={(v) => { setActionsOpen(false); updateSelectedStatus(v); }} options={statusesList.map((x) => ({ value: x.id, label: x.name }))} />
+            <BulkSelect label="Đổi quốc gia" clearLabel="Bỏ quốc gia" onPick={(v) => { setActionsOpen(false); updateSelectedCountry(v); }} options={countriesList.map((c) => ({ value: c.id, label: c.code ? `${c.code} · ${c.name}` : c.name }))} />
+            <BulkSelect label="Đổi máy" clearLabel="Bỏ máy" onPick={(v) => { setActionsOpen(false); updateSelectedMachine(v); }} options={machinesList.map((m) => ({ value: m.id, label: m.name }))} />
+            <BulkSelect label="Đổi nhân viên" clearLabel="Bỏ nhân viên" onPick={(v) => { setActionsOpen(false); updateSelectedEmployee(v); }} options={employeesList.map((emp) => ({ value: emp.id, label: emp.name }))} />
+          </div>
+          <button className="sheet-btn danger" disabled={action !== null} onClick={() => { setActionsOpen(false); deleteSelected(); }}>
+            <Trash2 size={20} aria-hidden="true" /> Xoá vĩnh viễn {selected.size} tài khoản
+          </button>
+        </Sheet>
 
         {totalPages > 1 && (
           <div
@@ -2709,9 +2862,11 @@ export default function Dashboard() {
         </div>
       )}
 
+      {ctxMenu && <div className="ctx-backdrop only-phone" onClick={() => setCtxMenu(null)} aria-hidden="true" />}
       {ctxMenu && (
         <div
           ref={ctxMenuRef}
+          className="ctx-menu"
           onClick={(e) => e.stopPropagation()}
           onContextMenu={(e) => e.preventDefault()}
           style={{
@@ -3759,7 +3914,7 @@ function IdleDaysMenu({
         title="Cài đặt hiển thị số ngày chưa đăng video"
       >
         <Settings2 size={14} aria-hidden="true" />
-        Số ngày chưa đăng
+        <span className="btn-label">Số ngày chưa đăng</span>
       </button>
       {open && pos && (
         <div className="idle-pop" style={{ top: pos.top, right: pos.right }} role="dialog" aria-label="Cài đặt số ngày chưa đăng video">

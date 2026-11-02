@@ -230,6 +230,7 @@ export default function AdminUsersPage() {
           </div>
         </div>
         <form
+          className="user-form"
           onSubmit={createOne}
           style={{
             display: "grid",

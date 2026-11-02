@@ -4,7 +4,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import Link from "next/link";
 import { encodeBodyHeader } from "@/lib/req-body";
 import { confirmDialog } from "@/app/_components/notify";
-import { ExternalLink, Inbox, Plus, X } from "lucide-react";
+import { ExternalLink, Inbox, MoreHorizontal, Plus, X } from "lucide-react";
 
 interface FacebookRow {
   id: number;
@@ -230,11 +230,16 @@ export default function FacebookPage() {
   useEffect(() => {
     if (!ctx) return;
     const close = () => setCtx(null);
+    // Phones show the menu as a bottom sheet: scrolling inside it must not close it.
+    const onScroll = (e: Event) => {
+      if (ctxMenuRef.current?.contains(e.target as Node) || window.innerWidth <= 768) return;
+      close();
+    };
     window.addEventListener("click", close);
-    window.addEventListener("scroll", close, true);
+    window.addEventListener("scroll", onScroll, true);
     return () => {
       window.removeEventListener("click", close);
-      window.removeEventListener("scroll", close, true);
+      window.removeEventListener("scroll", onScroll, true);
     };
   }, [ctx]);
 
@@ -651,7 +656,7 @@ export default function FacebookPage() {
       )}
 
       <section className="section">
-        <div className="table-wrap">
+        <div className="table-wrap only-wide">
           <table className="table">
             <thead>
               <tr>
@@ -864,6 +869,70 @@ export default function FacebookPage() {
           </table>
         </div>
 
+        {/* Phones: one card per account. */}
+        <div className="m-list only-phone">
+          {rows.length === 0 && !loading && (
+            <div className="card empty-state">
+              <Inbox size={28} aria-hidden="true" />
+              <h3>Chưa có tài khoản Facebook nào</h3>
+              <Link href="/facebook/import" className="btn btn-primary">
+                <Plus size={16} aria-hidden="true" />
+                Nhập tài khoản
+              </Link>
+            </div>
+          )}
+          {rows.map((r) => {
+            const on = selected.has(r.id);
+            return (
+              <article key={r.id} className={`m-card${on ? " selected" : ""}`}>
+                <label className="m-check">
+                  <input type="checkbox" checked={on} onChange={() => toggleOne(r.id)} aria-label={`Chọn @${r.username}`} />
+                </label>
+                <button type="button" className="m-main" onClick={() => (selected.size > 0 ? toggleOne(r.id) : openEdit(r.id))}>
+                  <span className="m-row">
+                    {r.fbProfilePic ? (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img src={r.fbProfilePic} alt="" className="avatar m-avatar" onError={(e) => (e.currentTarget.style.display = "none")} />
+                    ) : (
+                      <span className="avatar-fallback m-avatar">{(r.fbName ?? r.username ?? "?").charAt(0).toUpperCase()}</span>
+                    )}
+                    <span className="m-text">
+                      <span className="m-title">{r.fbName ?? `@${r.username}`}</span>
+                      <span className="m-meta">@{r.username}</span>
+                    </span>
+                  </span>
+                  <span className="m-tags">
+                    <span className={`pill${r.hasToken ? " ok" : ""}`}>{r.hasToken ? "Có token" : "Chưa có token"}</span>
+                    {r.groupName && (
+                      <span className="m-tag">
+                        <span className="fchip-dot" style={{ background: r.groupColor ?? "var(--dim)" }} />
+                        {r.groupName}
+                      </span>
+                    )}
+                    {r.statusName && (
+                      <span className="m-tag" style={{ color: r.statusColor ?? undefined, borderColor: r.statusColor ?? undefined }}>
+                        {r.statusName}
+                      </span>
+                    )}
+                  </span>
+                  {r.note && <span className="m-note">{r.note}</span>}
+                </button>
+                <button
+                  type="button"
+                  className="m-more"
+                  aria-label={`Thao tác cho @${r.username}`}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    openCtxMenu(e, r);
+                  }}
+                >
+                  <MoreHorizontal size={20} aria-hidden="true" />
+                </button>
+              </article>
+            );
+          })}
+        </div>
+
         {totalPages > 1 && (
           <div style={{ display: "flex", justifyContent: "center", gap: 6, marginTop: 14 }}>
             <button
@@ -897,9 +966,11 @@ export default function FacebookPage() {
         )}
       </section>
 
+      {ctx && <div className="ctx-backdrop only-phone" onClick={() => setCtx(null)} aria-hidden="true" />}
       {ctx && (
         <div
           ref={ctxMenuRef}
+          className="ctx-menu"
           onClick={(e) => e.stopPropagation()}
           onContextMenu={(e) => e.preventDefault()}
           style={{
