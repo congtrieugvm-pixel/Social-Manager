@@ -48,7 +48,7 @@ export default function RegisterPage() {
       <div style={{ marginBottom: 28 }}>
         <div className="brand" style={{ fontSize: 28 }}>
           <img src="/logo.png" alt="" className="brand-logo" />
-          <span>Social<em>Manager</em></span>
+          <span>Social Manager</span>
         </div>
         <div className="brand-sub">Đăng ký tài khoản</div>
       </div>
@@ -90,7 +90,7 @@ export default function RegisterPage() {
           <div
             className="mono"
             style={{
-              color: "#e05b5b",
+              color: "var(--danger)",
               fontSize: 11,
               letterSpacing: "0.04em",
             }}

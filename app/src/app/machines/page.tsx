@@ -326,14 +326,14 @@ export default function MachinesPage() {
                       <button
                         onClick={() => startEdit(m)}
                         className="btn"
-                        style={{ padding: "6px 12px", fontSize: 10 }}
+                        style={{ padding: "6px 12px", fontSize: 12 }}
                       >
                         Sửa
                       </button>
                       <button
                         onClick={() => deleteMachine(m.id, m.count)}
                         className="btn btn-danger"
-                        style={{ padding: "6px 12px", fontSize: 10 }}
+                        style={{ padding: "6px 12px", fontSize: 12 }}
                       >
                         Xóa
                       </button>

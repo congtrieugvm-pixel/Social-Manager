@@ -309,14 +309,14 @@ export default function GroupsPage() {
                       <button
                         onClick={() => startEdit(g)}
                         className="btn"
-                        style={{ padding: "6px 12px", fontSize: 10 }}
+                        style={{ padding: "6px 12px", fontSize: 12 }}
                       >
                         Sửa
                       </button>
                       <button
                         onClick={() => deleteGroup(g.id, g.count)}
                         className="btn btn-danger"
-                        style={{ padding: "6px 12px", fontSize: 10 }}
+                        style={{ padding: "6px 12px", fontSize: 12 }}
                       >
                         Xóa
                       </button>

@@ -151,8 +151,6 @@ export default function StatusesPage() {
               style={{
                 width: "100%",
                 fontFamily: "var(--font-mono)",
-                letterSpacing: "0.06em",
-                textTransform: "uppercase",
               }}
             />
           </div>
@@ -289,8 +287,6 @@ export default function StatusesPage() {
                       className="mono"
                       style={{
                         fontSize: 13,
-                        letterSpacing: "0.06em",
-                        textTransform: "uppercase",
                         color: s.color,
                         fontWeight: 600,
                       }}
@@ -309,14 +305,14 @@ export default function StatusesPage() {
                       <button
                         onClick={() => startEdit(s)}
                         className="btn"
-                        style={{ padding: "6px 12px", fontSize: 10 }}
+                        style={{ padding: "6px 12px", fontSize: 12 }}
                       >
                         Sửa
                       </button>
                       <button
                         onClick={() => deleteStatus(s.id, s.count)}
                         className="btn btn-danger"
-                        style={{ padding: "6px 12px", fontSize: 10 }}
+                        style={{ padding: "6px 12px", fontSize: 12 }}
                       >
                         Xóa
                       </button>

@@ -624,7 +624,7 @@ export function MonetizationTab({
             </button>
           ))}
         </div>
-        <span className="mono" style={{ fontSize: 10, color: "var(--muted)" }}>
+        <span className="mono" style={{ fontSize: 12, color: "var(--muted)" }}>
           {periodRange(period).map(ddmm).join("–")}
         </span>
         <select
@@ -708,7 +708,7 @@ export function MonetizationTab({
                           <span className="insight-ellipsis" style={{ display: "block", maxWidth: 200, color: "var(--ink)" }} title={r.page.name}>
                             {r.page.name}
                           </span>
-                          <span className="mono" style={{ fontSize: 10, color: "var(--dim)" }}>
+                          <span className="mono" style={{ fontSize: 12, color: "var(--dim)" }}>
                             {r.page.id}
                           </span>
                         </span>
@@ -726,7 +726,7 @@ export function MonetizationTab({
                           <span className="insight-num" style={{ fontSize: 13, color: c?.color, fontWeight: 600 }}>
                             {r.data!.met}/{r.data!.measurable}
                           </span>
-                          <span style={{ fontSize: 10, color: c?.color, whiteSpace: "nowrap" }}>{c?.label}</span>
+                          <span style={{ fontSize: 12, color: c?.color, whiteSpace: "nowrap" }}>{c?.label}</span>
                         </span>
                       )}
                     </td>
@@ -756,7 +756,7 @@ export function MonetizationTab({
                         rel="noreferrer"
                         className="btn"
                         onClick={(e) => e.stopPropagation()}
-                        style={{ padding: "3px 8px", fontSize: 10, textDecoration: "none", whiteSpace: "nowrap" }}
+                        style={{ padding: "3px 8px", fontSize: 12, textDecoration: "none", whiteSpace: "nowrap" }}
                         title="Mở mục Kiếm tiền của Trang trong Meta Business Suite (xem lời mời)"
                       >
                         Kiếm tiền ↗

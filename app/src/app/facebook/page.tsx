@@ -469,9 +469,7 @@ export default function FacebookPage() {
             className="mono"
             style={{
               marginLeft: 12,
-              fontSize: 10,
-              letterSpacing: "0.08em",
-              textTransform: "uppercase",
+              fontSize: 12,
               color: "var(--muted)",
             }}
           >
@@ -479,22 +477,22 @@ export default function FacebookPage() {
           </span>
         </div>
         <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-          <Link href="/insight" className="btn" style={{ padding: "6px 12px", fontSize: 10 }}>
+          <Link href="/insight" className="btn" style={{ padding: "6px 12px", fontSize: 12 }}>
             Insight
           </Link>
-          <Link href="/groups" className="btn" style={{ padding: "6px 12px", fontSize: 10 }}>
+          <Link href="/groups" className="btn" style={{ padding: "6px 12px", fontSize: 12 }}>
             Nhóm
           </Link>
-          <Link href="/statuses" className="btn" style={{ padding: "6px 12px", fontSize: 10 }}>
+          <Link href="/statuses" className="btn" style={{ padding: "6px 12px", fontSize: 12 }}>
             Trạng thái
           </Link>
-          <Link href="/countries" className="btn" style={{ padding: "6px 12px", fontSize: 10 }}>
+          <Link href="/countries" className="btn" style={{ padding: "6px 12px", fontSize: 12 }}>
             Quốc gia
           </Link>
-          <Link href="/machines" className="btn" style={{ padding: "6px 12px", fontSize: 10 }}>
+          <Link href="/machines" className="btn" style={{ padding: "6px 12px", fontSize: 12 }}>
             Máy
           </Link>
-          <Link href="/employees" className="btn" style={{ padding: "6px 12px", fontSize: 10 }}>
+          <Link href="/employees" className="btn" style={{ padding: "6px 12px", fontSize: 12 }}>
             Nhân viên
           </Link>
           <Link
@@ -615,8 +613,8 @@ export default function FacebookPage() {
               style={{
                 padding: "5px 10px",
                 fontSize: 11,
-                color: "#e05b5b",
-                borderColor: "#e05b5b",
+                color: "var(--danger)",
+                borderColor: "var(--danger)",
               }}
               title="Xóa các tài khoản đã chọn"
             >
@@ -633,7 +631,7 @@ export default function FacebookPage() {
           </>
         )}
         {selected.size === 0 && <div style={{ flex: 1 }} />}
-        <button onClick={load} disabled={loading} className="btn" style={{ padding: "6px 12px", fontSize: 10 }}>
+        <button onClick={load} disabled={loading} className="btn" style={{ padding: "6px 12px", fontSize: 12 }}>
           Refresh
         </button>
       </div>
@@ -642,7 +640,7 @@ export default function FacebookPage() {
           className="mono"
           style={{
             fontSize: 11,
-            color: bulkMessage.startsWith("⚠") ? "#e05b5b" : "var(--good)",
+            color: bulkMessage.startsWith("⚠") ? "var(--danger)" : "var(--good)",
             marginBottom: 8,
             letterSpacing: "0.04em",
           }}
@@ -796,12 +794,12 @@ export default function FacebookPage() {
                     {r.hasToken ? (
                       <span
                         className="mono"
-                        style={{ fontSize: 10, color: "var(--accent)", letterSpacing: "0.08em" }}
+                        style={{ fontSize: 12, color: "var(--accent)", }}
                       >
                         ✓ có token
                       </span>
                     ) : (
-                      <span className="mono" style={{ fontSize: 10, color: "var(--muted)" }}>
+                      <span className="mono" style={{ fontSize: 12, color: "var(--muted)" }}>
                         —
                       </span>
                     )}
@@ -851,7 +849,7 @@ export default function FacebookPage() {
                     <button
                       onClick={() => openEdit(r.id)}
                       className="btn"
-                      style={{ padding: "4px 10px", fontSize: 10 }}
+                      style={{ padding: "4px 10px", fontSize: 12 }}
                     >
                       Sửa
                     </button>
@@ -868,7 +866,7 @@ export default function FacebookPage() {
               onClick={() => setPage((p) => Math.max(1, p - 1))}
               disabled={page <= 1}
               className="btn"
-              style={{ padding: "4px 12px", fontSize: 10 }}
+              style={{ padding: "4px 12px", fontSize: 12 }}
             >
               ←
             </button>
@@ -887,7 +885,7 @@ export default function FacebookPage() {
               onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
               disabled={page >= totalPages}
               className="btn"
-              style={{ padding: "4px 12px", fontSize: 10 }}
+              style={{ padding: "4px 12px", fontSize: 12 }}
             >
               →
             </button>
@@ -922,9 +920,7 @@ export default function FacebookPage() {
             className="mono"
             style={{
               padding: "6px 10px 8px",
-              fontSize: 10,
-              letterSpacing: "0.14em",
-              textTransform: "uppercase",
+              fontSize: 12,
               color: "var(--muted)",
               borderBottom: "1px solid var(--line)",
             }}
@@ -939,7 +935,7 @@ export default function FacebookPage() {
             </a>
           </div>
           {ctx.loading && <div style={{ padding: 10, color: "var(--muted)" }}>Đang tải…</div>}
-          {ctx.error && <div style={{ padding: 10, color: "#e05b5b" }}>{ctx.error}</div>}
+          {ctx.error && <div style={{ padding: 10, color: "var(--danger)" }}>{ctx.error}</div>}
           {ctx.detail && (() => {
             const d = ctx.detail;
             const items: Array<{ label: string; value: string | null; tag: string }> = [
@@ -963,7 +959,7 @@ export default function FacebookPage() {
                   onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
                 >
                   <span>Sửa thông tin…</span>
-                  <span className="mono" style={{ fontSize: 10, color: "var(--muted)" }}>✎</span>
+                  <span className="mono" style={{ fontSize: 12, color: "var(--muted)" }}>✎</span>
                 </button>
 
                 <div style={{ padding: "4px 4px 0" }}>
@@ -978,7 +974,7 @@ export default function FacebookPage() {
                         ? "Đang mở Chromium…"
                         : "Login Hotmail (Chromium)"}
                     </span>
-                    <span className="mono" style={{ fontSize: 10, color: "var(--muted)" }}>↗</span>
+                    <span className="mono" style={{ fontSize: 12, color: "var(--muted)" }}>↗</span>
                   </button>
                   {ctx.browserMessage && (
                     <div style={{ padding: "0 10px 4px", fontSize: 11, color: "var(--accent)" }}>
@@ -986,7 +982,7 @@ export default function FacebookPage() {
                     </div>
                   )}
                   {ctx.browserError && (
-                    <div style={{ padding: "0 10px 4px", fontSize: 11, color: "#e05b5b" }}>
+                    <div style={{ padding: "0 10px 4px", fontSize: 11, color: "var(--danger)" }}>
                       {ctx.browserError}
                     </div>
                   )}
@@ -1011,7 +1007,7 @@ export default function FacebookPage() {
                       <span
                         className="mono"
                         style={{
-                          fontSize: 10,
+                          fontSize: 12,
                           color: copied ? "var(--accent)" : "var(--muted)",
                         }}
                       >
@@ -1024,12 +1020,12 @@ export default function FacebookPage() {
                 <div style={{ borderTop: "1px solid var(--line)", margin: "4px -4px" }} />
                 <button
                   onClick={() => deleteAccount(ctx.id, ctx.username)}
-                  style={{ ...menuBtnStyle(), color: "#e05b5b" }}
+                  style={{ ...menuBtnStyle(), color: "var(--danger)" }}
                   onMouseEnter={(e) => (e.currentTarget.style.background = "var(--bg-1)")}
                   onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
                 >
                   <span>Xóa tài khoản</span>
-                  <span className="mono" style={{ fontSize: 10 }}>✕</span>
+                  <span className="mono" style={{ fontSize: 12 }}>✕</span>
                 </button>
               </div>
             );
@@ -1107,7 +1103,7 @@ export default function FacebookPage() {
                 </div>
 
                 {edit.error && (
-                  <div style={{ color: "#e05b5b", fontSize: 12 }}>{edit.error}</div>
+                  <div style={{ color: "var(--danger)", fontSize: 12 }}>{edit.error}</div>
                 )}
 
                 <div style={{ display: "flex", gap: 10, justifyContent: "flex-end", marginTop: 8 }}>

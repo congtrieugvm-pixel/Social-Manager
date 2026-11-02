@@ -1,20 +1,15 @@
 import type { Metadata } from "next";
-import { Fraunces, JetBrains_Mono, Manrope } from "next/font/google";
+import { Be_Vietnam_Pro, JetBrains_Mono } from "next/font/google";
 import "./globals.css";
 import { AppShell } from "./_components/app-shell";
 import { getCurrentUser } from "@/lib/auth";
+import { THEME_BOOT } from "./_components/theme-toggle";
 
-const fraunces = Fraunces({
-  variable: "--font-fraunces",
-  subsets: ["latin"],
-  style: ["normal", "italic"],
-  weight: ["300", "400", "500", "600", "700"],
-});
-
-const manrope = Manrope({
-  variable: "--font-manrope",
-  subsets: ["latin"],
-  weight: ["300", "400", "500", "600", "700"],
+// Be Vietnam Pro: designed in Vietnam, clean diacritics at small sizes.
+const beVietnam = Be_Vietnam_Pro({
+  variable: "--font-bvp",
+  subsets: ["latin", "vietnamese"],
+  weight: ["400", "500", "600", "700"],
 });
 
 const jbMono = JetBrains_Mono({
@@ -40,16 +35,11 @@ export default async function RootLayout({
   const user = await getCurrentUser();
 
   return (
-    <html
-      lang="vi"
-      className={`${fraunces.variable} ${manrope.variable} ${jbMono.variable}`}
-      style={{
-        // @ts-expect-error — CSS custom property overrides for font families
-        "--font-serif": `var(--font-fraunces), ui-serif, Georgia, serif`,
-        "--font-sans": `var(--font-manrope), ui-sans-serif, system-ui, sans-serif`,
-        "--font-mono": `var(--font-jb-mono), ui-monospace, Menlo, monospace`,
-      }}
-    >
+    // data-theme is set by THEME_BOOT before hydration.
+    <html lang="vi" className={`${beVietnam.variable} ${jbMono.variable}`} suppressHydrationWarning>
+      <head>
+        <script dangerouslySetInnerHTML={{ __html: THEME_BOOT }} />
+      </head>
       <body>
         {user ? (
           <AppShell user={{ username: user.username, role: user.role }}>

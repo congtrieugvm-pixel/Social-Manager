@@ -258,7 +258,7 @@ export function DateRangePicker({
       >
         <span aria-hidden>📅</span>
         <span>{triggerLabel}</span>
-        <span style={{ color: "var(--muted)", fontSize: 10 }}>▼</span>
+        <span style={{ color: "var(--muted)", fontSize: 12 }}>▼</span>
       </button>
       {open && (
         <Popover

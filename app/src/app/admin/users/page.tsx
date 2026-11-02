@@ -194,9 +194,7 @@ export default function AdminUsersPage() {
             className="mono"
             style={{
               marginLeft: 12,
-              fontSize: 10,
-              letterSpacing: "0.08em",
-              textTransform: "uppercase",
+              fontSize: 12,
               color: "var(--muted)",
             }}
           >
@@ -212,7 +210,7 @@ export default function AdminUsersPage() {
         <div
           className="mono"
           style={{
-            color: "#e05b5b",
+            color: "var(--danger)",
             fontSize: 12,
             marginBottom: 12,
             letterSpacing: "0.04em",
@@ -287,7 +285,7 @@ export default function AdminUsersPage() {
           <div
             className="mono"
             style={{
-              color: "#e05b5b",
+              color: "var(--danger)",
               fontSize: 11,
               marginTop: 8,
               letterSpacing: "0.04em",
@@ -342,8 +340,7 @@ export default function AdminUsersPage() {
                           className="mono"
                           style={{
                             marginLeft: 8,
-                            fontSize: 9,
-                            letterSpacing: "0.12em",
+                            fontSize: 12,
                             color: "var(--accent)",
                           }}
                         >
@@ -372,9 +369,9 @@ export default function AdminUsersPage() {
                         className="btn"
                         style={{
                           padding: "3px 8px",
-                          fontSize: 10,
-                          color: u.isActive ? "var(--good)" : "#e05b5b",
-                          borderColor: u.isActive ? "var(--good)" : "#e05b5b",
+                          fontSize: 12,
+                          color: u.isActive ? "var(--good)" : "var(--danger)",
+                          borderColor: u.isActive ? "var(--good)" : "var(--danger)",
                         }}
                       >
                         {u.isActive ? "● Active" : "○ Khoá"}
@@ -383,7 +380,7 @@ export default function AdminUsersPage() {
                     <td>
                       <span
                         className="mono"
-                        style={{ fontSize: 10, color: "var(--muted)" }}
+                        style={{ fontSize: 12, color: "var(--muted)" }}
                       >
                         {fmtDate(u.createdAt)}
                       </span>
@@ -394,7 +391,7 @@ export default function AdminUsersPage() {
                           onClick={() => resetPassword(u)}
                           disabled={busy !== null}
                           className="btn"
-                          style={{ padding: "3px 8px", fontSize: 10 }}
+                          style={{ padding: "3px 8px", fontSize: 12 }}
                           title="Đặt mật khẩu mới + xoá mọi phiên cũ"
                         >
                           {busy === "pwd" ? "…" : "Đổi pass"}
@@ -405,9 +402,9 @@ export default function AdminUsersPage() {
                           className="btn"
                           style={{
                             padding: "3px 8px",
-                            fontSize: 10,
-                            color: "#e05b5b",
-                            borderColor: "#e05b5b",
+                            fontSize: 12,
+                            color: "var(--danger)",
+                            borderColor: "var(--danger)",
                           }}
                           title={isMe ? "Không thể tự xoá" : "Xoá user"}
                         >
@@ -417,8 +414,8 @@ export default function AdminUsersPage() {
                           <span
                             className="mono"
                             style={{
-                              fontSize: 10,
-                              color: "#e05b5b",
+                              fontSize: 12,
+                              color: "var(--danger)",
                               flexBasis: "100%",
                             }}
                           >

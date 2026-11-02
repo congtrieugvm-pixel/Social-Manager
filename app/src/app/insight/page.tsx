@@ -813,7 +813,7 @@ export default function InsightPage() {
           }}
         >
           <span style={{ flex: 1 }}>{notice.text}</span>
-          <button className="btn" style={{ padding: "2px 8px", fontSize: 10 }} onClick={() => setNotice(null)} aria-label="Đóng">
+          <button className="btn" style={{ padding: "2px 8px", fontSize: 12 }} onClick={() => setNotice(null)} aria-label="Đóng">
             ✕
           </button>
         </div>
@@ -1081,7 +1081,7 @@ export default function InsightPage() {
                                   >
                                     {x.page.name}
                                   </a>
-                                  <span className="mono" style={{ fontSize: 10, color: "var(--dim)" }}>
+                                  <span className="mono" style={{ fontSize: 12, color: "var(--dim)" }}>
                                     {x.page.id}
                                   </span>
                                 </span>
@@ -1329,7 +1329,7 @@ function PagePicker({
                     <span className="insight-ellipsis" style={{ display: "block", maxWidth: "100%", fontSize: 13, color: "var(--ink)" }}>
                       {p.name}
                     </span>
-                    <span className="mono" style={{ fontSize: 10, color: "var(--dim)" }}>
+                    <span className="mono" style={{ fontSize: 12, color: "var(--dim)" }}>
                       {p.id}
                     </span>
                   </span>
@@ -1388,7 +1388,7 @@ function groupRating(change: number | null): { label: string; color: string } {
 
 function GroupStatChips({ stat }: { stat: GroupStat | undefined }) {
   if (!stat || stat.pagesWithData === 0) {
-    return <span className="mono" style={{ fontSize: 10, color: "var(--dim)" }}>chưa có số reach</span>;
+    return <span className="mono" style={{ fontSize: 12, color: "var(--dim)" }}>chưa có số reach</span>;
   }
   const r = groupRating(stat.change7);
   // Same formatting as the rest of Insight: near-zero changes are neutral.
@@ -1532,7 +1532,7 @@ function GroupManager({
                   <button className="btn btn-primary" style={{ padding: "3px 8px", fontSize: 11 }} onClick={() => setPicker(g.id)}>
                     ＋ Thêm Trang
                   </button>
-                  <button className="btn btn-danger" style={{ padding: "3px 8px", fontSize: 10 }} onClick={() => onDelete(g)}>
+                  <button className="btn btn-danger" style={{ padding: "3px 8px", fontSize: 12 }} onClick={() => onDelete(g)}>
                     Xóa
                   </button>
                 </div>
@@ -1544,7 +1544,7 @@ function GroupManager({
                         <span className="insight-ellipsis" style={{ flex: 1, maxWidth: "100%", fontSize: 12 }} title={p.name}>
                           {p.name}
                         </span>
-                        <button className="btn" style={{ padding: "2px 8px", fontSize: 10 }} onClick={() => onAssign([p.id], null)}>
+                        <button className="btn" style={{ padding: "2px 8px", fontSize: 12 }} onClick={() => onAssign([p.id], null)}>
                           Bỏ khỏi nhóm
                         </button>
                       </div>
@@ -1732,7 +1732,7 @@ function TokenManager({
                         onKeyDown={(e) => e.key === "Enter" && (e.target as HTMLInputElement).blur()}
                         style={{ padding: "3px 8px", fontSize: 13, fontWeight: 600, maxWidth: 280, width: "100%" }}
                       />
-                      <div className="mono" style={{ fontSize: 10, color: "var(--dim)", marginTop: 3 }}>
+                      <div className="mono" style={{ fontSize: 12, color: "var(--dim)", marginTop: 3 }}>
                         {t.fbName && t.fbName !== t.label ? `${t.fbName} · ` : ""}
                         {t.preview}
                       </div>
@@ -1741,7 +1741,7 @@ function TokenManager({
                     <span className="mono" style={{ fontSize: 11, color: "var(--muted)", whiteSpace: "nowrap" }}>
                       {own.length} Trang
                     </span>
-                    <button className="btn btn-danger" style={{ padding: "3px 8px", fontSize: 10 }} onClick={() => onDelete(t)}>
+                    <button className="btn btn-danger" style={{ padding: "3px 8px", fontSize: 12 }} onClick={() => onDelete(t)}>
                       Xóa
                     </button>
                   </div>
@@ -1768,7 +1768,7 @@ function TokenManager({
                                     <div className="insight-ellipsis" style={{ maxWidth: 320, color: "var(--ink)" }} title={p.name}>
                                       {p.name}
                                     </div>
-                                    <div className="mono" style={{ fontSize: 10, color: "var(--dim)" }}>
+                                    <div className="mono" style={{ fontSize: 12, color: "var(--dim)" }}>
                                       {p.id}
                                       {p.tokenIds.length > 1 ? ` · đọc được qua ${p.tokenIds.length} token` : ""}
                                     </div>

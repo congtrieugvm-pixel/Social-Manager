@@ -3,18 +3,40 @@
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useState } from "react";
+import { BarChart3, Bookmark, LogOut, Users, type LucideIcon } from "lucide-react";
+import { ThemeToggle } from "./theme-toggle";
 
 type NavItem = {
   href: string;
   label: string;
+  icon: LucideIcon | (() => React.JSX.Element);
   children?: Array<{ href: string; label: string }>;
 };
 
+/** TikTok / Facebook marks drawn as simple outlines to sit with the Lucide set. */
+function TikTokIcon() {
+  return (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M14 3v11.5a3.5 3.5 0 1 1-3.5-3.5" />
+      <path d="M14 3c.4 2.6 2.2 4.4 5 4.7" />
+    </svg>
+  );
+}
+function FacebookIcon() {
+  return (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M15 8h-2a2 2 0 0 0-2 2v11" />
+      <path d="M8.5 13H15" />
+      <rect x="3" y="3" width="18" height="18" rx="4" />
+    </svg>
+  );
+}
+
 const nav: NavItem[] = [
-  { href: "/", label: "Tài Khoản Tiktok" },
-  { href: "/facebook", label: "Tài Khoản Facebook" },
-  { href: "/insight", label: "Insight" },
-  { href: "/youtube", label: "Bookmark Key" },
+  { href: "/", label: "Tài khoản TikTok", icon: TikTokIcon },
+  { href: "/facebook", label: "Tài khoản Facebook", icon: FacebookIcon },
+  { href: "/insight", label: "Insight", icon: BarChart3 },
+  { href: "/youtube", label: "Bookmark Key", icon: Bookmark },
 ];
 
 interface SidebarProps {
@@ -41,29 +63,30 @@ export function Sidebar({ user }: SidebarProps) {
 
   return (
     <aside className="sidebar">
-      <div style={{ marginBottom: 28 }}>
+      <div style={{ marginBottom: 18 }}>
         <div className="brand">
           <img src="/logo.png" alt="" className="brand-logo" />
-          <span>Social<em>Manager</em></span>
+          <span>Social Manager</span>
         </div>
-        <div className="brand-sub">Account Management</div>
       </div>
 
-      <div className="nav-label">Workspace</div>
-      <nav className="nav-list">
+      <nav className="nav-list" aria-label="Mục chính">
         {nav.map((item) => {
           const groupActive = item.children
             ? item.children.some((c) => c.href === pathname) ||
               pathname.startsWith(`${item.href}/`) ||
               pathname === item.href
             : item.href === pathname;
+          const Icon = item.icon;
           return (
             <div key={item.href}>
               <Link
                 href={item.href}
                 prefetch
                 className={`nav-item ${groupActive ? "active" : ""}`}
+                aria-current={groupActive ? "page" : undefined}
               >
+                <Icon size={18} aria-hidden="true" />
                 <span>{item.label}</span>
               </Link>
               {item.children && groupActive && (
@@ -76,6 +99,7 @@ export function Sidebar({ user }: SidebarProps) {
                         href={sub.href}
                         prefetch
                         className={`nav-sub-item ${active ? "active" : ""}`}
+                        aria-current={active ? "page" : undefined}
                       >
                         <span>{sub.label}</span>
                       </Link>
@@ -90,73 +114,31 @@ export function Sidebar({ user }: SidebarProps) {
 
       {isAdmin && (
         <>
-          <div className="nav-label">Admin</div>
-          <nav className="nav-list">
+          <div className="nav-label">Quản trị</div>
+          <nav className="nav-list" aria-label="Quản trị">
             <Link
               href="/admin/users"
               prefetch
               className={`nav-item ${pathname.startsWith("/admin/users") ? "active" : ""}`}
+              aria-current={pathname.startsWith("/admin/users") ? "page" : undefined}
             >
-              <span>Quản lý User</span>
+              <Users size={18} aria-hidden="true" />
+              <span>Người dùng</span>
             </Link>
           </nav>
         </>
       )}
 
       <div className="sidebar-footer">
-        <div
-          className="sidebar-footer-card"
-          style={{ display: "flex", flexDirection: "column", gap: 8 }}
-        >
-          <div>
-            <div
-              style={{
-                fontSize: 10,
-                letterSpacing: "0.12em",
-                textTransform: "uppercase",
-                color: "var(--muted)",
-                marginBottom: 4,
-              }}
-            >
-              Đăng nhập
-            </div>
-            <div
-              style={{
-                fontFamily: "var(--font-mono)",
-                fontSize: 12,
-                color: "var(--ink)",
-                wordBreak: "break-word",
-              }}
-            >
-              {user.username}
-              {isAdmin && (
-                <span
-                  className="mono"
-                  style={{
-                    marginLeft: 6,
-                    fontSize: 9,
-                    letterSpacing: "0.12em",
-                    color: "var(--accent)",
-                  }}
-                >
-                  ADMIN
-                </span>
-              )}
-            </div>
+        <ThemeToggle />
+        <div className="sidebar-footer-card sidebar-user">
+          <div className="sidebar-user-name">
+            <strong>{user.username}</strong>
+            {isAdmin && <span className="sidebar-user-role">Admin</span>}
           </div>
-          <button
-            onClick={logout}
-            disabled={loggingOut}
-            className="btn"
-            style={{
-              padding: "5px 8px",
-              fontSize: 10,
-              letterSpacing: "0.08em",
-              textTransform: "uppercase",
-              width: "100%",
-            }}
-          >
-            {loggingOut ? "Đang thoát…" : "Đăng xuất"}
+          <button onClick={logout} disabled={loggingOut} className="sidebar-logout" title="Đăng xuất">
+            <LogOut size={16} aria-hidden="true" />
+            <span>{loggingOut ? "Đang đăng xuất…" : "Đăng xuất"}</span>
           </button>
         </div>
       </div>

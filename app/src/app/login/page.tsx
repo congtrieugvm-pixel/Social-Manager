@@ -47,7 +47,7 @@ export default function LoginPage() {
       <div style={{ marginBottom: 28 }}>
         <div className="brand" style={{ fontSize: 28 }}>
           <img src="/logo.png" alt="" className="brand-logo" />
-          <span>Social<em>Manager</em></span>
+          <span>Social Manager</span>
         </div>
         <div className="brand-sub">Đăng nhập</div>
       </div>
@@ -77,7 +77,7 @@ export default function LoginPage() {
           <div
             className="mono"
             style={{
-              color: "#e05b5b",
+              color: "var(--danger)",
               fontSize: 11,
               letterSpacing: "0.04em",
             }}

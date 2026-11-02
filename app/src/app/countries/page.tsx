@@ -172,8 +172,6 @@ export default function CountriesPage() {
               style={{
                 width: "100%",
                 fontFamily: "var(--font-mono)",
-                letterSpacing: "0.08em",
-                textTransform: "uppercase",
               }}
             />
           </div>
@@ -325,7 +323,6 @@ export default function CountriesPage() {
                         className="mono"
                         style={{
                           fontSize: 11,
-                          letterSpacing: "0.12em",
                           color: c.color,
                           fontWeight: 600,
                         }}
@@ -347,14 +344,14 @@ export default function CountriesPage() {
                       <button
                         onClick={() => startEdit(c)}
                         className="btn"
-                        style={{ padding: "6px 12px", fontSize: 10 }}
+                        style={{ padding: "6px 12px", fontSize: 12 }}
                       >
                         Sửa
                       </button>
                       <button
                         onClick={() => deleteCountry(c.id, c.count)}
                         className="btn btn-danger"
-                        style={{ padding: "6px 12px", fontSize: 10 }}
+                        style={{ padding: "6px 12px", fontSize: 12 }}
                       >
                         Xóa
                       </button>

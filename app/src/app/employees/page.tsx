@@ -326,14 +326,14 @@ export default function EmployeesPage() {
                       <button
                         onClick={() => startEdit(e)}
                         className="btn"
-                        style={{ padding: "6px 12px", fontSize: 10 }}
+                        style={{ padding: "6px 12px", fontSize: 12 }}
                       >
                         Sửa
                       </button>
                       <button
                         onClick={() => deleteEmployee(e.id, e.count)}
                         className="btn btn-danger"
-                        style={{ padding: "6px 12px", fontSize: 10 }}
+                        style={{ padding: "6px 12px", fontSize: 12 }}
                       >
                         Xóa
                       </button>

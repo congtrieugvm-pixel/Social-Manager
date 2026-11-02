@@ -1257,9 +1257,7 @@ export default function Dashboard() {
           <span
             className="mono"
             style={{
-              fontSize: 10,
-              letterSpacing: "0.08em",
-              textTransform: "uppercase",
+              fontSize: 12,
               color: "var(--muted)",
             }}
           >
@@ -1267,19 +1265,19 @@ export default function Dashboard() {
           </span>
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-          <Link href="/groups" className="btn" style={{ padding: "6px 12px", fontSize: 10 }}>
+          <Link href="/groups" className="btn" style={{ padding: "6px 12px", fontSize: 12 }}>
             Nhóm
           </Link>
-          <Link href="/statuses" className="btn" style={{ padding: "6px 12px", fontSize: 10 }}>
+          <Link href="/statuses" className="btn" style={{ padding: "6px 12px", fontSize: 12 }}>
             Trạng thái
           </Link>
-          <Link href="/countries" className="btn" style={{ padding: "6px 12px", fontSize: 10 }}>
+          <Link href="/countries" className="btn" style={{ padding: "6px 12px", fontSize: 12 }}>
             Quốc gia
           </Link>
-          <Link href="/machines" className="btn" style={{ padding: "6px 12px", fontSize: 10 }}>
+          <Link href="/machines" className="btn" style={{ padding: "6px 12px", fontSize: 12 }}>
             Máy
           </Link>
-          <Link href="/employees" className="btn" style={{ padding: "6px 12px", fontSize: 10 }}>
+          <Link href="/employees" className="btn" style={{ padding: "6px 12px", fontSize: 12 }}>
             Nhân viên
           </Link>
           <Link href="/import" className="btn btn-primary" style={{ padding: "6px 14px", fontSize: 11 }}>
@@ -1302,7 +1300,7 @@ export default function Dashboard() {
                 background: active ? "var(--ink)" : "var(--bg-2)",
                 color: active ? "var(--bg)" : "var(--ink-soft)",
                 padding: "4px 10px",
-                fontSize: 10,
+                fontSize: 12,
               }}
             >
               {chip.color && (
@@ -1324,9 +1322,8 @@ export default function Dashboard() {
                   className="mono"
                   style={{
                     marginLeft: 6,
-                    fontSize: 9,
+                    fontSize: 12,
                     opacity: 0.7,
-                    letterSpacing: "0.08em",
                   }}
                 >
                   {chip.count}
@@ -1362,9 +1359,7 @@ export default function Dashboard() {
             <span
               className="mono"
               style={{
-                fontSize: 10,
-                letterSpacing: "0.12em",
-                textTransform: "uppercase",
+                fontSize: 12,
                 color: "var(--muted)",
                 whiteSpace: "nowrap",
                 flexShrink: 0,
@@ -1395,7 +1390,7 @@ export default function Dashboard() {
               onClick={() => runFetchBulk("fetch-follow")}
               disabled={action !== null || selected.size === 0}
               className="btn btn-accent"
-              style={{ padding: "6px 12px", fontSize: 10, flexShrink: 0 }}
+              style={{ padding: "6px 12px", fontSize: 12, flexShrink: 0 }}
             >
               {fetchLabel("fetch-follow", "Lấy Follow")}
             </button>
@@ -1404,7 +1399,7 @@ export default function Dashboard() {
               disabled={action !== null || selected.size === 0}
               title="Chỉ làm mới avatar — dùng khi avt bị mất / hết hạn URL"
               className="btn"
-              style={{ padding: "6px 12px", fontSize: 10, flexShrink: 0 }}
+              style={{ padding: "6px 12px", fontSize: 12, flexShrink: 0 }}
             >
               {fetchLabel("fetch-avatar", "Lấy AVT")}
             </button>
@@ -1412,7 +1407,7 @@ export default function Dashboard() {
               onClick={() => runFetchBulk("fetch-videos")}
               disabled={action !== null || selected.size === 0}
               className="btn btn-primary"
-              style={{ padding: "6px 12px", fontSize: 10, flexShrink: 0 }}
+              style={{ padding: "6px 12px", fontSize: 12, flexShrink: 0 }}
             >
               {fetchLabel("fetch-videos", "Lấy Video")}
             </button>
@@ -1421,7 +1416,7 @@ export default function Dashboard() {
               disabled={action !== null}
               title="Đồng bộ tất cả tài khoản ngay (follower + 3 video)"
               className="btn"
-              style={{ padding: "6px 12px", fontSize: 10, flexShrink: 0 }}
+              style={{ padding: "6px 12px", fontSize: 12, flexShrink: 0 }}
             >
               {action === "auto-fetch" ? "Đang kích hoạt…" : "Đồng bộ 4h"}
             </button>
@@ -1429,7 +1424,7 @@ export default function Dashboard() {
               onClick={load}
               disabled={loading}
               className="btn"
-              style={{ padding: "6px 12px", fontSize: 10, flexShrink: 0 }}
+              style={{ padding: "6px 12px", fontSize: 12, flexShrink: 0 }}
             >
               Refresh
             </button>
@@ -1455,9 +1450,7 @@ export default function Dashboard() {
             <span
               className="mono"
               style={{
-                fontSize: 9,
-                letterSpacing: "0.14em",
-                textTransform: "uppercase",
+                fontSize: 12,
                 color: "var(--muted)",
                 whiteSpace: "nowrap",
                 paddingRight: 4,
@@ -1570,7 +1563,7 @@ export default function Dashboard() {
               disabled={selected.size === 0 || exportBusy}
               title="Xuất thông tin tài khoản đã chọn (User|Pass|Email|2FA|Pass Email)"
               className="btn"
-              style={{ padding: "5px 10px", fontSize: 10, flexShrink: 0 }}
+              style={{ padding: "5px 10px", fontSize: 12, flexShrink: 0 }}
             >
               {exportBusy ? "Đang xuất…" : `Xuất (${selected.size})`}
             </button>
@@ -1579,7 +1572,7 @@ export default function Dashboard() {
               disabled={selected.size === 0}
               title="Chuyển / sao chép thông tin các tài khoản đã chọn sang user khác"
               className="btn"
-              style={{ padding: "5px 10px", fontSize: 10, flexShrink: 0 }}
+              style={{ padding: "5px 10px", fontSize: 12, flexShrink: 0 }}
             >
               Chuyển user
             </button>
@@ -1588,7 +1581,7 @@ export default function Dashboard() {
               disabled={selected.size === 0}
               title="Xóa khỏi nhóm (giữ tài khoản)"
               className="btn"
-              style={{ padding: "5px 10px", fontSize: 10, flexShrink: 0 }}
+              style={{ padding: "5px 10px", fontSize: 12, flexShrink: 0 }}
             >
               Bỏ nhóm
             </button>
@@ -1597,7 +1590,7 @@ export default function Dashboard() {
               disabled={action !== null || selected.size === 0}
               title="Xóa vĩnh viễn các tài khoản đã chọn"
               className="btn btn-danger"
-              style={{ padding: "5px 10px", fontSize: 10, flexShrink: 0 }}
+              style={{ padding: "5px 10px", fontSize: 12, flexShrink: 0 }}
             >
               {action === "delete" ? "Đang xóa…" : "Xóa vĩnh viễn"}
             </button>
@@ -1675,7 +1668,7 @@ export default function Dashboard() {
                   background: "var(--bg-2)",
                   color: "var(--ink)",
                   padding: "5px 10px",
-                  fontSize: 10,
+                  fontSize: 12,
                   fontFamily: "var(--font-sans)",
                   fontWeight: 500,
                   cursor: filtered.length === 0 ? "not-allowed" : "pointer",
@@ -1892,7 +1885,7 @@ export default function Dashboard() {
                                 padding: "2px 3px",
                                 textAlign: "center",
                                 fontFamily: "var(--font-mono)",
-                                fontSize: 9,
+                                fontSize: 12,
                                 letterSpacing: "0.02em",
                                 color: "#fff",
                                 background:
@@ -1975,8 +1968,6 @@ export default function Dashboard() {
                           fontSize: 12,
                           minWidth: 140,
                           fontFamily: "var(--font-mono)",
-                          letterSpacing: "0.06em",
-                          textTransform: "uppercase",
                           color: r.statusColor ?? "var(--muted)",
                           borderColor: r.statusColor ?? "var(--line)",
                         }}
@@ -2148,8 +2139,6 @@ export default function Dashboard() {
               style={{
                 fontSize: 11,
                 color: "var(--muted)",
-                letterSpacing: "0.08em",
-                textTransform: "uppercase",
               }}
             >
               Trang {page} / {totalPages} · {total.toLocaleString()} tài khoản
@@ -2433,8 +2422,6 @@ export default function Dashboard() {
                 className="mono"
                 style={{
                   fontSize: 11,
-                  letterSpacing: "0.12em",
-                  textTransform: "uppercase",
                   color: "var(--accent)",
                 }}
               >
@@ -2475,9 +2462,7 @@ export default function Dashboard() {
                 <div
                   className="mono"
                   style={{
-                    fontSize: 10,
-                    letterSpacing: "0.18em",
-                    textTransform: "uppercase",
+                    fontSize: 12,
                     color: "var(--muted)",
                   }}
                 >
@@ -2515,9 +2500,7 @@ export default function Dashboard() {
               <label
                 className="mono"
                 style={{
-                  fontSize: 10,
-                  letterSpacing: "0.14em",
-                  textTransform: "uppercase",
+                  fontSize: 12,
                   color: "var(--muted)",
                 }}
               >
@@ -2557,9 +2540,7 @@ export default function Dashboard() {
               <label
                 className="mono"
                 style={{
-                  fontSize: 10,
-                  letterSpacing: "0.14em",
-                  textTransform: "uppercase",
+                  fontSize: 12,
                   color: "var(--muted)",
                 }}
               >
@@ -2630,8 +2611,7 @@ export default function Dashboard() {
               <div
                 className="mono"
                 style={{
-                  fontSize: 10,
-                  letterSpacing: "0.12em",
+                  fontSize: 12,
                   color: "var(--muted)",
                   marginLeft: "auto",
                 }}
@@ -2681,9 +2661,7 @@ export default function Dashboard() {
                 <div
                   className="mono"
                   style={{
-                    fontSize: 10,
-                    letterSpacing: "0.14em",
-                    textTransform: "uppercase",
+                    fontSize: 12,
                     color: "var(--muted)",
                   }}
                 >
@@ -2785,9 +2763,7 @@ export default function Dashboard() {
                   <div
                     className="mono"
                     style={{
-                      fontSize: 10,
-                      letterSpacing: "0.12em",
-                      textTransform: "uppercase",
+                      fontSize: 12,
                       color: "var(--muted)",
                       marginBottom: 4,
                     }}
@@ -2809,10 +2785,10 @@ export default function Dashboard() {
                   <div
                     style={{
                       padding: "8px 10px",
-                      background: "rgba(224,91,91,0.08)",
+                      background: "var(--danger-soft)",
                       border: "1px solid rgba(224,91,91,0.4)",
                       borderRadius: 6,
-                      color: "#e05b5b",
+                      color: "var(--danger)",
                       fontSize: 12,
                     }}
                   >
@@ -2876,9 +2852,7 @@ export default function Dashboard() {
             className="mono"
             style={{
               padding: "6px 10px 8px",
-              fontSize: 10,
-              letterSpacing: "0.14em",
-              textTransform: "uppercase",
+              fontSize: 12,
               color: "var(--muted)",
               borderBottom: "1px solid var(--line)",
               display: "flex",
@@ -2909,7 +2883,7 @@ export default function Dashboard() {
             </div>
           )}
           {ctxMenu.error && (
-            <div style={{ padding: "10px", color: "#e05b5b" }}>
+            <div style={{ padding: "10px", color: "var(--danger)" }}>
               {ctxMenu.error}
             </div>
           )}
@@ -2961,16 +2935,14 @@ export default function Dashboard() {
                   onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
                 >
                   <span>Sửa thông tin…</span>
-                  <span className="mono" style={{ fontSize: 10, color: "var(--muted)" }}>✎</span>
+                  <span className="mono" style={{ fontSize: 12, color: "var(--muted)" }}>✎</span>
                 </button>
 
                 <div style={{ padding: "6px 10px 4px" }}>
                   <div
                     className="mono"
                     style={{
-                      fontSize: 9,
-                      letterSpacing: "0.12em",
-                      textTransform: "uppercase",
+                      fontSize: 12,
                       color: "var(--muted)",
                       marginBottom: 4,
                     }}
@@ -3007,7 +2979,7 @@ export default function Dashboard() {
                     disabled={ctxMenu.fetchAction !== null}
                     onClick={() => runFetchOne(ctxMenu.id, "follow")}
                     className="btn btn-accent"
-                    style={{ flex: 1, padding: "5px 8px", fontSize: 10 }}
+                    style={{ flex: 1, padding: "5px 8px", fontSize: 12 }}
                   >
                     {ctxMenu.fetchAction === "follow" ? "Đang lấy…" : "Lấy Follow"}
                   </button>
@@ -3015,7 +2987,7 @@ export default function Dashboard() {
                     disabled={ctxMenu.fetchAction !== null}
                     onClick={() => runFetchOne(ctxMenu.id, "video")}
                     className="btn btn-primary"
-                    style={{ flex: 1, padding: "5px 8px", fontSize: 10 }}
+                    style={{ flex: 1, padding: "5px 8px", fontSize: 12 }}
                   >
                     {ctxMenu.fetchAction === "video" ? "Đang lấy…" : "Lấy Video"}
                   </button>
@@ -3036,7 +3008,7 @@ export default function Dashboard() {
                     style={{
                       padding: "2px 10px 6px",
                       fontSize: 11,
-                      color: "#e05b5b",
+                      color: "var(--danger)",
                     }}
                   >
                     {ctxMenu.fetchError}
@@ -3088,7 +3060,7 @@ export default function Dashboard() {
                       <span
                         className="mono"
                         style={{
-                          fontSize: 10,
+                          fontSize: 12,
                           color: copied ? "var(--accent)" : "var(--muted)",
                         }}
                       >
@@ -3150,7 +3122,7 @@ export default function Dashboard() {
                     </span>
                     <span
                       className="mono"
-                      style={{ fontSize: 10, color: "var(--muted)" }}
+                      style={{ fontSize: 12, color: "var(--muted)" }}
                     >
                       ↗
                     </span>
@@ -3171,7 +3143,7 @@ export default function Dashboard() {
                       style={{
                         padding: "0 6px 4px",
                         fontSize: 11,
-                        color: "#e05b5b",
+                        color: "var(--danger)",
                         wordBreak: "break-word",
                       }}
                     >
@@ -3215,8 +3187,6 @@ export default function Dashboard() {
                     cursor: "pointer",
                     fontSize: 11,
                     fontFamily: "var(--font-mono)",
-                    letterSpacing: "0.08em",
-                    textTransform: "uppercase",
                     borderRadius: 4,
                   }}
                   onMouseEnter={(e) => (e.currentTarget.style.background = "var(--line)")}
@@ -3226,7 +3196,7 @@ export default function Dashboard() {
                   <span
                     className="mono"
                     style={{
-                      fontSize: 10,
+                      fontSize: 12,
                       color:
                         copiedLabel === `ctx-${ctxMenu.id}-full`
                           ? "var(--accent)"
@@ -3321,7 +3291,7 @@ function HotmailMenuRow({
         <span>{primaryLabel}</span>
         <span
           className="mono"
-          style={{ fontSize: 10, color: "var(--muted)" }}
+          style={{ fontSize: 12, color: "var(--muted)" }}
         >
           {hasToken ? (msEmail ?? "✓") : "✱"}
         </span>
@@ -3348,7 +3318,6 @@ function HotmailMenuRow({
               className="mono"
               style={{
                 fontSize: 14,
-                letterSpacing: "0.14em",
                 color: "var(--accent)",
                 fontWeight: 600,
               }}
@@ -3358,7 +3327,7 @@ function HotmailMenuRow({
             <span
               className="mono"
               style={{
-                fontSize: 10,
+                fontSize: 12,
                 color: "var(--muted)",
                 overflow: "hidden",
                 textOverflow: "ellipsis",
@@ -3370,7 +3339,7 @@ function HotmailMenuRow({
           </div>
           <span
             className="mono"
-            style={{ fontSize: 10, color: copied ? "var(--accent)" : "var(--muted)" }}
+            style={{ fontSize: 12, color: copied ? "var(--accent)" : "var(--muted)" }}
           >
             {copied ? "✓ copied" : "copy"}
           </span>
@@ -3379,7 +3348,7 @@ function HotmailMenuRow({
       {needsAuth?.message && (
         <div
           className="mono"
-          style={{ fontSize: 10, color: "var(--muted)", padding: "2px 6px 4px" }}
+          style={{ fontSize: 12, color: "var(--muted)", padding: "2px 6px 4px" }}
         >
           {needsAuth.message}
         </div>
@@ -3388,8 +3357,8 @@ function HotmailMenuRow({
         <div
           className="mono"
           style={{
-            fontSize: 10,
-            color: "#e05b5b",
+            fontSize: 12,
+            color: "var(--danger)",
             padding: "2px 6px 4px",
             wordBreak: "break-word",
           }}
@@ -3405,9 +3374,8 @@ function HotmailMenuRow({
             border: 0,
             color: "var(--muted)",
             cursor: "pointer",
-            fontSize: 10,
+            fontSize: 12,
             padding: "2px 6px 6px",
-            letterSpacing: "0.06em",
           }}
           title="Xoá OAuth token"
         >
@@ -3496,9 +3464,7 @@ function EditField({
       <div
         className="mono"
         style={{
-          fontSize: 10,
-          letterSpacing: "0.12em",
-          textTransform: "uppercase",
+          fontSize: 12,
           color: "var(--muted)",
           marginBottom: 4,
           display: "flex",
@@ -3515,9 +3481,7 @@ function EditField({
               border: 0,
               color: "var(--accent)",
               cursor: "pointer",
-              fontSize: 10,
-              letterSpacing: "0.1em",
-              textTransform: "uppercase",
+              fontSize: 12,
             }}
           >
             {rightAction.label}
@@ -3562,9 +3526,7 @@ function HistoryList({
       <div
         className="mono"
         style={{
-          fontSize: 10,
-          letterSpacing: "0.12em",
-          textTransform: "uppercase",
+          fontSize: 12,
           color: "var(--muted)",
           marginBottom: 6,
         }}
@@ -3595,7 +3557,7 @@ function HistoryList({
           </span>
           <span
             className="mono"
-            style={{ fontSize: 10, color: "var(--muted)", whiteSpace: "nowrap" }}
+            style={{ fontSize: 12, color: "var(--muted)", whiteSpace: "nowrap" }}
           >
             {new Date(e.changedAt * 1000).toLocaleString("vi-VN", {
               day: "2-digit",
@@ -3613,7 +3575,7 @@ function HistoryList({
                 border: "1px solid var(--line-strong)",
                 color: "var(--muted)",
                 cursor: "pointer",
-                fontSize: 10,
+                fontSize: 12,
                 padding: "2px 6px",
                 borderRadius: 4,
               }}
@@ -3676,7 +3638,7 @@ function TransferModal({
   return (
     <div className="modal-overlay" onClick={onClose}>
       <div className="modal" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 520, width: "90%" }}>
-        <div className="mono" style={{ fontSize: 10, letterSpacing: "0.18em", textTransform: "uppercase", color: "var(--muted)" }}>
+        <div className="mono" style={{ fontSize: 12, color: "var(--muted)" }}>
           Chuyển tài khoản
         </div>
         <h2 style={{ fontFamily: "var(--font-serif)", fontSize: 22, margin: "6px 0 16px", letterSpacing: "-0.01em" }}>
@@ -3819,15 +3781,15 @@ function TotpMenuButton({
       <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
         {totp && (
           <>
-            <span className="mono" style={{ fontSize: 11, letterSpacing: "0.1em", color: "var(--accent)" }}>
+            <span className="mono" style={{ fontSize: 11, color: "var(--accent)" }}>
               {totp.code.replace(/(\d{3})(\d{3})/, "$1 $2")}
             </span>
-            <span className="mono" style={{ fontSize: 10, color: remaining <= 5 ? "#e05b5b" : "var(--muted)" }}>
+            <span className="mono" style={{ fontSize: 12, color: remaining <= 5 ? "var(--danger)" : "var(--muted)" }}>
               {remaining}s
             </span>
           </>
         )}
-        <span className="mono" style={{ fontSize: 10, color: copied ? "var(--accent)" : "var(--muted)" }}>
+        <span className="mono" style={{ fontSize: 12, color: copied ? "var(--accent)" : "var(--muted)" }}>
           {copied ? "✓" : totp ? "" : "—"}
         </span>
       </span>
@@ -3929,7 +3891,7 @@ function IdleDaysMenu({
         ref={btnRef}
         type="button"
         className={`btn${cfg.enabled ? " btn-accent" : ""}`}
-        style={{ padding: "6px 12px", fontSize: 10, flexShrink: 0 }}
+        style={{ padding: "6px 12px", fontSize: 12, flexShrink: 0 }}
         aria-expanded={open}
         onClick={() => onOpenChange(!open)}
         title="Cài đặt hiển thị số ngày chưa đăng video"

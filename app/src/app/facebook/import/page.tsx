@@ -258,7 +258,6 @@ ${SHORT_EXAMPLE}`;
                 padding: "7px 14px",
                 fontFamily: "var(--font-mono)",
                 fontSize: 11,
-                letterSpacing: "0.12em",
               }}
             />
           </div>
@@ -282,7 +281,7 @@ ${SHORT_EXAMPLE}`;
                 key={p.name}
                 onClick={() => setOrder(p.order)}
                 className="btn"
-                style={{ padding: "6px 12px", fontSize: 10 }}
+                style={{ padding: "6px 12px", fontSize: 12 }}
                 title={p.order.join(delimiter)}
               >
                 {p.name}
@@ -323,10 +322,8 @@ ${SHORT_EXAMPLE}`;
                 <span
                   className="mono"
                   style={{
-                    fontSize: 10,
-                    letterSpacing: "0.12em",
+                    fontSize: 12,
                     color: "var(--muted)",
-                    textTransform: "uppercase",
                   }}
                 >
                   Cột {idx + 1}
@@ -450,7 +447,6 @@ ${SHORT_EXAMPLE}`;
                 fontSize: 11,
                 color: "var(--accent)",
                 marginTop: 6,
-                letterSpacing: "0.08em",
               }}
             >
               ⚠ Phải có ít nhất 1 cột được gán là Username
@@ -459,10 +455,9 @@ ${SHORT_EXAMPLE}`;
           <div
             className="mono"
             style={{
-              fontSize: 10,
+              fontSize: 12,
               color: "var(--muted)",
               marginTop: 8,
-              letterSpacing: "0.06em",
               lineHeight: 1.5,
             }}
           >
@@ -512,8 +507,6 @@ ${SHORT_EXAMPLE}`;
               className="mono"
               style={{
                 fontSize: 11,
-                letterSpacing: "0.12em",
-                textTransform: "uppercase",
                 color: "var(--accent)",
               }}
             >
@@ -556,8 +549,8 @@ ${SHORT_EXAMPLE}`;
         <section
           className="card"
           style={{
-            borderColor: "rgba(45,90,61,0.3)",
-            background: "rgba(45,90,61,0.06)",
+            borderColor: "var(--accent-strong)",
+            background: "var(--accent-soft)",
             marginBottom: 48,
           }}
         >
@@ -595,8 +588,6 @@ ${SHORT_EXAMPLE}`;
               className="mono"
               style={{
                 fontSize: 11,
-                letterSpacing: "0.12em",
-                textTransform: "uppercase",
                 color: "var(--accent)",
               }}
             >

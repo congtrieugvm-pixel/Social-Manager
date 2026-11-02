@@ -623,7 +623,7 @@ export function ContentTab({
                     <div className="insight-post-msg" title={p.message ?? ""}>
                       {p.message || <span style={{ color: "var(--dim)" }}>(không có chữ)</span>}
                     </div>
-                    <div className="mono" style={{ fontSize: 10, color: "var(--muted)", marginTop: 4, display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
+                    <div className="mono" style={{ fontSize: 12, color: "var(--muted)", marginTop: 4, display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
                       {g && <span style={{ width: 7, height: 7, borderRadius: "50%", background: g.color }} title={g.name} />}
                       <span>{pg?.name ?? p.pageId}</span>
                       <span>·</span>
@@ -639,7 +639,7 @@ export function ContentTab({
                   <td className="right insight-num">{fmt(p.shares)}</td>
                   <td className="right">
                     {p.permalink && (
-                      <a href={p.permalink} target="_blank" rel="noreferrer" className="btn" style={{ padding: "3px 8px", fontSize: 10, textDecoration: "none" }}>
+                      <a href={p.permalink} target="_blank" rel="noreferrer" className="btn" style={{ padding: "3px 8px", fontSize: 12, textDecoration: "none" }}>
                         Mở ↗
                       </a>
                     )}
@@ -748,7 +748,7 @@ function ScheduledView(props: {
                     <div className="insight-post-msg" title={p.message ?? ""}>
                       {p.message || <span style={{ color: "var(--dim)" }}>(không có chữ)</span>}
                     </div>
-                    <div className="mono" style={{ fontSize: 10, color: "var(--muted)", marginTop: 4, display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
+                    <div className="mono" style={{ fontSize: 12, color: "var(--muted)", marginTop: 4, display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
                       {g && <span style={{ width: 7, height: 7, borderRadius: "50%", background: g.color }} title={g.name} />}
                       <span>{pg?.name ?? p.pageId}</span>
                       <span>·</span>
@@ -757,11 +757,11 @@ function ScheduledView(props: {
                   </td>
                   <td style={{ whiteSpace: "nowrap" }}>
                     <div className="insight-num">{p.scheduledTime ? fmtTime(p.scheduledTime) : "—"}</div>
-                    <div className="mono" style={{ fontSize: 10, color: soon ? "var(--warn)" : "var(--muted)", marginTop: 2 }}>{untilText(p.scheduledTime, nowMs)}</div>
+                    <div className="mono" style={{ fontSize: 12, color: soon ? "var(--warn)" : "var(--muted)", marginTop: 2 }}>{untilText(p.scheduledTime, nowMs)}</div>
                   </td>
                   <td className="right">
                     {p.permalink && (
-                      <a href={p.permalink} target="_blank" rel="noreferrer" className="btn" style={{ padding: "3px 8px", fontSize: 10, textDecoration: "none" }}>
+                      <a href={p.permalink} target="_blank" rel="noreferrer" className="btn" style={{ padding: "3px 8px", fontSize: 12, textDecoration: "none" }}>
                         Mở ↗
                       </a>
                     )}
