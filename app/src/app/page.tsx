@@ -2138,19 +2138,35 @@ export default function Dashboard() {
                 <label className="m-check">
                   <input type="checkbox" checked={on} onChange={() => toggleAt(idx, r.id)} aria-label={`Chọn @${r.username}`} />
                 </label>
-                <button
-                  type="button"
+                <div
+                  role="button"
+                  tabIndex={0}
                   className="m-main"
                   onClick={(e) => {
                     if (selected.size > 0) return toggleAt(idx, r.id);
-                    // Tap on the avatar / @username → that user's TikTok (opens the app on a phone).
-                    // Tap anywhere else on the card → account details.
-                    if ((e.target as HTMLElement).closest(".m-row")) {
-                      window.open(`https://www.tiktok.com/@${encodeURIComponent(r.username)}`, "_blank", "noopener,noreferrer");
-                    } else openDetail(r.id);
+                    // The avatar / @username is a real link (below); the rest opens details.
+                    if ((e.target as HTMLElement).closest("a")) return;
+                    openDetail(r.id);
+                  }}
+                  onKeyDown={(e) => {
+                    if ((e.key === "Enter" || e.key === " ") && e.target === e.currentTarget) {
+                      e.preventDefault();
+                      if (selected.size > 0) toggleAt(idx, r.id);
+                      else openDetail(r.id);
+                    }
                   }}
                 >
-                  <span className="m-row">
+                  {/* A real <a> (not window.open): phones hand it to the TikTok app or open
+                      the profile normally instead of a blank tab. */}
+                  <a
+                    className="m-row"
+                    href={`https://www.tiktok.com/@${r.username}`}
+                    target="_blank"
+                    rel="noreferrer"
+                    onClick={(e) => {
+                      if (selected.size > 0) e.preventDefault(); // selecting: tap = toggle only
+                    }}
+                  >
                     {r.avatarUrl ? (
                       // eslint-disable-next-line @next/next/no-img-element
                       <img src={r.avatarUrl} alt="" referrerPolicy="no-referrer" className="avatar m-avatar" />
@@ -2164,7 +2180,7 @@ export default function Dashboard() {
                         {r.videoCount != null && <> · <b>{fmtNum(r.videoCount)}</b> video</>}
                       </span>
                     </span>
-                  </span>
+                  </a>
                   <span className="m-tags">
                     {idleCfg.enabled && <IdleDaysBadge videos={r.lastVideos} cfg={idleCfg} />}
                     {r.groupName && (
@@ -2181,7 +2197,7 @@ export default function Dashboard() {
                     {r.countryCode && <span className="m-tag">{r.countryCode}</span>}
                   </span>
                   {r.note && <span className="m-note">{r.note}</span>}
-                </button>
+                </div>
                 <button
                   type="button"
                   className="m-more"
