@@ -11,6 +11,9 @@ type FieldKey =
   | "email"
   | "twofa"
   | "emailPassword"
+  | "recoveryEmail"
+  | "mailToken"
+  | "mailClientId"
   | "note"
   | "skip";
 
@@ -20,6 +23,9 @@ const FIELD_LABELS: Record<FieldKey, string> = {
   email: "Email",
   twofa: "2FA",
   emailPassword: "Email password",
+  recoveryEmail: "Mail khôi phục",
+  mailToken: "Token Mail",
+  mailClientId: "Client ID của mail",
   note: "Note",
   skip: "Bỏ qua",
 };
@@ -30,6 +36,9 @@ const FIELD_SHORT: Record<FieldKey, string> = {
   email: "email",
   twofa: "2fa",
   emailPassword: "email_pass",
+  recoveryEmail: "recovery_email",
+  mailToken: "mail_token",
+  mailClientId: "mail_client_id",
   note: "note",
   skip: "—",
 };
@@ -51,6 +60,10 @@ const PRESETS: Array<{ name: string; order: FieldKey[] }> = [
   },
   { name: "Đầy đủ 5 cột", order: DEFAULT_ORDER },
   {
+    name: "8 cột (Mail khôi phục, Token Mail, Client ID)",
+    order: [...DEFAULT_ORDER, "recoveryEmail", "mailToken", "mailClientId"],
+  },
+  {
     name: "email | pass | 2fa | email_pass | user",
     order: ["email", "password", "twofa", "emailPassword", "username"],
   },
@@ -68,6 +81,9 @@ interface ParsedRow {
   email: string;
   twofa: string;
   emailPassword: string;
+  recoveryEmail: string;
+  mailToken: string;
+  mailClientId: string;
   note: string;
   valid: boolean;
   error?: string;
@@ -164,6 +180,9 @@ function failedChunkRows(chunk: Chunk, message: string): ParsedRow[] {
         email: "",
         twofa: "",
         emailPassword: "",
+        recoveryEmail: "",
+        mailToken: "",
+        mailClientId: "",
         note: "",
         valid: false,
         status: "error" as const,
@@ -221,7 +240,7 @@ export default function ImportPage() {
   }
 
   function addColumn() {
-    setOrder((prev) => (prev.length >= 8 ? prev : [...prev, "skip"]));
+    setOrder((prev) => (prev.length >= 12 ? prev : [...prev, "skip"]));
   }
 
   const EXAMPLE_LINE = order
@@ -237,6 +256,12 @@ export default function ImportPage() {
           return "JBSWY3DPEHPK3PXP";
         case "emailPassword":
           return "EmailPass123";
+        case "recoveryEmail":
+          return "recovery@example.com";
+        case "mailToken":
+          return "mail_token_example";
+        case "mailClientId":
+          return "00000000-0000-0000-0000-000000000001";
         case "note":
           return "ghi chú tài khoản";
         default:
@@ -546,7 +571,7 @@ ${SHORT_EXAMPLE}`;
           ))}
           <button
             onClick={addColumn}
-            disabled={order.length >= 8}
+            disabled={order.length >= 12}
             className="btn"
             style={{
               borderStyle: "dashed",
@@ -835,6 +860,9 @@ ${SHORT_EXAMPLE}`;
                   <th>Username</th>
                   <th>Email</th>
                   <th>2FA</th>
+                  {order.includes("recoveryEmail") && <th>Mail khôi phục</th>}
+                  {order.includes("mailToken") && <th>Token Mail</th>}
+                  {order.includes("mailClientId") && <th>Client ID của mail</th>}
                   <th>Trạng thái</th>
                 </tr>
               </thead>
@@ -861,6 +889,15 @@ ${SHORT_EXAMPLE}`;
                         <span className="text-muted">—</span>
                       )}
                     </td>
+                    {order.includes("recoveryEmail") && (
+                      <td><span className="mono">{r.recoveryEmail || "—"}</span></td>
+                    )}
+                    {order.includes("mailToken") && (
+                      <td>{r.mailToken ? <span className="chip">Có</span> : "—"}</td>
+                    )}
+                    {order.includes("mailClientId") && (
+                      <td><span className="mono">{r.mailClientId || "—"}</span></td>
+                    )}
                     <td>
                       {r.valid ? (
                         <span className="pill ok">

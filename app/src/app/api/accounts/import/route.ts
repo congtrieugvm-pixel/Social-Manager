@@ -33,6 +33,9 @@ const ALLOWED_KEYS: FieldKey[] = [
   "email",
   "twofa",
   "emailPassword",
+  "recoveryEmail",
+  "mailToken",
+  "mailClientId",
   "note",
   "skip",
 ];
@@ -126,6 +129,9 @@ export async function POST(req: Request) {
           encEmail: await encrypt(r.email),
           enc2fa: await encrypt(r.twofa),
           encEmailPassword: await encrypt(r.emailPassword),
+          encRecoveryEmail: await encrypt(r.recoveryEmail),
+          encMailToken: await encrypt(r.mailToken),
+          mailClientId: r.mailClientId || null,
           note: r.note || null,
         });
         out.push({ ...r, status: "inserted" });

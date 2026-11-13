@@ -81,6 +81,7 @@ export async function POST(req: Request) {
 
     const cleared = {
       ownerUserId: target.id,
+      msOAuthNonce: null,
       groupId: null,
       statusId: null,
       countryId: null,
@@ -94,7 +95,7 @@ export async function POST(req: Request) {
       for (let i = 0; i < moveIds.length; i += IN_CHUNK) {
         await db
           .update(accounts)
-          .set(cleared)
+          .set({ ...cleared, msTokenVersion: sql`${accounts.msTokenVersion} + 1` })
           .where(and(eq(accounts.ownerUserId, me.id), inArray(accounts.id, moveIds.slice(i, i + IN_CHUNK))));
       }
       done = moveIds.length;
@@ -103,7 +104,7 @@ export async function POST(req: Request) {
         // eslint-disable-next-line @typescript-eslint/no-unused-vars
         const { id, createdAt, ...rest } = a;
         try {
-          await db.insert(accounts).values({ ...rest, ...cleared, createdAt: new Date() });
+          await db.insert(accounts).values({ ...rest, ...cleared, msTokenVersion: 0, createdAt: new Date() });
           done++;
         } catch (e) {
           skipped.push({ username: a.username, reason: e instanceof Error ? e.message : String(e) });

@@ -12,7 +12,7 @@ interface ExportBody {
   fields?: ExportField[];
 }
 
-type ExportField = "username" | "password" | "email" | "twofa" | "emailPassword";
+type ExportField = "username" | "password" | "email" | "twofa" | "emailPassword" | "recoveryEmail" | "mailToken" | "mailClientId";
 
 const DEFAULT_FIELDS: ExportField[] = [
   "username",
@@ -22,7 +22,7 @@ const DEFAULT_FIELDS: ExportField[] = [
   "emailPassword",
 ];
 
-const ALLOWED_FIELDS = new Set<ExportField>(DEFAULT_FIELDS);
+const ALLOWED_FIELDS = new Set<ExportField>([...DEFAULT_FIELDS, "recoveryEmail", "mailToken", "mailClientId"]);
 
 function sanitizeFields(raw: unknown): ExportField[] {
   if (!Array.isArray(raw) || raw.length === 0) return DEFAULT_FIELDS;
@@ -55,6 +55,9 @@ export async function POST(req: Request) {
       encEmail: accounts.encEmail,
       enc2fa: accounts.enc2fa,
       encEmailPassword: accounts.encEmailPassword,
+      encRecoveryEmail: accounts.encRecoveryEmail,
+      encMailToken: accounts.encMailToken,
+      mailClientId: accounts.mailClientId,
     })
     .from(accounts)
     .where(and(inArray(accounts.id, ids), eq(accounts.ownerUserId, ownerId)));
@@ -72,6 +75,9 @@ export async function POST(req: Request) {
         email: await decrypt(r.encEmail),
         twofa: await decrypt(r.enc2fa),
         emailPassword: await decrypt(r.encEmailPassword),
+        recoveryEmail: await decrypt(r.encRecoveryEmail),
+        mailToken: await decrypt(r.encMailToken),
+        mailClientId: r.mailClientId,
       })),
   );
 
@@ -89,6 +95,12 @@ export async function POST(req: Request) {
             return it.twofa;
           case "emailPassword":
             return it.emailPassword;
+          case "recoveryEmail":
+            return it.recoveryEmail;
+          case "mailToken":
+            return it.mailToken;
+          case "mailClientId":
+            return it.mailClientId;
         }
       })
       .join(delimiter),

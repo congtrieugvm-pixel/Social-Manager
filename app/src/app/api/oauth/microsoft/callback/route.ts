@@ -1,137 +1,74 @@
-import {
-  exchangeCodeForToken,
-  fetchMeEmail,
-  saveAccountTokens,
-} from "@/lib/ms-graph";
+﻿import { NextRequest, NextResponse } from "next/server";
+import { and, eq, sql } from "drizzle-orm";
+import { db } from "@/lib/db";
+import { accounts } from "@/lib/db/schema";
+import { AuthError, SESSION_COOKIE } from "@/lib/auth";
+import { getOwnerId } from "@/lib/scope";
+import { exchangeCodeForToken, fetchMeEmail, microsoftConfig, saveAccountTokens } from "@/lib/ms-graph";
+import { MicrosoftError } from "@/lib/ms-http";
 import { decrypt } from "@/lib/crypto";
+import { normalizeMailbox, oauthCookieName, oauthResultHtml, OAUTH_COOKIE_PATH, readOAuthAttempt } from "@/lib/ms-oauth";
 
-interface StatePayload {
-  a: number;
-  n: string;
-  e: number;
-}
-
-function renderResultHtml({
-  ok,
-  message,
-  accountId,
-}: {
-  ok: boolean;
-  message: string;
-  accountId: number | null;
-}): string {
-  const title = ok ? "Kết nối Hotmail thành công" : "Kết nối Hotmail thất bại";
-  const color = ok ? "#5eb37a" : "#e05b5b";
-  const safeMessage = message.replace(/</g, "&lt;");
-  return `<!doctype html>
-<html>
-<head>
-  <meta charset="utf-8" />
-  <title>${title}</title>
-  <style>
-    body { background: #0a0a0a; color: #e5e5e5; font-family: system-ui, sans-serif; padding: 40px; text-align: center; }
-    .card { max-width: 420px; margin: 0 auto; padding: 28px; background: #111; border: 1px solid #242424; border-radius: 10px; }
-    h1 { font-size: 18px; margin: 0 0 10px; color: ${color}; }
-    p { color: #9a9a9a; font-size: 13px; margin: 8px 0; }
-    code { color: #5e6ad2; }
-  </style>
-</head>
-<body>
-  <div class="card">
-    <h1>${title}</h1>
-    <p>${safeMessage}</p>
-    <p><code>Cửa sổ này sẽ tự đóng…</code></p>
-  </div>
-  <script>
-    try {
-      if (window.opener) {
-        window.opener.postMessage({
-          type: "ms-oauth-result",
-          ok: ${ok ? "true" : "false"},
-          accountId: ${accountId ?? "null"},
-          message: ${JSON.stringify(message)},
-        }, window.location.origin);
-      }
-    } catch (e) {}
-    setTimeout(function(){ try { window.close(); } catch(e){} }, 1500);
-  </script>
-</body>
-</html>`;
-}
-
-function htmlResponse(body: string, status = 200): Response {
-  return new Response(body, {
-    status,
-    headers: { "Content-Type": "text/html; charset=utf-8" },
-  });
-}
-
-export async function GET(req: Request) {
+export async function GET(req: NextRequest) {
   const url = new URL(req.url);
-  const code = url.searchParams.get("code");
-  const stateRaw = url.searchParams.get("state");
-  const err = url.searchParams.get("error_description") || url.searchParams.get("error");
-
-  if (err) {
-    return htmlResponse(
-      renderResultHtml({ ok: false, message: err, accountId: null }),
-      400,
-    );
-  }
-  if (!code || !stateRaw) {
-    return htmlResponse(
-      renderResultHtml({
-        ok: false,
-        message: "Thiếu code hoặc state từ Microsoft",
-        accountId: null,
-      }),
-      400,
-    );
-  }
-
+  const nonce = url.searchParams.get("state") ?? "";
+  const cookieName = oauthCookieName(nonce);
   let accountId: number | null = null;
+  let ok = false;
+  let email: string | undefined;
+  let message = "Phiên kết nối không hợp lệ. Hãy bấm Get Token lại.";
+  let status = 400;
   try {
-    const decoded = Buffer.from(stateRaw, "base64url").toString("utf8");
-    const plain = await decrypt(decoded);
-    if (!plain) throw new Error("state decrypt failed");
-    const parsed = JSON.parse(plain) as StatePayload;
-    if (!parsed.a || typeof parsed.a !== "number") throw new Error("bad state");
-    if (!parsed.e || parsed.e < Math.floor(Date.now() / 1000)) {
-      throw new Error("state expired");
+    const ownerId = await getOwnerId();
+    const attempt = await readOAuthAttempt(cookieName ? req.cookies.get(cookieName)?.value : undefined,
+      nonce, ownerId, req.cookies.get(SESSION_COOKIE)?.value ?? "");
+    accountId = attempt.accountId;
+    // Atomic consumption makes the OAuth attempt single-use across Workers.
+    const [claimed] = await db.update(accounts).set({ msOAuthNonce: null,
+      msTokenVersion: sql`${accounts.msTokenVersion} + 1` }).where(and(
+      eq(accounts.id, accountId), eq(accounts.ownerUserId, ownerId), eq(accounts.msOAuthNonce, nonce),
+    )).returning({ encEmail: accounts.encEmail, version: accounts.msTokenVersion });
+    if (!claimed) throw new AuthError("Phiên kết nối đã dùng hoặc tài khoản đã thay đổi. Hãy Get Token lại.", 409);
+    if (normalizeMailbox(await decrypt(claimed.encEmail) ?? "") !== attempt.email) {
+      throw new AuthError("Email tài khoản đã thay đổi. Hãy Get Token lại.", 409);
     }
-    accountId = parsed.a;
-  } catch (e) {
-    return htmlResponse(
-      renderResultHtml({
-        ok: false,
-        message: "State không hợp lệ: " + (e instanceof Error ? e.message : "unknown"),
-        accountId: null,
-      }),
-      400,
-    );
+    const config = microsoftConfig();
+    if (attempt.clientId !== config.clientId || attempt.redirectUri !== config.redirectUri) {
+      throw new AuthError("Cấu hình Microsoft vừa thay đổi. Hãy Get Token lại.", 409);
+    }
+    if (url.searchParams.has("error")) {
+      throw new AuthError(url.searchParams.get("error") === "access_denied"
+        ? "Bạn đã hủy đăng nhập hoặc chưa cấp quyền đọc thư. Có thể bấm Get Token để thử lại."
+        : "Microsoft chưa hoàn tất đăng nhập. Hãy bấm Get Token để thử lại.", 400);
+    }
+    const code = url.searchParams.get("code");
+    if (!code) throw new AuthError("Microsoft chưa trả mã cấp quyền. Hãy thử lại.", 400);
+    const tokens = await exchangeCodeForToken(code, attempt.verifier);
+    if (!tokens.refresh_token) throw new AuthError("Microsoft chưa cấp quyền truy cập lâu dài. Hãy kết nối lại và cấp quyền offline_access.", 400);
+    email = await fetchMeEmail(tokens.access_token);
+    if (normalizeMailbox(email) !== attempt.email) {
+      // Alias mailboxes need an explicitly verified mapping; never silently
+      // attach tokens from an unrelated Microsoft account.
+      throw new AuthError("Hộp thư vừa đăng nhập không khớp email tài khoản. Hãy chọn đúng Hotmail rồi Get Token lại.", 400);
+    }
+    if (!await saveAccountTokens(accountId, ownerId, tokens, claimed.version, email)) {
+      throw new AuthError("Kết nối vừa thay đổi trong lúc đăng nhập. Hãy Get Token lại.", 409);
+    }
+    ok = true;
+    status = 200;
+    message = `Đã lưu token cho ${email}. Những lần Get Code sau hệ thống sẽ tự sử dụng và gia hạn token.`;
+  } catch (error) {
+    if (error instanceof AuthError || error instanceof MicrosoftError) {
+      message = error.message;
+      status = error.status >= 400 && error.status <= 599 ? error.status : 500;
+    }
   }
-
-  try {
-    const tokens = await exchangeCodeForToken(code);
-    const email = await fetchMeEmail(tokens.access_token).catch(() => null);
-    await saveAccountTokens(accountId, tokens, email);
-    return htmlResponse(
-      renderResultHtml({
-        ok: true,
-        message: email
-          ? `Đã cấp quyền cho ${email}. Giờ có thể lấy code Hotmail.`
-          : "Đã cấp quyền Microsoft. Giờ có thể lấy code Hotmail.",
-        accountId,
-      }),
-    );
-  } catch (e) {
-    return htmlResponse(
-      renderResultHtml({
-        ok: false,
-        message: e instanceof Error ? e.message : "Lỗi token exchange",
-        accountId,
-      }),
-      500,
-    );
-  }
+  const response = new NextResponse(oauthResultHtml({ ok, message, accountId, ...(ok ? { email } : {}) }), {
+    status, headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store",
+      "Referrer-Policy": "no-referrer", "X-Content-Type-Options": "nosniff" },
+  });
+  if (cookieName) response.cookies.set(cookieName, "", {
+    httpOnly: true, sameSite: "lax", secure: url.protocol === "https:", path: OAUTH_COOKIE_PATH, maxAge: 0,
+  });
+  return response;
 }

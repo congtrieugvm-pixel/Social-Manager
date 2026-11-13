@@ -7,6 +7,8 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
+    "test:hotmail": "node scripts/test-hotmail.cjs",
+    "test:account-mail-fields": "node scripts/test-account-mail-fields.cjs",
     "cf:build": "node scripts/clean-cf-deps.js && opennextjs-cloudflare build --dangerouslyUseUnsupportedNextVersion",
     "cf:preview": "opennextjs-cloudflare preview",
     "cf:deploy": "opennextjs-cloudflare deploy --dangerouslyUseUnsupportedNextVersion",

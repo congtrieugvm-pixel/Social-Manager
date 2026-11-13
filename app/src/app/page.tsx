@@ -42,6 +42,7 @@ import { confirmDialog, notify, promptDialog } from "./_components/notify";
 import { SkeletonRows } from "./_components/skeleton";
 import { DensityToggle } from "./_components/density-toggle";
 import { Sheet } from "./_components/sheet";
+import { HotmailConnect } from "./_components/hotmail-connect";
 
 interface Video {
   id: string;
@@ -137,6 +138,9 @@ interface DetailResponse {
   email: string | null;
   twofa: string | null;
   emailPassword: string | null;
+  recoveryEmail: string | null;
+  mailToken: string | null;
+  mailClientId: string | null;
   note: string | null;
   avatarUrl: string | null;
   lastVideos: Video[] | null;
@@ -212,7 +216,7 @@ function BulkSelect({
   );
 }
 
-type ExportField = "username" | "password" | "email" | "twofa" | "emailPassword";
+type ExportField = "username" | "password" | "email" | "twofa" | "emailPassword" | "recoveryEmail" | "mailToken" | "mailClientId";
 
 const EXPORT_FIELD_LABELS: Record<ExportField, string> = {
   username: "User",
@@ -220,6 +224,9 @@ const EXPORT_FIELD_LABELS: Record<ExportField, string> = {
   email: "Email",
   twofa: "2FA",
   emailPassword: "Pass Email",
+  recoveryEmail: "Mail khôi phục",
+  mailToken: "Token Mail",
+  mailClientId: "Client ID của mail",
 };
 
 interface CtxMenuState {
@@ -234,13 +241,15 @@ interface CtxMenuState {
     email: string | null;
     twofa: string | null;
     emailPassword: string | null;
+    recoveryEmail: string | null;
+    mailToken: string | null;
+    mailClientId: string | null;
     hasMsToken: boolean;
     msEmail: string | null;
     groupId: number | null;
     groupName: string | null;
   } | null;
   error: string | null;
-  hotmail: HotmailState;
   fetchAction: "follow" | "video" | null;
   fetchMessage: string | null;
   fetchError: string | null;
@@ -248,21 +257,6 @@ interface CtxMenuState {
   browserLoginMessage: string | null;
   browserLoginError: string | null;
 }
-
-type HotmailState =
-  | { phase: "idle" }
-  | { phase: "loading" }
-  | { phase: "needs-auth"; authUrl: string; message?: string }
-  | { phase: "waiting-popup" }
-  | {
-      phase: "result";
-      code: string;
-      subject: string;
-      from: string | null;
-      receivedAt: string;
-      snippet: string;
-    }
-  | { phase: "error"; message: string };
 
 interface HistoryEntry {
   value: string | null;
@@ -279,11 +273,15 @@ interface EditState {
   email: string;
   twofa: string;
   emailPassword: string;
+  recoveryEmail: string;
+  mailToken: string;
+  mailClientId: string;
   note: string;
   passwordHistory: HistoryEntry[];
   emailPasswordHistory: HistoryEntry[];
   showPassword: boolean;
   showEmailPassword: boolean;
+  showMailToken: boolean;
 }
 
 const PAGE_SIZE = 50;
@@ -828,11 +826,15 @@ export default function Dashboard() {
       email: "",
       twofa: "",
       emailPassword: "",
+      recoveryEmail: "",
+      mailToken: "",
+      mailClientId: "",
       note: "",
       passwordHistory: [],
       emailPasswordHistory: [],
       showPassword: false,
       showEmailPassword: false,
+      showMailToken: false,
     });
     try {
       const res = await fetch(`/api/accounts/${id}`, { cache: "no-store" });
@@ -855,6 +857,9 @@ export default function Dashboard() {
               email: d.email ?? "",
               twofa: d.twofa ?? "",
               emailPassword: d.emailPassword ?? "",
+              recoveryEmail: d.recoveryEmail ?? "",
+              mailToken: d.mailToken ?? "",
+              mailClientId: d.mailClientId ?? "",
               note: d.note ?? "",
               passwordHistory: Array.isArray(d.passwordHistory) ? d.passwordHistory : [],
               emailPasswordHistory: Array.isArray(d.emailPasswordHistory)
@@ -885,6 +890,9 @@ export default function Dashboard() {
             email: edit.email,
             twofa: edit.twofa,
             emailPassword: edit.emailPassword,
+            recoveryEmail: edit.recoveryEmail,
+            mailToken: edit.mailToken,
+            mailClientId: edit.mailClientId,
             note: edit.note,
           }),
         },
@@ -907,146 +915,6 @@ export default function Dashboard() {
     }
   }
 
-  async function fetchHotmailCode(accountId: number) {
-    setCtxMenu((prev) =>
-      prev && prev.id === accountId
-        ? { ...prev, hotmail: { phase: "loading" } }
-        : prev,
-    );
-    try {
-      const res = await fetch(`/api/accounts/${accountId}/hotmail-code`, {
-        method: "POST",
-      });
-      const data = await res.json().catch(() => ({}));
-      if (data.needsAuth && data.authUrl) {
-        setCtxMenu((prev) =>
-          prev && prev.id === accountId
-            ? {
-                ...prev,
-                hotmail: {
-                  phase: "needs-auth",
-                  authUrl: data.authUrl,
-                  message: data.error,
-                },
-              }
-            : prev,
-        );
-        return;
-      }
-      if (!res.ok) {
-        setCtxMenu((prev) =>
-          prev && prev.id === accountId
-            ? {
-                ...prev,
-                hotmail: {
-                  phase: "error",
-                  message: data.error ?? `Lỗi HTTP ${res.status}`,
-                },
-              }
-            : prev,
-        );
-        return;
-      }
-      const code: string = data.code;
-      if (code) {
-        copyText(code, `hotmail-${accountId}`);
-      }
-      setCtxMenu((prev) =>
-        prev && prev.id === accountId
-          ? {
-              ...prev,
-              hotmail: {
-                phase: "result",
-                code,
-                subject: data.subject ?? "",
-                from: data.from ?? null,
-                receivedAt: data.receivedAt ?? "",
-                snippet: data.snippet ?? "",
-              },
-            }
-          : prev,
-      );
-    } catch (e) {
-      setCtxMenu((prev) =>
-        prev && prev.id === accountId
-          ? {
-              ...prev,
-              hotmail: {
-                phase: "error",
-                message: e instanceof Error ? e.message : "Lỗi mạng",
-              },
-            }
-          : prev,
-      );
-    }
-  }
-
-  function openOAuthPopup(authUrl: string, accountId: number) {
-    const w = 520;
-    const h = 640;
-    const left = (window.screenX ?? 0) + ((window.outerWidth ?? 1024) - w) / 2;
-    const top = (window.screenY ?? 0) + ((window.outerHeight ?? 768) - h) / 2;
-    const popup = window.open(
-      authUrl,
-      "ms-oauth",
-      `width=${w},height=${h},left=${left},top=${top}`,
-    );
-    if (!popup) {
-      notify(
-        "Trình duyệt chặn popup. Vui lòng cho phép popup cho site này rồi thử lại.",
-      );
-      return;
-    }
-    setCtxMenu((prev) =>
-      prev && prev.id === accountId
-        ? { ...prev, hotmail: { phase: "waiting-popup" } }
-        : prev,
-    );
-
-    function onMessage(ev: MessageEvent) {
-      if (ev.origin !== window.location.origin) return;
-      const payload = ev.data as
-        | { type?: string; ok?: boolean; accountId?: number; message?: string }
-        | undefined;
-      if (!payload || payload.type !== "ms-oauth-result") return;
-      if (payload.accountId !== accountId) return;
-      window.removeEventListener("message", onMessage);
-      if (payload.ok) {
-        // Retry fetch automatically.
-        fetchHotmailCode(accountId);
-      } else {
-        setCtxMenu((prev) =>
-          prev && prev.id === accountId
-            ? {
-                ...prev,
-                hotmail: {
-                  phase: "error",
-                  message: payload.message || "OAuth thất bại",
-                },
-              }
-            : prev,
-        );
-      }
-    }
-    window.addEventListener("message", onMessage);
-  }
-
-  async function disconnectHotmail(accountId: number) {
-    if (!(await confirmDialog({ message: "Ngắt kết nối Hotmail của tài khoản này? Lần sau phải đăng nhập Hotmail lại.", confirmLabel: "Ngắt kết nối", danger: true }))) return;
-    await fetch(`/api/accounts/${accountId}/hotmail-code`, { method: "DELETE" });
-    setCtxMenu((prev) =>
-      prev && prev.id === accountId
-        ? {
-            ...prev,
-            detail: prev.detail
-              ? { ...prev.detail, hasMsToken: false, msEmail: null }
-              : prev.detail,
-            hotmail: { phase: "idle" },
-          }
-        : prev,
-    );
-  }
-
   async function openRowContextMenu(
     e: React.MouseEvent,
     row: AccountRow,
@@ -1062,7 +930,6 @@ export default function Dashboard() {
       loading: true,
       detail: null,
       error: null,
-      hotmail: { phase: "idle" },
       fetchAction: null,
       fetchMessage: null,
       fetchError: null,
@@ -1092,6 +959,9 @@ export default function Dashboard() {
                 email: data.email,
                 twofa: data.twofa,
                 emailPassword: data.emailPassword,
+                recoveryEmail: data.recoveryEmail,
+                mailToken: data.mailToken,
+                mailClientId: data.mailClientId,
                 hasMsToken: !!data.hasMsToken,
                 msEmail: data.msEmail ?? null,
                 groupId: data.groupId ?? null,
@@ -2538,6 +2408,9 @@ export default function Dashboard() {
                   ["Email", detail.email],
                   ["2FA", detail.twofa],
                   ["Email password", detail.emailPassword],
+                  ["Mail khôi phục", detail.recoveryEmail],
+                  ["Token Mail", detail.mailToken],
+                  ["Client ID của mail", detail.mailClientId],
                 ] as const
               ).map(([label, val]) => (
                 <div key={label} className="cred-row">
@@ -2926,6 +2799,29 @@ export default function Dashboard() {
                     copy={(v) => copyText(v, `edit-epw-hist-${Date.now()}`)}
                   />
                 )}
+                <EditField
+                  label="Mail khôi phục"
+                  value={edit.recoveryEmail}
+                  onChange={(v) => setEdit((p) => (p ? { ...p, recoveryEmail: v } : p))}
+                  mono
+                />
+                <EditField
+                  label="Token Mail"
+                  value={edit.mailToken}
+                  onChange={(v) => setEdit((p) => (p ? { ...p, mailToken: v } : p))}
+                  type={edit.showMailToken ? "text" : "password"}
+                  mono
+                  rightAction={{
+                    label: edit.showMailToken ? "Ẩn" : "Hiện",
+                    onClick: () => setEdit((p) => (p ? { ...p, showMailToken: !p.showMailToken } : p)),
+                  }}
+                />
+                <EditField
+                  label="Client ID của mail"
+                  value={edit.mailClientId}
+                  onChange={(v) => setEdit((p) => (p ? { ...p, mailClientId: v } : p))}
+                  mono
+                />
                 <div>
                   <div
                     className="mono"
@@ -3068,6 +2964,9 @@ export default function Dashboard() {
               { label: "Copy Email", value: d.email, tag: "email" },
               { label: "Copy 2FA (secret)", value: d.twofa, tag: "2fa" },
               { label: "Copy Pass Email", value: d.emailPassword, tag: "pmail" },
+              { label: "Copy Mail khôi phục", value: d.recoveryEmail, tag: "recovery-mail" },
+              { label: "Copy Token Mail", value: d.mailToken, tag: "mail-token" },
+              { label: "Copy Client ID của mail", value: d.mailClientId, tag: "mail-client-id" },
             ];
             const fullLine = [
               d.username ?? "",
@@ -3316,17 +3215,18 @@ export default function Dashboard() {
                   )}
                 </div>
 
-                <HotmailMenuRow
-                  state={ctxMenu.hotmail}
+                <HotmailConnect
+                  key={ctxMenu.id}
+                  accountId={ctxMenu.id}
+                  email={d.email}
                   hasToken={d.hasMsToken}
                   msEmail={d.msEmail}
-                  onFetch={() => fetchHotmailCode(ctxMenu.id)}
-                  onAuth={(url) => openOAuthPopup(url, ctxMenu.id)}
-                  onDisconnect={() => disconnectHotmail(ctxMenu.id)}
-                  onCopyCode={(code) =>
-                    copyText(code, `hotmail-${ctxMenu.id}`)
-                  }
-                  copied={copiedLabel === `hotmail-${ctxMenu.id}`}
+                  onConnectionChange={(connected, mailbox) => {
+                    const accountId = ctxMenu.id;
+                    setCtxMenu(prev => prev && prev.id === accountId && prev.detail
+                      ? { ...prev, detail: { ...prev.detail, hasMsToken: connected, msEmail: mailbox } }
+                      : prev);
+                  }}
                 />
                 <div
                   style={{
@@ -3381,183 +3281,6 @@ export default function Dashboard() {
       )}
     </>
   );
-}
-
-function HotmailMenuRow({
-  state,
-  hasToken,
-  msEmail,
-  onFetch,
-  onAuth,
-  onDisconnect,
-  onCopyCode,
-  copied,
-}: {
-  state: HotmailState;
-  hasToken: boolean;
-  msEmail: string | null;
-  onFetch: () => void;
-  onAuth: (url: string) => void;
-  onDisconnect: () => void;
-  onCopyCode: (code: string) => void;
-  copied: boolean;
-}) {
-  const isLoading = state.phase === "loading" || state.phase === "waiting-popup";
-  const result = state.phase === "result" ? state : null;
-  const needsAuth = state.phase === "needs-auth" ? state : null;
-  const error = state.phase === "error" ? state : null;
-
-  const primaryLabel = (() => {
-    if (state.phase === "loading") return "Đang lấy…";
-    if (state.phase === "waiting-popup") return "Đang chờ đăng nhập…";
-    if (needsAuth) return hasToken ? "Đăng nhập lại Microsoft" : "Kết nối Hotmail";
-    if (result) return "Lấy lại code";
-    return "Lấy code Hotmail";
-  })();
-
-  const handlePrimary = () => {
-    if (isLoading) return;
-    if (needsAuth) {
-      onAuth(needsAuth.authUrl);
-      return;
-    }
-    onFetch();
-  };
-
-  return (
-    <div style={{ padding: "4px 4px 0" }}>
-      <button
-        onClick={handlePrimary}
-        disabled={isLoading}
-        style={{
-          display: "flex",
-          justifyContent: "space-between",
-          alignItems: "center",
-          gap: 12,
-          width: "100%",
-          textAlign: "left",
-          padding: "7px 6px",
-          background: "transparent",
-          border: 0,
-          color: isLoading ? "var(--muted)" : "var(--ink)",
-          cursor: isLoading ? "progress" : "pointer",
-          fontSize: 12,
-          fontFamily: "var(--font-sans)",
-          borderRadius: 4,
-        }}
-        onMouseEnter={(e) => {
-          if (!isLoading) e.currentTarget.style.background = "var(--bg-1)";
-        }}
-        onMouseLeave={(e) => {
-          e.currentTarget.style.background = "transparent";
-        }}
-      >
-        <span>{primaryLabel}</span>
-        <span
-          className="mono"
-          style={{ fontSize: 12, color: "var(--muted)" }}
-        >
-          {hasToken ? (msEmail ?? <Check size={14} aria-hidden="true" />) : "Chưa kết nối"}
-        </span>
-      </button>
-      {result && (
-        <div
-          onClick={() => onCopyCode(result.code)}
-          style={{
-            margin: "2px 2px 4px",
-            padding: "6px 8px",
-            background: "var(--bg-1)",
-            border: "1px solid var(--line)",
-            borderRadius: 4,
-            cursor: "pointer",
-            display: "flex",
-            justifyContent: "space-between",
-            alignItems: "center",
-            gap: 8,
-          }}
-          title={result.subject}
-        >
-          <div style={{ display: "flex", flexDirection: "column", gap: 2, minWidth: 0 }}>
-            <span
-              className="mono"
-              style={{
-                fontSize: 14,
-                color: "var(--accent)",
-                fontWeight: 600,
-              }}
-            >
-              {result.code.replace(/(\d{3})(\d{3})/, "$1 $2")}
-            </span>
-            <span
-              className="mono"
-              style={{
-                fontSize: 12,
-                color: "var(--muted)",
-                overflow: "hidden",
-                textOverflow: "ellipsis",
-                whiteSpace: "nowrap",
-              }}
-            >
-              {result.from || "—"} · {relativeAgo(result.receivedAt)}
-            </span>
-          </div>
-          <span
-            className="mono"
-            style={{ fontSize: 12, color: copied ? "var(--accent)" : "var(--muted)" }}
-          >
-            {copied ? "Đã chép" : "Chép"}
-          </span>
-        </div>
-      )}
-      {needsAuth?.message && (
-        <div
-          className="mono"
-          style={{ fontSize: 12, color: "var(--muted)", padding: "2px 6px 4px" }}
-        >
-          {needsAuth.message}
-        </div>
-      )}
-      {error && (
-        <div
-          className="mono"
-          style={{
-            fontSize: 12,
-            color: "var(--danger)",
-            padding: "2px 6px 4px",
-            wordBreak: "break-word",
-          }}
-        >
-          {error.message}
-        </div>
-      )}
-      {hasToken && !isLoading && (
-        <button
-          onClick={onDisconnect}
-          style={{
-            background: "transparent",
-            border: 0,
-            color: "var(--muted)",
-            cursor: "pointer",
-            fontSize: 12,
-            padding: "2px 6px 6px",
-          }}
-          title="Xoá OAuth token"
-        >
-          Ngắt kết nối {msEmail ? `(${msEmail})` : ""}
-        </button>
-      )}
-    </div>
-  );
-}
-
-function relativeAgo(iso: string): string {
-  const t = new Date(iso).getTime();
-  if (!Number.isFinite(t)) return "";
-  const s = Math.max(0, Math.floor((Date.now() - t) / 1000));
-  if (s < 60) return `${s}s trước`;
-  if (s < 3600) return `${Math.floor(s / 60)}m trước`;
-  if (s < 86400) return `${Math.floor(s / 3600)}h trước`;
-  return `${Math.floor(s / 86400)}d trước`;
 }
 
 function SortableTh({
@@ -3639,6 +3362,7 @@ function EditField({
       </div>
       <input
         type={type}
+        aria-label={label}
         value={value}
         onChange={(e) => onChange(e.target.value)}
         className="input"

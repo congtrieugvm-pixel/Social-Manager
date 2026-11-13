@@ -79,6 +79,11 @@ export const accounts = sqliteTable("accounts", {
   enc2fa: text("enc_2fa"),
   encEmailPassword: text("enc_email_password"),
 
+  // Manually stored recovery mailbox and mail credentials.
+  encRecoveryEmail: text("enc_recovery_email"),
+  encMailToken: text("enc_mail_token"),
+  mailClientId: text("mail_client_id"),
+
   // JSON array of {enc:string, changedAt:number} — keep last 3 rotated credentials.
   passwordHistory: text("password_history"),
   emailPasswordHistory: text("email_password_history"),
@@ -88,6 +93,9 @@ export const accounts = sqliteTable("accounts", {
   encMsAccessToken: text("enc_ms_access_token"),
   msTokenExpiresAt: integer("ms_token_expires_at"),
   msEmail: text("ms_email"),
+  msClientId: text("ms_client_id"),
+  msTokenVersion: integer("ms_token_version").notNull().default(0),
+  msOAuthNonce: text("ms_oauth_nonce"),
 
   note: text("note"),
 

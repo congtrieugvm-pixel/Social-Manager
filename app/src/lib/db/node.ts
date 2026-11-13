@@ -308,6 +308,9 @@ export function initNodeDb(): BetterSQLite3Database<typeof schema> {
   ensureColumn("accounts", "employee_id", "employee_id INTEGER REFERENCES employees(id) ON DELETE SET NULL");
   ensureColumn("accounts", "password_history", "password_history TEXT");
   ensureColumn("accounts", "email_password_history", "email_password_history TEXT");
+  ensureColumn("accounts", "enc_recovery_email", "enc_recovery_email TEXT");
+  ensureColumn("accounts", "enc_mail_token", "enc_mail_token TEXT");
+  ensureColumn("accounts", "mail_client_id", "mail_client_id TEXT");
   ensureColumn("accounts", "enc_ms_refresh_token", "enc_ms_refresh_token TEXT");
   // Bookmark Key: any link (mirrors D1 migration 0009)
   ensureColumn("yt_channels", "kind", "kind TEXT NOT NULL DEFAULT 'youtube'");
@@ -316,6 +319,9 @@ export function initNodeDb(): BetterSQLite3Database<typeof schema> {
   ensureColumn("accounts", "enc_ms_access_token", "enc_ms_access_token TEXT");
   ensureColumn("accounts", "ms_token_expires_at", "ms_token_expires_at INTEGER");
   ensureColumn("accounts", "ms_email", "ms_email TEXT");
+  ensureColumn("accounts", "ms_client_id", "ms_client_id TEXT");
+  ensureColumn("accounts", "ms_token_version", "ms_token_version INTEGER NOT NULL DEFAULT 0");
+  ensureColumn("accounts", "ms_oauth_nonce", "ms_oauth_nonce TEXT");
   sqlite.exec(`CREATE INDEX IF NOT EXISTS idx_accounts_group_id ON accounts(group_id);`);
   sqlite.exec(`CREATE INDEX IF NOT EXISTS idx_accounts_status_id ON accounts(status_id);`);
   sqlite.exec(`CREATE INDEX IF NOT EXISTS idx_accounts_country_id ON accounts(country_id);`);

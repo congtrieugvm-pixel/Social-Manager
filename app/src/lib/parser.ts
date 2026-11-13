@@ -4,6 +4,9 @@ export type FieldKey =
   | "email"
   | "twofa"
   | "emailPassword"
+  | "recoveryEmail"
+  | "mailToken"
+  | "mailClientId"
   | "token"
   | "note"
   | "skip";
@@ -22,6 +25,9 @@ export const FIELD_LABELS: Record<Exclude<FieldKey, "skip">, string> = {
   email: "Email",
   twofa: "2FA",
   emailPassword: "Email password",
+  recoveryEmail: "Mail khôi phục",
+  mailToken: "Token Mail",
+  mailClientId: "Client ID của mail",
   token: "Token",
   note: "Note",
 };
@@ -34,6 +40,9 @@ export interface ParsedRow {
   email: string;
   twofa: string;
   emailPassword: string;
+  recoveryEmail: string;
+  mailToken: string;
+  mailClientId: string;
   token: string;
   note: string;
   valid: boolean;
@@ -71,6 +80,9 @@ export function parseBulkImport(
       email: "",
       twofa: "",
       emailPassword: "",
+      recoveryEmail: "",
+      mailToken: "",
+      mailClientId: "",
       token: "",
       note: "",
     };
@@ -99,6 +111,9 @@ export function parseBulkImport(
       email: fields.email,
       twofa: fields.twofa,
       emailPassword: fields.emailPassword,
+      recoveryEmail: fields.recoveryEmail,
+      mailToken: fields.mailToken,
+      mailClientId: fields.mailClientId,
       token: fields.token,
       note: fields.note,
       valid,

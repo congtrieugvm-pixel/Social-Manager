@@ -11,6 +11,21 @@ Webapp nội bộ quản lý tài khoản TikTok.
 - Xem chi tiết tài khoản, copy credentials, edit note, xóa
 - Tìm kiếm theo username/note
 
+## Thông tin mail của tài khoản TikTok
+
+- Mở **Sửa tài khoản** để lưu **Mail khôi phục**, **Token Mail** và **Client ID của mail**.
+  Cả ba trường đều không bắt buộc; để trống để xóa giá trị đã lưu. Token Mail có nút Ẩn/Hiện.
+- Xem/copy từng trường trong chi tiết tài khoản hoặc menu chuột phải. Khi xuất, chọn các
+  trường cần lấy. Khi nhập, chọn mẫu **8 cột (Mail khôi phục, Token Mail, Client ID)**:
+  `username|password|email|2fa|email_password|recovery_email|mail_token|mail_client_id`.
+  Mẫu 5 cột cũ vẫn dùng được.
+- Mail khôi phục và Token Mail nhập tay được mã hóa AES-256-GCM. Client ID lưu dạng văn bản.
+  Đây là thông tin lưu trữ; kết nối **Get Token / Get Code** tiếp tục dùng OAuth Hotmail riêng.
+- SQLite local tự thêm cột khi khởi động. Trên D1, chạy migration
+  `0014_account_mail_fields.sql` trước khi triển khai (`npm run db:migrate:remote`).
+- Kiểm tra lưu/đọc, mã hóa, phân quyền, nhập/xuất và chuyển tài khoản:
+  `npm run test:account-mail-fields` (SQLite trong bộ nhớ, không dùng dữ liệu thật).
+
 ## Chạy local
 
 ```bash
@@ -33,8 +48,9 @@ openssl rand -base64 32
 
 ## Lấy code Hotmail (OAuth2 Microsoft Graph)
 
-Tính năng chuột phải → **Lấy code Hotmail** gọi Graph API đọc 15 email mới nhất,
-regex OTP 6 số, copy vào clipboard.
+Chuột phải vào tài khoản TikTok → **Hotmail OAuth2**:
+**Get Token** kết nối Microsoft và tự lưu token; **Get Code** đọc mã TikTok qua Graph API.
+Chạy được trên Node/SQLite và Cloudflare Workers/D1, không cần Chromium để lấy mã.
 
 ### Setup Azure AD app (1 lần cho cả hệ thống)
 
@@ -53,18 +69,50 @@ regex OTP 6 số, copy vào clipboard.
    ```
    AZURE_CLIENT_ID=<client id>
    AZURE_CLIENT_SECRET=<client secret value>
-   AZURE_TENANT=common
+   AZURE_TENANT=consumers
    AZURE_REDIRECT_URI=http://localhost:3000/api/oauth/microsoft/callback
    ```
 7. Restart `npm run dev`
 
+Trên Cloudflare, cấu hình `AZURE_CLIENT_ID`, `AZURE_CLIENT_SECRET`, `AZURE_TENANT`,
+`AZURE_REDIRECT_URI` và `ENCRYPTION_KEY` trong Variables/Secrets của Worker.
+Client secret và khóa mã hóa phải là secrets. Callback phải dùng đúng domain HTTPS
+đang mở ứng dụng và phải được đăng ký loại **Web**, không phải SPA. Giữ nguyên
+`ENCRYPTION_KEY` hiện có để tiếp tục giải mã dữ liệu đã lưu.
+
+Áp dụng migration `0013_hotmail_oauth.sql` trước khi triển khai phiên bản mới trên D1
+(`npm run db:migrate:remote`; workflow deploy hiện tại cũng chạy migrations).
+SQLite local tự thêm các cột còn thiếu khi khởi động.
+
 ### Cách dùng
 
-- Chuột phải vào 1 account → **Lấy code Hotmail**
-- Lần đầu: popup hiện consent Microsoft → đăng nhập Hotmail của account đó → OK
-- Token (refresh + access) được mã hoá AES-256-GCM lưu vào DB, gắn với account
-- Lần sau: click → auto refresh token → fetch inbox → trả OTP 6 số, tự copy clipboard
-- Nút **Ngắt kết nối** xoá token nếu cần đăng nhập Microsoft khác
+- Email mới nhập: chọn **Get Token**, đăng nhập đúng Hotmail và cấp quyền đọc thư.
+  Email được gợi ý sẵn. Nếu Microsoft yêu cầu MFA/xác minh, người dùng hoàn tất trong popup.
+  Email + mật khẩu không được tự đổi thành token bằng ROPC cho tài khoản Microsoft cá nhân.
+- Callback kiểm tra phiên đăng nhập, state dùng một lần, PKCE và email hộp thư trước
+  khi lưu token. Địa chỉ email tài khoản phải khớp địa chỉ Microsoft Graph trả về;
+  chưa tự ánh xạ alias sang địa chỉ chính.
+- Access/refresh token được mã hóa AES-256-GCM. Client ID, email kết nối và hạn token
+  được lưu cùng tài khoản; token gốc không trả về trình duyệt. Không cần nhập token thủ công.
+- **Get Code** tự gia hạn token khi cần; access token bị từ chối sẽ thử refresh một lần.
+  Lỗi mạng, giới hạn lượt gọi hoặc cấu hình ứng dụng không tự xóa refresh token.
+  Nếu Microsoft thu hồi quyền, bấm **Get Token lại**.
+- Đọc tối đa 25 thư mới trong mỗi thư mục Inbox và Junk Email, giới hạn 5 phút gần nhất.
+  Chỉ nhận mã 6 số có ngữ cảnh xác minh từ domain TikTok/ByteDance; bỏ mã mơ hồ,
+  thư tương lai và số trong email không liên quan. Chưa đọc thư bị quy tắc chuyển sang thư mục khác.
+- Nếu thư chưa đến, trình duyệt hỏi lại mỗi 3 giây, tối đa 60 giây, có nút **Dừng**.
+  Tôn trọng `Retry-After` của Microsoft. Đóng menu sẽ dừng chờ. **Get Code mới** trong
+  cùng phiên menu bỏ qua thư vừa lấy và các thư cũ hơn; **Chép** cho phép chép lại mã đang hiện.
+- Đổi email hoặc **Ngắt kết nối Hotmail** làm mất hiệu lực token và phiên OAuth đang chờ
+  của tài khoản đó. Chuyển tài khoản giữa user vẫn giữ token theo hành vi hiện có, nhưng
+  hủy phiên OAuth đang chờ để tránh lưu vào tài khoản đã đổi chủ.
+
+### Kiểm tra Hotmail
+
+`npm run test:hotmail` chạy kiểm tra offline với SQLite trong bộ nhớ và Microsoft HTTP giả:
+OAuth/callback, sai hộp thư, phiên hết hạn, chống dùng lại state, refresh, ngắt kết nối,
+quyền sở hữu, 401/429, lọc OTP và chờ mã. Không mở hộp thư thật hoặc chạm DB đang dùng.
+Kiểm tra đăng nhập Microsoft thực cần cấu hình ứng dụng và tài khoản Hotmail do người dùng cấp quyền.
 
 ## Insight — Lượt tiếp cận (Reach) của Trang
 

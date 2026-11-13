@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { accounts, groups, statuses, countries, machines, employees } from "@/lib/db/schema";
-import { eq, and, ne } from "drizzle-orm";
+import { eq, and, ne, sql, isNull, type SQL } from "drizzle-orm";
 import { decrypt, encrypt } from "@/lib/crypto";
 import { readBody } from "@/lib/req-body";
 import { getOwnerId } from "@/lib/scope";
@@ -57,10 +57,15 @@ export async function GET(_req: Request, ctx: { params: Promise<{ id: string }> 
       encEmail: accounts.encEmail,
       enc2fa: accounts.enc2fa,
       encEmailPassword: accounts.encEmailPassword,
+      encRecoveryEmail: accounts.encRecoveryEmail,
+      encMailToken: accounts.encMailToken,
+      mailClientId: accounts.mailClientId,
       passwordHistory: accounts.passwordHistory,
       emailPasswordHistory: accounts.emailPasswordHistory,
       encMsRefreshToken: accounts.encMsRefreshToken,
       msEmail: accounts.msEmail,
+      msClientId: accounts.msClientId,
+      msTokenExpiresAt: accounts.msTokenExpiresAt,
       note: accounts.note,
       avatarUrl: accounts.avatarUrl,
       followerCount: accounts.followerCount,
@@ -103,10 +108,15 @@ export async function GET(_req: Request, ctx: { params: Promise<{ id: string }> 
     email: await decrypt(row.encEmail),
     twofa: await decrypt(row.enc2fa),
     emailPassword: await decrypt(row.encEmailPassword),
+    recoveryEmail: await decrypt(row.encRecoveryEmail),
+    mailToken: await decrypt(row.encMailToken),
+    mailClientId: row.mailClientId,
     passwordHistory: await decodeHistory(row.passwordHistory),
     emailPasswordHistory: await decodeHistory(row.emailPasswordHistory),
     hasMsToken: !!row.encMsRefreshToken,
     msEmail: row.msEmail,
+    msClientId: row.msClientId,
+    msTokenExpiresAt: row.msTokenExpiresAt,
     note: row.note,
     avatarUrl: row.avatarUrl,
     followerCount: row.followerCount,
@@ -147,6 +157,9 @@ export async function PATCH(req: Request, ctx: { params: Promise<{ id: string }>
     email?: string | null;
     twofa?: string | null;
     emailPassword?: string | null;
+    recoveryEmail?: string | null;
+    mailToken?: string | null;
+    mailClientId?: string | null;
     note?: string;
     groupId?: number | null;
     statusId?: number | null;
@@ -161,6 +174,7 @@ export async function PATCH(req: Request, ctx: { params: Promise<{ id: string }>
       id: accounts.id,
       username: accounts.username,
       encPassword: accounts.encPassword,
+      encEmail: accounts.encEmail,
       encEmailPassword: accounts.encEmailPassword,
       passwordHistory: accounts.passwordHistory,
       emailPasswordHistory: accounts.emailPasswordHistory,
@@ -169,7 +183,13 @@ export async function PATCH(req: Request, ctx: { params: Promise<{ id: string }>
     .where(and(eq(accounts.id, id), eq(accounts.ownerUserId, ownerId)));
   if (!current) return NextResponse.json({ error: "Không tìm thấy" }, { status: 404 });
 
-  const patch: Partial<typeof accounts.$inferInsert> = { updatedAt: new Date() };
+  for (const key of ["recoveryEmail", "mailToken", "mailClientId"] as const) {
+    if (body[key] !== undefined && body[key] !== null && typeof body[key] !== "string") {
+      return NextResponse.json({ error: `${key} phải là chuỗi văn bản` }, { status: 400 });
+    }
+  }
+
+  const patch: Partial<Omit<typeof accounts.$inferInsert, "msTokenVersion">> & { msTokenVersion?: number | SQL } = { updatedAt: new Date() };
 
   if (typeof body.username === "string") {
     const newUsername = body.username.trim().replace(/^@/, "");
@@ -216,8 +236,24 @@ export async function PATCH(req: Request, ctx: { params: Promise<{ id: string }>
       patch.emailPasswordHistory = JSON.stringify(pushHistory(hist, current.encEmailPassword));
     }
   }
-  if (body.email !== undefined) patch.encEmail = await encrypt(body.email ?? "");
+  if (body.email !== undefined) {
+    const oldEmail = (await decrypt(current.encEmail) ?? "").trim().toLowerCase();
+    const newEmail = (body.email ?? "").trim().toLowerCase();
+    patch.encEmail = await encrypt(body.email?.trim() ?? "");
+    if (oldEmail !== newEmail) {
+      patch.encMsRefreshToken = null;
+      patch.encMsAccessToken = null;
+      patch.msEmail = null;
+      patch.msClientId = null;
+      patch.msTokenExpiresAt = null;
+      patch.msOAuthNonce = null;
+      patch.msTokenVersion = sql`${accounts.msTokenVersion} + 1`;
+    }
+  }
   if (body.twofa !== undefined) patch.enc2fa = await encrypt(body.twofa ?? "");
+  if (body.recoveryEmail !== undefined) patch.encRecoveryEmail = await encrypt(body.recoveryEmail?.trim() ?? "");
+  if (body.mailToken !== undefined) patch.encMailToken = await encrypt(body.mailToken?.trim() ?? "");
+  if (body.mailClientId !== undefined) patch.mailClientId = body.mailClientId?.trim() || null;
 
   if (body.groupId === null) patch.groupId = null;
   else if (typeof body.groupId === "number" && Number.isFinite(body.groupId)) {
@@ -240,10 +276,14 @@ export async function PATCH(req: Request, ctx: { params: Promise<{ id: string }>
     patch.employeeId = body.employeeId;
   }
 
-  await db
+  const updated = await db
     .update(accounts)
     .set(patch)
-    .where(and(eq(accounts.id, id), eq(accounts.ownerUserId, ownerId)));
+    .where(and(eq(accounts.id, id), eq(accounts.ownerUserId, ownerId),
+      body.email === undefined ? undefined : current.encEmail === null
+        ? isNull(accounts.encEmail) : eq(accounts.encEmail, current.encEmail)))
+    .returning({ id: accounts.id });
+  if (!updated.length) return NextResponse.json({ error: "Tài khoản vừa thay đổi. Hãy tải lại trước khi lưu." }, { status: 409 });
   return NextResponse.json({ ok: true });
 }
 
