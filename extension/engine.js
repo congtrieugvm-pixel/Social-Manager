@@ -10,9 +10,20 @@
     let failures = 0;
     let passStart = 0;
     const emit = (message, extra = {}) => report({ ...stats, message, ...extra });
+    const refreshFilter = async (action) => {
+      while (true) {
+        await check();
+        try { return await action(); }
+        catch (error) {
+          if (!["filter_control", "filter_state", "unavailable"].includes(error.code)) throw error;
+          await emit(`${error.message} Đang chờ rồi mở lại Quyền riêng tư → Mọi người; có thể bấm Dừng.`, { errorCode: error.code });
+          await adapter.backoff(++failures);
+        }
+      }
+    };
     try {
       await adapter.prepare();
-      await emit("Đã áp dụng Quyền riêng tư → Mọi người. Đang chuyển các bài công khai.");
+      await emit("Đang cuộn danh sách và chuyển bài sang Chỉ mình tôi. Cuối lượt sẽ lọc Mọi người để kiểm tra bài còn sót.");
       while (true) {
         await check();
         // Re-read after EVERY mutation. Filtering can remove a row, refill the
@@ -30,7 +41,7 @@
             await emit(`${error.message} Đang chọn lại bộ lọc Mọi người để tiếp tục.`, { errorCode: error.code });
             await adapter.backoff(++failures);
             await check();
-            await adapter.recover();
+            await refreshFilter(() => adapter.recover());
             // Try other posts in this pass before revisiting this failed ID.
             continue;
           }
@@ -46,14 +57,14 @@
         catch (error) {
           if (!RECOVERABLE.has(error.code)) throw error;
           await emit("Danh sách đã thay đổi. Đang áp dụng lại Mọi người và kiểm tra từ đầu.", { errorCode: error.code });
-          await adapter.backoff(++failures); await check(); await adapter.recover(); visited.clear(); continue;
+          await adapter.backoff(++failures); await check(); await refreshFilter(() => adapter.recover()); visited.clear(); continue;
         }
-        if (step === "page") { stats.pages++; await emit("Đã sang trang Mọi người tiếp theo."); continue; }
+        if (step === "page") { stats.pages++; await emit("Đã sang trang bài đăng tiếp theo."); continue; }
         if (step === "more") continue;
         // End of a page/scroll is NEVER proof of completion. Re-fetch the public
         // filter, return to the first page and require a stable explicit empty state.
         await emit("Đang áp dụng lại Mọi người để kiểm tra bài công khai còn sót.");
-        if (await adapter.confirmEmpty()) {
+        if (await refreshFilter(() => adapter.confirmEmpty())) {
           await check();
           await emit("Hoàn tất: bộ lọc Quyền riêng tư → Mọi người không còn bài đăng.", { status: "completed", currentId: null });
           return;

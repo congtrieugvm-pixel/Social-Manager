@@ -88,19 +88,30 @@ function studio(w, initialPosts, options = {}) {
     if (w.document.getElementById("filter-panel")) { close(); return; }
     w.document.querySelectorAll("[data-post-menu]").forEach((el) => el.remove());
     const panel = w.document.createElement("div"); panel.id = "filter-panel"; panel.setAttribute("role", "dialog");
-    panel.innerHTML = Object.entries(labels).map(([key, label]) => options.roleCheckboxes
+    panel.innerHTML = Object.entries(labels).map(([key, label]) => options.customCheckboxes
+      ? `<div class='choice' data-value='${key}'><span class='box ${selected.includes(key) ? "painted" : "outline"}'></span><span>${label}</span></div>`
+      : options.roleCheckboxes
       ? `<div role='checkbox' aria-checked='${selected.includes(key)}' data-value='${key}'>${label}</div>`
       : `<label><input type='checkbox' value='${key}' ${selected.includes(key) ? "checked" : ""}><span>${label}</span></label>`).join("") + "<div><button>Xóa</button><button>Áp dụng</button></div>";
+    if (options.customCheckboxes) for (const checkbox of panel.querySelectorAll(".choice")) checkbox.onclick = () => {
+      if (options.ignoreChoice) return;
+      const box = checkbox.querySelector(".box"); box.className = `box ${box.classList.contains("painted") ? "outline" : "painted"}`;
+    };
     if (options.roleCheckboxes) for (const checkbox of panel.querySelectorAll("[role=checkbox]")) checkbox.onclick = () => checkbox.setAttribute("aria-checked", String(checkbox.getAttribute("aria-checked") !== "true"));
     panel.querySelectorAll("button")[0].onclick = () => {
+      if (options.ignoreClear) return;
+      panel.querySelectorAll(".box").forEach((el) => el.className = "box outline");
       panel.querySelectorAll("input").forEach((el) => el.checked = false);
       panel.querySelectorAll("[role=checkbox]").forEach((el) => el.setAttribute("aria-checked", "false"));
     };
     panel.querySelectorAll("button")[1].onclick = () => {
-      selected = options.roleCheckboxes ? [...panel.querySelectorAll('[aria-checked="true"]')].map((el) => el.dataset.value) : [...panel.querySelectorAll("input:checked")].map((el) => el.value);
+      selected = options.customCheckboxes ? [...panel.querySelectorAll(".choice")].filter((el) => el.querySelector(".painted")).map((el) => el.dataset.value) : options.roleCheckboxes ? [...panel.querySelectorAll('[aria-checked="true"]')].map((el) => el.dataset.value) : [...panel.querySelectorAll("input:checked")].map((el) => el.value);
       applies.push([...selected]); close(); if (!options.stickyPage) page = 0; render();
     };
     w.document.body.append(panel);
+    if (options.customCheckboxes) for (const button of [...panel.querySelectorAll("button")]) {
+      const div = w.document.createElement("div"); div.innerHTML = `<span>${button.textContent}</span>`; div.onclick = button.onclick; button.replaceWith(div);
+    }
   };
   w.document.addEventListener("keydown", (event) => { if (event.key === "Escape") { close(); w.document.querySelectorAll("[data-post-menu]").forEach((el) => el.remove()); } });
   render();

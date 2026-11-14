@@ -12,7 +12,7 @@
     $("start").disabled = active || busy;
     $("stop").disabled = !active || busy;
     $("delay").disabled = active || busy;
-    $("start-label").textContent = active ? "Đang ẩn bài công khai…" : job ? "Kiểm tra và chạy lại" : "Ẩn tất cả bài công khai";
+    $("start-label").textContent = active ? "Đang ẩn bài đăng…" : job ? "Kiểm tra và chạy lại" : "Ẩn tất cả bài đăng";
     $("badge").textContent = labels[job?.status] || "Sẵn sàng";
     $("badge").dataset.state = job?.status || "idle";
     for (const field of ["changed", "skipped"]) $(field).textContent = String(job?.[field] || 0);

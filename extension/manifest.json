@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "TikTok Studio Private",
-  "version": "1.0.2",
-  "description": "Lọc bài Mọi người trong TikTok Studio, chuyển sang Chỉ mình tôi và tự thử lại cho đến khi hết bài công khai.",
+  "version": "1.0.3",
+  "description": "Tự cuộn TikTok Studio, chuyển bài sang Chỉ mình tôi, rồi lọc Mọi người và xử lý đến khi không còn bài công khai.",
   "minimum_chrome_version": "120",
   "permissions": ["storage", "alarms"],
   "action": {

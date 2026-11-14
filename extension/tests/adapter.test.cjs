@@ -104,7 +104,7 @@ test("engine integrates the public filter and only finishes at a rechecked empty
     studio(d.window, [{ id: ids[0] }, { id: ids[1], privacy: "private" }]); const reports = [];
     await d.window.TSP.run(adapter(d.window), async (r) => reports.push(r), async () => {});
     const last = reports.at(-1);
-    assert.equal(last.status, "completed"); assert.equal(last.changed, 1); assert.equal(last.skipped, 0); assert.equal(last.scanned, 1);
+    assert.equal(last.status, "completed"); assert.equal(last.changed, 1); assert.equal(last.skipped, 1); assert.equal(last.scanned, 2);
   } finally { d.window.close(); }
 });
 test("engine does not count a CAPTCHA-interrupted save or continue to following posts", async () => {

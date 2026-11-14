@@ -5,6 +5,11 @@
   const CLICKABLE = "button,[role='button'],[role='combobox'],[aria-haspopup],select,[tabindex='0']";
   const PRIVATE_OPTIONS = "[role='option'],[role='menuitem'],[role='menuitemradio'],[role='radio'],label,li,button,div,span";
   const exact = (element) => (element?.getAttribute("aria-label") || element?.innerText || element?.textContent || "").trim();
+  const named = (scope, pattern) => {
+    const matches = [...scope.querySelectorAll("button,[role='button'],[aria-haspopup],label,div,span")]
+      .filter((el) => pattern.test(n(exact(el))) && visible(el));
+    return matches.filter((el) => !matches.some((other) => other !== el && el.contains(other)));
+  };
   function visible(element) {
     if (!element?.isConnected || element.closest("[hidden],[aria-hidden='true']")) return false;
     for (let el = element; el && el.nodeType === 1; el = el.parentElement) {
@@ -148,13 +153,14 @@
     }
     async prepare() {
       if (this.filtered()) throw new Halt("filtered", "Danh sách đang tìm kiếm hoặc có bộ lọc khác. Xóa bộ lọc đó để kiểm tra toàn bộ bài công khai.");
-      await this.wait(() => this.filterTrigger(), "Không thấy nút lọc Quyền riêng tư. Kiểm tra mục Bài đăng trong Studio.", 45000, "filter_control");
-      await this.selectEveryone(true);
+      // Start with the post list. A filter's markup must never block the first pass.
+      await this.wait(() => this.rows().length || this.empty() || this.filterTrigger(), "Đang chờ danh sách Bài đăng trong Studio.", 45000);
+      await this.settledList(false);
+      await this.firstPage(false);
       this.pageSignatures.add(this.signature());
     }
     filterTrigger() {
-      const choices = [...document.querySelectorAll("button,[role='button'],[aria-haspopup]")].filter((el) =>
-        visible(el) && !el.closest(ROW) && /^(privacy|quyen rieng tu)(?:\s*\(?\d+\)?)?$/.test(n(exact(el))));
+      const choices = named(document, /^(privacy|quyen rieng tu)(?:\s*\(?\d+\)?)?$/).filter((el) => !el.closest(`${ROW},thead,[role='columnheader']`));
       const unique = choices.filter((el) => !choices.some((other) => other !== el && el.contains(other)));
       if (unique.length > 1) throw new Halt("filter_control", "Có nhiều nút lọc Quyền riêng tư, chưa thể xác định bộ lọc bài đăng.");
       return unique[0];
@@ -176,14 +182,39 @@
         // A role wrapper containing a native input is the same checkbox, not a second option.
         if (input.getAttribute("role") === "checkbox" && input.querySelector("input[type='checkbox']")) continue;
         const checked = input.tagName === "INPUT" ? input.checked : input.getAttribute("aria-checked");
-        if (![true, false, "true", "false"].includes(checked)) throw new Halt("filter_state", "Không đọc được trạng thái checkbox của bộ lọc.");
-        options.push({ value, action, checked: checked === true || checked === "true" });
+        options.push({ value, action, region: action, checked: [true, false, "true", "false"].includes(checked) ? checked === true || checked === "true" : null });
+      }
+      // Some Studio builds draw the square with CSS/SVG, without input or role.
+      // Identify the option by its exact visible label, scoped to this filter.
+      for (const label of named(panel, /^(everyone|public|moi nguoi|cong khai|only me|only you|private|chi minh toi|chi ban|rieng tu|friends|ban be)$/)) {
+        const value = privacy(exact(label));
+        if (options.some((option) => option.value === value && (option.action.contains(label) || label.contains(option.action)))) continue;
+        let region = label;
+        while (region.parentElement !== panel && region.parentElement && privacy(exact(region.parentElement)) === value) region = region.parentElement;
+        if (options.some((option) => option.value === value && region.contains(option.action))) continue;
+        const input = region.querySelector("input[type='checkbox'],[role='checkbox']");
+        if (input && options.some((option) => option.value === value)) continue;
+        const state = region.getAttribute("aria-checked") ?? region.getAttribute("data-state");
+        const checked = ["true", "checked"].includes(state) ? true : ["false", "unchecked"].includes(state) ? false : null;
+        options.push({ value, action: region, region, checked });
       }
       return options;
     }
+    filterVisual(option) {
+      // Compare checkbox decoration, not translated labels, generated IDs or
+      // tracking attributes. No assumption about TikTok's CSS class names.
+      const copy = option.region.cloneNode(true);
+      for (const el of [copy, ...copy.querySelectorAll("*")]) {
+        for (const attr of [...el.attributes]) {
+          if (!["class", "style", "aria-checked", "data-state", "data-checked", "data-selected", "d", "fill", "stroke", "viewBox", "points", "width", "height"].includes(attr.name)) el.removeAttribute(attr.name);
+        }
+        for (const child of [...el.childNodes]) if (child.nodeType === 3) child.remove();
+      }
+      return copy.outerHTML;
+    }
     filterPanel() {
       const panels = new Set();
-      const applies = [...document.querySelectorAll("button,[role='button']")].filter((el) => visible(el) && /^(apply|ap dung)$/.test(n(exact(el))));
+      const applies = named(document, /^(apply|ap dung)$/);
       for (const apply of applies) {
         for (let panel = apply.parentElement, depth = 0; panel && depth < 7; depth++, panel = panel.parentElement) {
           if (["BODY", "HTML", "MAIN"].includes(panel.tagName) || panel.querySelector("table,[role='table']")) break;
@@ -199,30 +230,62 @@
       const trigger = this.filterTrigger();
       if (!trigger) throw new Halt("filter_control", "Không tìm thấy nút Quyền riêng tư để khôi phục danh sách.");
       await this.click(trigger);
-      return this.wait(() => this.filterPanel(), "Không nhận diện được checkbox Mọi người / Chỉ mình tôi / Bạn bè và nút Áp dụng.", this.settings.timeoutMs, "filter_control");
+      return this.wait(() => this.filterPanel(), "Chưa thấy menu Mọi người / Chỉ mình tôi / Bạn bè và nút Áp dụng.", this.settings.timeoutMs, "filter_control");
     }
     async chooseFilter(target) {
       let panel = await this.openFilter();
       let changed = false;
-      for (const value of ["private", "friends", "public"]) {
-        const matching = this.filterOptions(panel).filter((option) => option.value === value);
-        if (matching.length !== 1) throw new Halt("filter_state", "Các lựa chọn trong bộ lọc không rõ ràng.");
-        const desired = target === "all" || value === "public";
-        if (matching[0].checked !== desired) {
-          changed = true;
-          await this.click(matching[0].action);
+      let evidence = null;
+      const initial = this.filterOptions(panel);
+      if (initial.some((option) => option.checked === null)) {
+        const clears = named(panel, /^(clear|reset|xoa|dat lai)$/);
+        if (clears.length !== 1 || initial.length !== 3) throw new Halt("filter_state", "Chưa tìm được nút Xóa trong bộ lọc để đặt lại lựa chọn.");
+        await this.click(clears[0]);
+        // Clear establishes a known unchecked baseline. Require all three drawn
+        // squares to agree, then require a real visual change on every selection.
+        const baseline = await this.wait(() => {
+          panel = this.filterPanel();
+          if (!panel) return false;
+          const choices = this.filterOptions(panel);
+          if (choices.length !== 3 || choices.some((option) => option.checked === true)) return false;
+          return new Set(choices.map((option) => this.filterVisual(option))).size === 1 && choices;
+        }, "Nút Xóa chưa đặt lại ba lựa chọn trong bộ lọc.", this.settings.timeoutMs, "filter_state");
+        const emptyVisual = this.filterVisual(baseline[0]);
+        for (const value of target === "all" ? ["public", "private", "friends"] : ["public"]) {
+          const option = this.filterOptions(panel).find((item) => item.value === value);
+          await this.click(option.action); changed = true;
           await this.wait(() => {
             panel = this.filterPanel();
-            return panel && this.filterOptions(panel).some((option) => option.value === value && option.checked === desired);
-          }, "TikTok chưa nhận lựa chọn checkbox trong bộ lọc.", this.settings.timeoutMs, "filter_state");
+            const fresh = panel && this.filterOptions(panel).find((item) => item.value === value);
+            return fresh && this.filterVisual(fresh) !== emptyVisual && fresh.checked !== false;
+          }, "TikTok chưa nhận lựa chọn trong bộ lọc.", this.settings.timeoutMs, "filter_state");
+        }
+        evidence = new Map(this.filterOptions(panel).map((option) => [option.value, this.filterVisual(option)]));
+        if ([...evidence].some(([value, visual]) => (visual !== emptyVisual) !== (target === "all" || value === "public"))) {
+          throw new Halt("filter_state", "Lựa chọn bộ lọc chưa đúng sau khi bấm.");
+        }
+      } else {
+        for (const value of ["private", "friends", "public"]) {
+          const matching = this.filterOptions(panel).filter((option) => option.value === value);
+          if (matching.length !== 1) throw new Halt("filter_state", "Các lựa chọn trong bộ lọc không rõ ràng.");
+          const desired = target === "all" || value === "public";
+          if (matching[0].checked !== desired) {
+            changed = true;
+            await this.click(matching[0].action);
+            await this.wait(() => {
+              panel = this.filterPanel();
+              return panel && this.filterOptions(panel).some((option) => option.value === value && option.checked === desired);
+            }, "TikTok chưa nhận lựa chọn checkbox trong bộ lọc.", this.settings.timeoutMs, "filter_state");
+          }
         }
       }
-      const apply = [...panel.querySelectorAll("button,[role='button']")].filter((el) => visible(el) && /^(apply|ap dung)$/.test(n(exact(el))));
+      const apply = named(panel, /^(apply|ap dung)$/);
       if (apply.length !== 1) throw new Halt("filter_control", "Không xác định được nút Áp dụng của bộ lọc.");
-      if (!changed && disabled(apply[0])) await this.click(this.filterTrigger());
+      if ((!changed || evidence) && disabled(apply[0].closest("button,[role='button']") || apply[0])) await this.click(this.filterTrigger());
       else await this.click(apply[0]);
       await this.wait(() => !this.filterPanel() && !this.loading(), "Bộ lọc chưa áp dụng xong.", this.settings.timeoutMs, "filter_state");
       await this.settledList(target === "public");
+      return evidence;
     }
     async settledList(publicOnly) {
       let signature = null, since = 0;
@@ -234,9 +297,9 @@
         if (!next) { since = 0; signature = null; return false; }
         if (next !== signature || !since) { signature = next; since = Date.now(); }
         return Date.now() - since >= this.settings.settleMs && state;
-      }, "Chưa đọc được danh sách Mọi người ổn định hoặc trạng thái không có bài. Chưa thể xác nhận hoàn tất.", this.settings.timeoutMs, "filter_state");
+      }, "Chưa đọc được danh sách ổn định hoặc trạng thái không có bài. Chưa thể xác nhận hoàn tất.", this.settings.timeoutMs, "filter_state");
     }
-    async firstPage() {
+    async firstPage(publicOnly = true) {
       const navigation = () => {
         const controls = [...document.querySelectorAll("button,[role='button'],[class*='page-prev'],[class*='pagination-prev' i]")].filter(visible);
         const prev = controls.find((el) => /^(previous(?: page)?|go to previous page|trang truoc)$/.test(n(el.getAttribute("aria-label") || el.getAttribute("title"))) || /page-prev|pagination.?prev/i.test(el.className || ""));
@@ -258,7 +321,7 @@
           const fresh = navigation();
           return this.signature() !== old || (fresh.prev && disabled(fresh.prev)) || currentPage(fresh.first);
         }, "Không về được trang đầu.", this.settings.timeoutMs, "filter_state");
-        await this.settledList(true);
+        await this.settledList(publicOnly);
         if (first) { this.leftFirstPage = false; break; }
         if (attempts === 999) throw new Halt("filter_state", "Chưa về được trang đầu để kiểm tra toàn bộ bài công khai.");
       }
@@ -273,11 +336,11 @@
       // Change selection first so Apply really reloads, even when Everyone was
       // already selected. This is read-only filtering, never a post privacy edit.
       const initial = this.filterOptions(await this.openFilter());
-      if (refresh && initial.every((option) => option.checked === (option.value === "public"))) await this.chooseFilter("all");
-      await this.chooseFilter("public");
+      if (refresh && (initial.some((option) => option.checked === null) || initial.every((option) => option.checked === (option.value === "public")))) await this.chooseFilter("all");
+      const evidence = await this.chooseFilter("public");
       const panel = await this.openFilter();
       const options = this.filterOptions(panel);
-      if (options.length !== 3 || !options.every((option) => option.checked === (option.value === "public"))) {
+      if (options.length !== 3 || !options.every((option) => evidence ? this.filterVisual(option) === evidence.get(option.value) : option.checked === (option.value === "public"))) {
         throw new Halt("filter_state", "Chưa xác nhận bộ lọc chỉ chọn Mọi người.");
       }
       await this.click(this.filterTrigger());

@@ -6,7 +6,7 @@ test("screenshot filter selects only Everyone and Apply, leaving private/friends
   const d = dom("");
   try {
     const ui = studio(d.window, [{ id: ids[0] }, { id: ids[1], privacy: "private" }, { id: ids[2], privacy: "friends" }], { initialFilter: ["private", "friends"] });
-    const a = adapter(d.window); await a.prepare();
+    const a = adapter(d.window); await a.selectEveryone(true);
     assert.deepEqual(ui.selected, ["public"]); assert.equal(a.rows().length, 1); assert.equal(a.publicFiltered, true);
     assert.equal(ui.edits.length, 0, "Applying a list filter must not edit any post");
     assert.equal(d.window.document.getElementById("filter-panel"), null);
@@ -14,7 +14,7 @@ test("screenshot filter selects only Everyone and Apply, leaving private/friends
 });
 test("custom role checkboxes are read and toggled by state, not guessed clicks", async () => {
   const d = dom("");
-  try { const ui = studio(d.window, [{ id: ids[0] }], { roleCheckboxes: true }); await adapter(d.window).prepare(); assert.deepEqual(ui.selected, ["public"]); }
+  try { const ui = studio(d.window, [{ id: ids[0] }], { roleCheckboxes: true }); await adapter(d.window).selectEveryone(true); assert.deepEqual(ui.selected, ["public"]); }
   finally { d.window.close(); }
 });
 test("a filter dialog is never mistaken for the per-post privacy dialog", async () => {
@@ -27,7 +27,7 @@ test("a filter dialog is never mistaken for the per-post privacy dialog", async 
 test("post disappearing from confirmed public filter is verified, then fresh empty filter confirms completion", async () => {
   const d = dom("");
   try {
-    const ui = studio(d.window, [{ id: ids[0] }]); const a = adapter(d.window); await a.prepare();
+    const ui = studio(d.window, [{ id: ids[0] }]); const a = adapter(d.window); await a.selectEveryone(true);
     assert.equal(await a.makePrivate(ids[0]), "changed"); assert.equal(a.rows().length, 0);
     assert.equal(await a.confirmEmpty(), true); assert.deepEqual(ui.applies.at(-1), ["public"]);
     assert(ui.applies.some((values) => values.length === 3), "Must force an actual filter reload");
@@ -37,7 +37,7 @@ test("reapplying Everyone returns to page one even if filter keeps the previous 
   const d = dom("");
   try {
     const ui = studio(d.window, ids.map((id) => ({ id })), { pageSize: 1, startPage: 2, stickyPage: true });
-    const a = adapter(d.window); a.leftFirstPage = true; await a.prepare();
+    const a = adapter(d.window); a.leftFirstPage = true; await a.selectEveryone(true);
     assert.equal(ui.page, 0); assert.equal(a.rows()[0].id, ids[0]); assert.equal(await a.confirmEmpty(), false);
   } finally { d.window.close(); }
 });
