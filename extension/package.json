@@ -1,0 +1,11 @@
+{
+  "name": "tiktok-studio-private",
+  "version": "1.0.1",
+  "private": true,
+  "description": "Standalone Manifest V3 TikTok Studio privacy extension",
+  "scripts": {
+    "test": "node --test tests/*.test.cjs",
+    "check": "node scripts/check.cjs",
+    "build": "node scripts/package.cjs"
+  }
+}

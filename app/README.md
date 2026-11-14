@@ -28,6 +28,23 @@ Webapp nội bộ quản lý tài khoản TikTok.
 
 ## Chạy local
 
+### Tiện ích trình duyệt
+
+Menu **Tiện ích** (`/utilities`, trên điện thoại: **Thêm → Tiện ích**) cung cấp bản
+tải TikTok Studio Private, phiên bản, dung lượng, SHA-256 và hướng dẫn cài/cập nhật.
+Trang yêu cầu đăng nhập; các file ZIP và metadata phát hành là tài nguyên công khai.
+
+`npm run dev` và `npm run build` tự đóng gói extension qua hook `predev` / `prebuild`.
+Cloudflare/OpenNext gọi `npm run build`, nên workflow push `main` hiện có tự phát hành
+extension cùng web. Có thể chạy riêng `npm run extensions:build`. Không cần sửa workflow
+hoặc thêm secrets. Các file tại `public/downloads/extensions/` và
+`src/generated/extension-release.json` được sinh tự động và không commit.
+
+Khi sửa extension, tăng version trong `../extension/manifest.json`, kiểm thử rồi push
+`main`. Nút tải dùng tên file có hash để tránh cache cũ; địa chỉ cố định
+`/downloads/extensions/tiktok-studio-private-latest.zip` luôn là bản của lần deploy mới
+nhất. Người đã cài Load unpacked vẫn phải thay file và bấm Reload trong trình duyệt.
+
 ```bash
 cd app
 npm install

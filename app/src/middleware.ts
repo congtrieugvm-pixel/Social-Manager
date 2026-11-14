@@ -57,6 +57,6 @@ export const config = {
   // self-protect via requireUser() / public-prefix checks; middleware was
   // only redundant convenience there.
   matcher: [
-    "/((?!_next/|api/|favicon\\.ico|.*\\.(?:png|jpg|jpeg|gif|svg|webp|ico|css|js|map|woff2?)$).*)",
+    "/((?!_next/|api/|downloads/extensions/|favicon\\.ico|.*\\.(?:png|jpg|jpeg|gif|svg|webp|ico|css|js|map|woff2?)$).*)",
   ],
 };

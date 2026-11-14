@@ -3,6 +3,9 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
+    "extensions:build": "node ../extension/scripts/package.cjs --web",
+    "predev": "npm run extensions:build",
+    "prebuild": "npm run extensions:build",
     "dev": "next dev",
     "build": "next build",
     "start": "next start",

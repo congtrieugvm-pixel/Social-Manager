@@ -53,3 +53,8 @@ desktop.ini
 *.pem
 .cache/
 coverage/
+
+# Extension releases are generated from source by the app prebuild hook.
+/dist/tiktok-studio-private-*.zip
+/app/public/downloads/extensions/
+/app/src/generated/extension-release.json

@@ -1,0 +1,22 @@
+{
+  "manifest_version": 3,
+  "name": "TikTok Studio Private",
+  "version": "1.0.1",
+  "description": "Mở TikTok Studio và chuyển lần lượt các bài đăng sang Chỉ mình tôi, có tiến độ và nút dừng.",
+  "minimum_chrome_version": "120",
+  "permissions": ["storage", "alarms"],
+  "action": {
+    "default_title": "TikTok Studio Private",
+    "default_popup": "popup.html",
+    "default_icon": {"16": "icons/16.png", "32": "icons/32.png", "48": "icons/48.png", "128": "icons/128.png"}
+  },
+  "icons": {"16": "icons/16.png", "32": "icons/32.png", "48": "icons/48.png", "128": "icons/128.png"},
+  "background": {"service_worker": "background.js"},
+  "content_scripts": [{
+    "matches": ["https://www.tiktok.com/*"],
+    "js": ["shared.js", "engine.js", "adapter.js", "content.js"],
+    "run_at": "document_idle",
+    "all_frames": false
+  }],
+  "content_security_policy": {"extension_pages": "script-src 'self'; object-src 'none'"}
+}
