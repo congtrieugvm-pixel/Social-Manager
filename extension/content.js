@@ -56,7 +56,7 @@
           overlay.status.textContent = `${data.changed} bài đã đổi · ${data.skipped} bài đã riêng tư. ${data.message}`;
           const result = await send({ type: "REPORT", runId, data });
           if (!result.allowed) cancelled = true;
-          if (data.status) { overlay.stop.textContent = "Đã kết thúc"; overlay.stop.disabled = true; }
+          if (data.status) { overlay.stop.textContent = data.status === "completed" ? "Hoàn tất" : "Đã dừng"; overlay.stop.disabled = true; }
         }, guard);
       } finally { clearInterval(heartbeat); active = null; }
     } catch (error) {

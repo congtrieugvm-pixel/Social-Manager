@@ -1,15 +1,16 @@
 const { test } = require("node:test");
 const assert = require("node:assert/strict");
-const { ids, row, table, dom, source } = require("./helpers.cjs");
+const { ids, row, table, dom, source, studio } = require("./helpers.cjs");
 const waitUntil = async (fn) => {
   const deadline = Date.now() + 3000;
   while (!fn() && Date.now() < deadline) await new Promise((r) => setTimeout(r, 5));
   assert(fn(), "Content runner did not finish within test deadline");
 };
 test("content script claims, reports progress and keeps the terminal state after popup would close", async () => {
-  const d = dom(table(row(ids[0], "Only me")) + "<button aria-label='Next page' disabled>→</button>");
+  const d = dom("");
   try {
     const w = d.window; const reports = []; let claimed = 0;
+    studio(w, [{ id: ids[0] }]);
     w.chrome = { runtime: {
       id: "test-extension", onMessage: { addListener() {} },
       sendMessage: async (m) => {
@@ -21,7 +22,7 @@ test("content script claims, reports progress and keeps the terminal state after
     w.TSP.DomAdapter.prototype.sleep = async function () { this.assert(); await new Promise((r) => setTimeout(r, 1)); };
     w.eval(source("content.js")); w.eval(source("content.js"));
     await waitUntil(() => reports.some((r) => r.status === "completed"));
-    assert.equal(claimed, 1); assert.equal(reports.at(-1).skipped, 1);
+    assert.equal(claimed, 1); assert.equal(reports.at(-1).changed, 1);
     assert.equal(w.document.querySelectorAll("#tsp-progress").length, 1);
   } finally { d.window.close(); }
 });

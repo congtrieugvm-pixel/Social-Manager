@@ -1,6 +1,6 @@
 # TikTok Studio Private
 
-Extension Chrome/Edge đổi lần lượt toàn bộ bài đăng trong TikTok Studio sang **Chỉ mình tôi**. Không cần chạy webapp hay cài Node.js để sử dụng.
+Extension Chrome/Edge lọc **Quyền riêng tư → Mọi người** trong TikTok Studio và đổi lần lượt các bài công khai sang **Chỉ mình tôi**. Tiếp tục kiểm tra đến khi bộ lọc Mọi người không còn bài. Không cần chạy webapp hay cài Node.js để sử dụng.
 
 ## Cài đặt
 
@@ -17,33 +17,34 @@ Extension Chrome/Edge đổi lần lượt toàn bộ bài đăng trong TikTok S
 1. Đăng nhập đúng tài khoản TikTok trong cùng hồ sơ Chrome/Edge.
 2. Mở extension. Có thể bấm **Mở TikTok Studio** để kiểm tra tài khoản trước.
 3. Chọn khoảng nghỉ 1–30 giây (mặc định 2 giây, cộng thêm thời gian chờ xác minh giao diện).
-4. Bấm **Ẩn tất cả bài đăng**. Extension mở tab riêng tới `https://www.tiktok.com/tiktokstudio/content` và bắt đầu khi danh sách tải xong.
+4. Bấm **Ẩn tất cả bài công khai**. Extension mở tab riêng tới `https://www.tiktok.com/tiktokstudio/content`, mở **Quyền riêng tư**, chỉ chọn **Mọi người**, bỏ chọn **Chỉ mình tôi / Bạn bè**, rồi bấm **Áp dụng**.
 5. Theo dõi tiến độ ở popup hoặc thanh nhỏ trong Studio. Popup có thể đóng trong khi chạy. Giữ tab Studio mở, không đổi tài khoản, bộ lọc hoặc tự thao tác danh sách khi đang chạy.
-6. Bấm **Dừng** bất kỳ lúc nào. Thao tác đã gửi tới TikTok có thể vẫn hoàn tất; kiểm tra bài cuối. **Kiểm tra và chạy lại** mở lượt mới từ đầu, bỏ qua bài đã ở Chỉ mình tôi.
+6. Nếu không mở được menu của một bài, extension áp dụng lại bộ lọc Mọi người và tiếp tục các bài khác, sau đó thử lại bài lỗi. Có khoảng nghỉ tăng dần tối đa 30 giây khi lặp lỗi, không tự báo hoàn tất chỉ vì hết hàng đang tải.
+7. Bấm **Dừng** bất kỳ lúc nào. Thao tác đã gửi tới TikTok có thể vẫn hoàn tất; kiểm tra bài cuối. **Kiểm tra và chạy lại** mở lượt mới từ đầu, xử lý các bài còn trong Mọi người.
 
 Nếu chưa đăng nhập, hoàn tất đăng nhập trong Studio. Nếu lượt xử lý đã báo lỗi hoặc hết thời gian chờ, bấm chạy lại. Đóng/tải lại tab, khởi động lại trình duyệt hoặc tải lại extension sẽ không tự tiếp tục thay đổi bài.
 
 ## Trạng thái và phạm vi
 
-- **Đã chuyển**: giao diện hàng của bài hiện Chỉ mình tôi ổn định ít nhất 3 giây và không còn hộp thoại riêng tư. Đây là xác nhận từ giao diện; extension không gọi API nội bộ để kiểm chứng phía máy chủ.
+- **Đã chuyển**: giao diện hàng hiện Chỉ mình tôi hoặc bài rời bộ lọc Mọi người ổn định ít nhất 3 giây, không đang tải và không còn hộp thoại riêng tư. Đây là xác nhận từ giao diện; extension không gọi API nội bộ. Nếu bài xuất hiện lại sau khi lọc lại, extension thử lại và không cộng trùng ID.
 - **Đã riêng tư**: bài đã có mức riêng tư đích lúc kiểm tra.
-- **Hoàn tất**: đã xử lý các hàng nhận diện được và thấy dấu hiệu cuối danh sách (nút trang sau bị vô hiệu hóa hoặc thông báo hết danh sách).
-- **Chưa xác nhận hết**: đã cuộn và xử lý phần tải được, nhưng không thấy dấu hiệu đủ chắc chắn về cuối danh sách. Không được hiểu là toàn bộ tài khoản đã ẩn xong.
-- **Cần kiểm tra**: giao diện khác phiên bản được nhận diện, không tìm được nút, có CAPTCHA/lỗi hoặc không xác minh được lưu. Mở Studio để xem bài cuối, hoàn tất xác minh nếu có, rồi chạy lại.
+- **Hoàn tất**: đã áp dụng lại Mọi người, xác nhận chỉ checkbox Mọi người được chọn, trở về trang đầu và thấy thông báo danh sách trống ổn định. Nút trang sau bị vô hiệu hóa hoặc hết ID mới chưa đủ để kết luận hoàn tất.
+- **Đang xử lý / tự thử lại**: còn bài công khai hoặc lỗi menu/lưu tạm thời; tự lọc lại và xử lý tiếp. Bài lỗi được thử lại sau các bài khác để không chặn cả danh sách. Bấm Dừng nếu không muốn tiếp tục chờ.
+- **Cần kiểm tra**: không nhận diện/áp dụng chắc chắn bộ lọc, ID bài không rõ, có CAPTCHA, mất đăng nhập hoặc TikTok báo lỗi/giới hạn thao tác. Các trường hợp này dừng, không coi là hoàn tất và không cố vượt CAPTCHA/giới hạn.
 
-Hỗ trợ nhãn giao diện Việt/Anh: Everyone/Public/Mọi người/Công khai; Friends/Followers/Bạn bè/Người theo dõi; Only me/Only you/Private/Chỉ mình tôi/Chỉ bạn/Riêng tư. Bài phải có ID trong liên kết video/ảnh hoặc thuộc tính hàng. Xử lý các bài đã đăng mà Studio cung cấp nút quyền riêng tư; không sửa bản nháp, bài lên lịch, quyền riêng tư tài khoản, bình luận hoặc nội dung bài. TikTok có thể không cho sửa một số bài; extension dừng tại bài đó.
+Hỗ trợ nhãn giao diện Việt/Anh: Everyone/Public/Mọi người/Công khai; Friends/Followers/Bạn bè/Người theo dõi; Only me/Only you/Private/Chỉ mình tôi/Chỉ bạn/Riêng tư. Bài phải có ID trong liên kết video/ảnh hoặc thuộc tính hàng. Từ v1.0.2 chỉ xử lý bài trong bộ lọc Mọi người; bài Bạn bè và Chỉ mình tôi không nằm trong hàng chờ. Không sửa bản nháp, bài lên lịch, quyền riêng tư tài khoản, bình luận hoặc nội dung bài.
 
-Luồng duyệt hỗ trợ bảng phân trang và danh sách tải thêm/cuộn ảo có ID ổn định. Extension mở trang nội dung mới và từ chối các bộ lọc đang hoạt động mà nó nhận diện được. Kiểm tra Studio không còn bộ lọc ngày/loại bài/quyền riêng tư được lưu trước đó; không thể tự chứng minh các bộ lọc không có nhãn ngữ nghĩa. Không đổi tài khoản trong lượt chạy.
+Luồng duyệt hỗ trợ bảng phân trang và danh sách tải thêm/cuộn ảo có ID ổn định; đọc lại hàng sau mỗi thay đổi. Bộ lọc có ba checkbox và nút Áp dụng như ảnh người dùng cung cấp. Khi cần làm mới một lựa chọn Mọi người đã có, extension tạm chọn cả ba mức, Áp dụng, rồi chỉ chọn Mọi người và Áp dụng lại; đây là lọc danh sách, không phải thay đổi quyền của các bài khác. Kiểm tra Studio không còn bộ lọc ngày/loại bài hay từ khóa tìm kiếm; không thể tự chứng minh các bộ lọc không có nhãn ngữ nghĩa. Không đổi tài khoản trong lượt chạy.
 
 ## Mức kiểm chứng của bản này
 
-Đã có kiểm thử tự động trên DOM giả lập và Chrome API giả lập cho nhận diện bài, menu quyền riêng tư, hộp thoại lưu, dừng, lỗi, phân trang, chống lặp và phiên điều phối. **Chưa kiểm thử end-to-end trên TikTok Studio đăng nhập thật**, do công cụ khảo sát không kết nối được browser host. TikTok thay đổi DOM có thể khiến bản này dừng với thông báo không nhận diện giao diện; cần điều chỉnh `adapter.js` theo giao diện thực. Không có cam kết tương thích với mọi tài khoản/biến thể Studio. Không có bài thật nào bị thay đổi trong quá trình kiểm thử.
+Đã có kiểm thử tự động trên DOM giả lập và Chrome API giả lập, bao gồm lỗi menu sau 5 bài, checkbox của bộ lọc theo ảnh, bài biến mất khỏi danh sách, bài xuất hiện lại, danh sách co lại qua phân trang, trở về trang đầu trống, tự thử lại và nút Dừng. **Chưa kiểm thử end-to-end trên TikTok Studio đăng nhập thật**. TikTok thay đổi DOM có thể khiến bản này dừng với thông báo không nhận diện giao diện; cần điều chỉnh `adapter.js` theo giao diện thực. Không có bài thật nào bị thay đổi trong quá trình kiểm thử.
 
 ## Quyền và dữ liệu
 
 Content script chỉ chạy trên `https://www.tiktok.com/*` để nhận biết điều hướng SPA từ đăng nhập vào Studio; chỉ sửa bài tại `/tiktokstudio/content` khi người dùng bấm bắt đầu. Không có quyền cookies/debugger và không đọc mật khẩu. Không gửi dữ liệu tới server, không analytics, không tải mã hoặc font từ xa.
 
-`storage.local` lưu khoảng nghỉ. `storage.session` lưu tiến độ, ID bài hiện tại và tối đa 80 dòng nhật ký; xóa khi trình duyệt khởi động lại hoặc extension tải lại. Không lưu caption/nội dung bài hay thông tin đăng nhập. `alarms` phát hiện phiên mất phản hồi. Bấm bắt đầu là yêu cầu đổi toàn bộ bài đã đăng nhận diện được sang Chỉ mình tôi.
+`storage.local` lưu khoảng nghỉ. `storage.session` lưu tiến độ, ID bài hiện tại và tối đa 80 dòng nhật ký; xóa khi trình duyệt khởi động lại hoặc extension tải lại. Không lưu caption/nội dung bài hay thông tin đăng nhập. `alarms` phát hiện phiên mất phản hồi. Bấm bắt đầu là yêu cầu chuyển các bài công khai nhận diện được sang Chỉ mình tôi.
 
 ## Phát triển và đóng gói
 

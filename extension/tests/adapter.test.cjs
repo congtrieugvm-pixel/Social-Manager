@@ -1,6 +1,6 @@
 const { test } = require("node:test");
 const assert = require("node:assert/strict");
-const { ids, row, table, dom, adapter, wire } = require("./helpers.cjs");
+const { ids, row, table, dom, adapter, wire, studio } = require("./helpers.cjs");
 
 test("English and Vietnamese privacy labels are normalized without treating a caption as a control", async () => {
   const d = dom(table(row(ids[0], "Công khai", "Only me") + row(ids[1], "Chỉ mình tôi")));
@@ -98,22 +98,22 @@ test("CAPTCHA, search filters and missing privacy controls stop", async () => {
     assert.throws(() => a.assert(), { code: "captcha" });
   } finally { d.window.close(); }
 });
-test("engine integrates DOM menu, skips existing private posts and finishes at confirmed end", async () => {
-  const d = dom(table(row(ids[0]) + row(ids[1], "Only me")) + "<button aria-label='Next page' disabled>→</button>");
+test("engine integrates the public filter and only finishes at a rechecked empty list", async () => {
+  const d = dom("");
   try {
-    wire(d.window); const reports = [];
+    studio(d.window, [{ id: ids[0] }, { id: ids[1], privacy: "private" }]); const reports = [];
     await d.window.TSP.run(adapter(d.window), async (r) => reports.push(r), async () => {});
     const last = reports.at(-1);
-    assert.equal(last.status, "completed"); assert.equal(last.changed, 1); assert.equal(last.skipped, 1); assert.equal(last.scanned, 2);
+    assert.equal(last.status, "completed"); assert.equal(last.changed, 1); assert.equal(last.skipped, 0); assert.equal(last.scanned, 1);
   } finally { d.window.close(); }
 });
-test("engine does not count a failed save or continue to following posts", async () => {
-  const d = dom(table(row(ids[0]) + row(ids[1])));
+test("engine does not count a CAPTCHA-interrupted save or continue to following posts", async () => {
+  const d = dom("");
   try {
-    wire(d.window, { noSave: true }); const reports = [];
+    const ui = studio(d.window, [{ id: ids[0] }, { id: ids[1] }], { captchaOnClick: true }); const reports = [];
     await d.window.TSP.run(adapter(d.window), async (r) => reports.push(r), async () => {});
     assert.equal(reports.at(-1).status, "error"); assert.equal(reports.at(-1).changed, 0);
-    assert.equal(d.window.document.querySelectorAll(".privacy")[1].textContent, "Everyone");
+    assert.equal(reports.at(-1).errorCode, "captcha"); assert.equal(ui.posts.get(ids[1]), "public");
   } finally { d.window.close(); }
 });
 test("mixed list containing a privacy row without a stable ID is not silently skipped", () => {
@@ -136,11 +136,12 @@ test("privacy filter outside rows rejects partial-account scope", async () => {
   try { await assert.rejects(adapter(d.window).prepare(), { code: "filtered" }); }
   finally { d.window.close(); }
 });
-test("engine reports review instead of success when end cannot be confirmed", async () => {
-  const d = dom(table(row(ids[0], "Only me")));
+test("engine reports an error instead of success when an empty public list cannot be confirmed", async () => {
+  const d = dom("");
   try {
+    studio(d.window, [], { noEmptyMarker: true });
     const reports = []; await d.window.TSP.run(adapter(d.window), async (r) => reports.push(r), async () => {});
-    assert.equal(reports.at(-1).status, "review"); assert.equal(reports.at(-1).skipped, 1);
+    assert.equal(reports.at(-1).status, "error"); assert.equal(reports.at(-1).errorCode, "filter_state");
   } finally { d.window.close(); }
 });
 test("infinite scroll new rows are processed before end checks", async () => {

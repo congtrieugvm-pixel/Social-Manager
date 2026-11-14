@@ -30,12 +30,13 @@ export default async function UtilitiesPage() {
           <span className={styles.category}>TIỆN ÍCH TRÌNH DUYỆT</span>
           <h2 id="extension-title">{release.name}</h2>
           <p className={styles.description}>
-            Chuyển các bài đăng TikTok sang <strong>Chỉ mình tôi</strong>.
-            Tự mở Studio và xử lý lần lượt, ngay trong trình duyệt của bạn.
+            Chuyển các bài đăng công khai sang <strong>Chỉ mình tôi</strong>.
+            Tự mở Studio, lọc Mọi người và tiếp tục đến khi không còn bài công khai.
           </p>
           <ul className={styles.features}>
             <li><Check size={16} aria-hidden="true" />Tự mở Studio → Bài đăng</li>
-            <li><Check size={16} aria-hidden="true" />Bỏ qua bài đã riêng tư, duyệt qua các trang</li>
+            <li><Check size={16} aria-hidden="true" />Tự chọn Quyền riêng tư → Mọi người → Áp dụng</li>
+            <li><Check size={16} aria-hidden="true" />Gặp lỗi menu: lọc lại và tiếp tục các bài còn lại</li>
             <li><Check size={16} aria-hidden="true" />Có tiến độ, nhật ký và nút dừng</li>
             <li><Check size={16} aria-hidden="true" />Dùng phiên TikTok đang đăng nhập</li>
           </ul>
@@ -61,7 +62,7 @@ export default async function UtilitiesPage() {
             <li><strong>Tải và giải nén</strong><p>Giải nén ZIP vào một thư mục cố định trên máy tính.</p></li>
             <li><strong>Mở trang tiện ích</strong><p>Nhập <code>chrome://extensions</code> hoặc <code>edge://extensions</code> vào thanh địa chỉ.</p></li>
             <li><strong>Tải thư mục đã giải nén</strong><p>Bật <b>Developer mode</b>, chọn <b>Load unpacked</b> rồi chọn thư mục chứa <code>manifest.json</code>.</p></li>
-            <li><strong>Đăng nhập TikTok và bắt đầu</strong><p>Mở tiện ích, bấm <b>Ẩn tất cả bài đăng</b>. Giữ tab Studio mở trong lúc chạy.</p></li>
+            <li><strong>Đăng nhập TikTok và bắt đầu</strong><p>Mở tiện ích, bấm <b>Ẩn tất cả bài công khai</b>. Giữ tab Studio mở đến khi bộ lọc Mọi người không còn bài.</p></li>
           </ol>
           <div className={styles.update}>
             <RefreshCw size={19} aria-hidden="true" />

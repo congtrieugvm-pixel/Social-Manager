@@ -18,3 +18,9 @@ existing Social Manager website automatically, with a download in **Tiện ích*
   download is automatic; users replace their extracted files and click Reload.
 - Document the actual test coverage. The initial implementation was tested with
   DOM/Chrome API fixtures, not an authenticated real TikTok Studio account.
+- Version 1.0.2 uses the **Everyone** privacy filter as the work queue. Recover
+  missing post-menu options by reapplying that filter and keep retrying with a
+  delay, honoring Stop. Only report completion after reapplying Everyone,
+  returning to page one, and seeing a stable explicit empty state. A disabled
+  Next button or no new row IDs is insufficient. Never confuse filter checkboxes
+  with per-post privacy options, and re-read rows after every mutation.

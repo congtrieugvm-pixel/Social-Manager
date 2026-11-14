@@ -46,4 +46,64 @@ function wire(w, options = {}) {
   }
   return () => clickedDelete;
 }
-module.exports = { root, source, ids, row, table, dom, adapter, wire, JSDOM };
+// Mirrors the user's Privacy filter: three checkboxes and Clear / Apply.
+// Applied filters re-render rows; changed posts can leave the public list immediately.
+function studio(w, initialPosts, options = {}) {
+  const posts = new Map(initialPosts.map((post) => [post.id, post.privacy || "public"]));
+  const labels = { public: "Mọi người", private: "Chỉ mình tôi", friends: "Bạn bè" };
+  const applied = options.initialFilter || [];
+  let selected = [...applied], page = options.startPage || 0, failed = 0;
+  const applies = [], edits = [];
+  w.document.body.innerHTML = "<div id='toolbar'><button id='privacy-filter'>Quyền riêng tư</button></div><main id='post-list'></main>";
+  const filterButton = w.document.getElementById("privacy-filter");
+  function render() {
+    const filtered = [...posts].filter(([, value]) => !selected.length || selected.includes(value));
+    const limit = options.pageSize || 20;
+    const shown = filtered.slice(page * limit, (page + 1) * limit);
+    const list = w.document.getElementById("post-list");
+    list.innerHTML = table(shown.map(([id, value]) => row(id, labels[value])).join("")) +
+      (!shown.length && !options.noEmptyMarker ? "<div class='empty-state'>Không có bài đăng nào</div>" : "") +
+      `<nav aria-label='Pagination'><button aria-label='Previous page' ${page === 0 ? "disabled" : ""}>←</button><button aria-label='Page 1' ${page === 0 ? "aria-current='page'" : ""}>1</button><button aria-label='Next page' ${(page + 1) * limit >= filtered.length ? "disabled" : ""}>→</button></nav>`;
+    list.querySelector("[aria-label='Previous page']").onclick = () => { page--; render(); };
+    list.querySelector("[aria-label='Page 1']").onclick = () => { page = 0; render(); };
+    list.querySelector("[aria-label='Next page']").onclick = () => { page++; render(); };
+    for (const button of list.querySelectorAll(".privacy")) {
+      const id = button.closest("tr").querySelector("a").href.match(/\d+$/)[0];
+      button.onclick = () => {
+        if (id === options.failId && failed++ < (options.failTimes || 1)) return;
+        const menu = w.document.createElement("div"); menu.dataset.postMenu = "true"; menu.setAttribute("role", "listbox");
+        const option = w.document.createElement("div"); option.setAttribute("role", "option"); option.textContent = "Chỉ mình tôi";
+        option.onclick = () => {
+          menu.remove(); edits.push(id);
+          if (options.captchaOnClick) { const cap = w.document.createElement("div"); cap.id = "captcha-test"; w.document.body.append(cap); return; }
+          if (options.noSave) return;
+          posts.set(id, "private"); render();
+        };
+        menu.append(option); w.document.body.append(menu);
+      };
+    }
+  }
+  function close() { w.document.getElementById("filter-panel")?.remove(); }
+  filterButton.onclick = () => {
+    if (w.document.getElementById("filter-panel")) { close(); return; }
+    w.document.querySelectorAll("[data-post-menu]").forEach((el) => el.remove());
+    const panel = w.document.createElement("div"); panel.id = "filter-panel"; panel.setAttribute("role", "dialog");
+    panel.innerHTML = Object.entries(labels).map(([key, label]) => options.roleCheckboxes
+      ? `<div role='checkbox' aria-checked='${selected.includes(key)}' data-value='${key}'>${label}</div>`
+      : `<label><input type='checkbox' value='${key}' ${selected.includes(key) ? "checked" : ""}><span>${label}</span></label>`).join("") + "<div><button>Xóa</button><button>Áp dụng</button></div>";
+    if (options.roleCheckboxes) for (const checkbox of panel.querySelectorAll("[role=checkbox]")) checkbox.onclick = () => checkbox.setAttribute("aria-checked", String(checkbox.getAttribute("aria-checked") !== "true"));
+    panel.querySelectorAll("button")[0].onclick = () => {
+      panel.querySelectorAll("input").forEach((el) => el.checked = false);
+      panel.querySelectorAll("[role=checkbox]").forEach((el) => el.setAttribute("aria-checked", "false"));
+    };
+    panel.querySelectorAll("button")[1].onclick = () => {
+      selected = options.roleCheckboxes ? [...panel.querySelectorAll('[aria-checked="true"]')].map((el) => el.dataset.value) : [...panel.querySelectorAll("input:checked")].map((el) => el.value);
+      applies.push([...selected]); close(); if (!options.stickyPage) page = 0; render();
+    };
+    w.document.body.append(panel);
+  };
+  w.document.addEventListener("keydown", (event) => { if (event.key === "Escape") { close(); w.document.querySelectorAll("[data-post-menu]").forEach((el) => el.remove()); } });
+  render();
+  return { posts, applies, edits, get selected() { return selected; }, get page() { return page; }, render };
+}
+module.exports = { root, source, ids, row, table, dom, adapter, wire, studio, JSDOM };

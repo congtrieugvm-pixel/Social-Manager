@@ -6,7 +6,7 @@ test("popup shows persisted progress and renders log text without executing HTML
   try {
     const w = d.window; let listener;
     const job = { status: "running", changed: 6, skipped: 4, pages: 2, message: "Đang chạy", logs: [{ at: 0, message: "<img src=x onerror=alert(1)>" }] };
-    w.chrome = { runtime: { getManifest: () => ({ version: "1.0.1" }), sendMessage: async () => ({ ok: true, job, settings: { delayMs: 2000 } }) }, storage: { onChanged: { addListener(fn) { listener = fn; } } } };
+    w.chrome = { runtime: { getManifest: () => JSON.parse(source("manifest.json")), sendMessage: async () => ({ ok: true, job, settings: { delayMs: 2000 } }) }, storage: { onChanged: { addListener(fn) { listener = fn; } } } };
     w.eval(source("popup.js")); await new Promise((r) => setTimeout(r, 10));
     assert.equal(w.document.getElementById("changed").textContent, "6");
     assert.equal(w.document.getElementById("start").disabled, true);
