@@ -2,13 +2,14 @@ const { test } = require("node:test");
 const assert = require("node:assert/strict");
 const { ids, dom, adapter, studio } = require("./helpers.cjs");
 
-test("startup processes posts without opening or requiring the privacy filter", async () => {
+test("startup filters Everyone before editing and leaves Friends untouched", async () => {
   const d = dom("");
   try {
     const ui = studio(d.window, [{ id: ids[0] }, { id: ids[1], privacy: "friends" }], { customCheckboxes: true });
     const a = adapter(d.window); await a.prepare();
-    assert.equal(ui.applies.length, 0); assert.equal(d.window.document.getElementById("filter-panel"), null);
-    assert.equal(await a.makePrivate(ids[0]), "changed"); assert.equal(await a.makePrivate(ids[1]), "changed");
+    assert(ui.applies.length > 0); assert.deepEqual(ui.selected, ["public"]);
+    assert.equal(d.window.document.getElementById("filter-panel"), null);
+    assert.equal(await a.makePrivate(ids[0]), "changed"); assert.equal(ui.posts.get(ids[1]), "friends");
   } finally { d.window.close(); }
 });
 
@@ -22,11 +23,11 @@ test("unlabelled custom checkboxes and div Apply use visible labels and verify a
   } finally { d.window.close(); }
 });
 
-test("scrolls and converts lazy posts before first filter, then drains leftovers until Everyone is empty", async () => {
+test("applies Everyone first, scrolls lazy posts, then refilters and drains late leftovers", async () => {
   const d = dom("");
   try {
     const ui = studio(d.window, [{ id: ids[0] }], { customCheckboxes: true }); const events = [];
-    let position = 0, appended = false, opened = false, editsBeforeFilter;
+    let position = 0, appended = false, opened = false, leftover = false, editsBeforeFilter;
     const scroll = d.window.document.documentElement;
     Object.defineProperty(scroll, "scrollHeight", { configurable: true, value: 2000 });
     Object.defineProperty(scroll, "scrollTop", { configurable: true, get: () => position, set: (value) => {
@@ -34,12 +35,13 @@ test("scrolls and converts lazy posts before first filter, then drains leftovers
       if (position >= 1000 && !appended) { appended = true; ui.posts.set(ids[1], "public"); ui.render(); }
     } });
     d.window.document.getElementById("privacy-filter").addEventListener("click", () => {
-      if (!opened) { opened = true; events.push("filter"); editsBeforeFilter = [...ui.edits]; ui.posts.set(ids[2], "public"); ui.render(); }
+      if (!opened) { opened = true; events.push("filter"); editsBeforeFilter = [...ui.edits]; }
+      if (position === 1200 && ui.edits.length === 2 && !leftover) { leftover = true; ui.posts.set(ids[2], "public"); ui.render(); }
     });
     const reports = []; await d.window.TSP.run(adapter(d.window), async (r) => reports.push(r), async () => {});
     assert.equal(reports.at(-1).status, "completed", JSON.stringify(reports.at(-1)));
-    assert.equal(reports.at(-1).changed, 3); assert(events.indexOf("scroll:1200") < events.indexOf("filter"));
-    assert.deepEqual(editsBeforeFilter, ids.slice(0, 2));
+    assert.equal(reports.at(-1).changed, 3); assert(events.indexOf("scroll:1200") > events.indexOf("filter"));
+    assert.deepEqual(editsBeforeFilter, []); assert(leftover);
     assert.deepEqual(ui.selected, ["public"]); assert.equal([...ui.posts.values()].filter((v) => v === "public").length, 0);
   } finally { d.window.close(); }
 });

@@ -56,5 +56,6 @@ coverage/
 
 # Extension releases are generated from source by the app prebuild hook.
 /dist/tiktok-studio-private-*.zip
+/dist/tests/
 /app/public/downloads/extensions/
 /app/src/generated/extension-release.json

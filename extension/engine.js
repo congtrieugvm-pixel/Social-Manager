@@ -1,7 +1,7 @@
 (() => {
   "use strict";
   const { Halt } = globalThis.TSP;
-  const RECOVERABLE = new Set(["privacy_menu", "missing_row", "verification", "unavailable", "unknown_privacy", "public_scope", "pagination_loop", "unsupported_ui", "scroll_stuck"]);
+  const RECOVERABLE = new Set(["privacy_menu", "missing_row", "verification", "unavailable", "unknown_privacy", "unknown_option", "public_scope", "pagination_loop", "unsupported_ui", "scroll_stuck", "ambiguous_dialog", "dialog_blocked", "ambiguous_option"]);
   /** The adapter performs UI operations; engine never guesses a successful result. */
   async function run(adapter, report, check) {
     const stats = { changed: 0, skipped: 0, scanned: 0, pages: 1 };
@@ -15,15 +15,16 @@
         await check();
         try { return await action(); }
         catch (error) {
-          if (!["filter_control", "filter_state", "unavailable"].includes(error.code)) throw error;
+          if (!["filter_control", "filter_state", "unavailable", "dialog_blocked", "ambiguous_dialog"].includes(error.code)) throw error;
           await emit(`${error.message} Đang chờ rồi mở lại Quyền riêng tư → Mọi người; có thể bấm Dừng.`, { errorCode: error.code });
           await adapter.backoff(++failures);
         }
       }
     };
     try {
-      await adapter.prepare();
-      await emit("Đang cuộn danh sách và chuyển bài sang Chỉ mình tôi. Cuối lượt sẽ lọc Mọi người để kiểm tra bài còn sót.");
+      await emit("Đang chọn Quyền riêng tư → Mọi người → Áp dụng trước khi xử lý bài.");
+      await refreshFilter(() => adapter.prepare());
+      await emit("Đã tải danh sách Mọi người. Đang cuộn và chuyển bài sang Chỉ mình tôi.");
       while (true) {
         await check();
         // Re-read after EVERY mutation. Filtering can remove a row, refill the
@@ -38,11 +39,11 @@
             if (!["changed", "skipped"].includes(outcome)) throw new Halt("verification", "Chưa xác nhận được kết quả bài vừa xử lý.");
           } catch (error) {
             if (!RECOVERABLE.has(error.code)) throw error;
-            await emit(`${error.message} Đang chọn lại bộ lọc Mọi người để tiếp tục.`, { errorCode: error.code });
-            await adapter.backoff(++failures);
+            await emit(`${error.message} Tạm bỏ qua bài này, đang cuộn xuống làm bài khác; sẽ kiểm tra lại cuối lượt.`, { errorCode: error.code });
             await check();
-            await refreshFilter(() => adapter.recover());
-            // Try other posts in this pass before revisiting this failed ID.
+            await adapter.skipProblem(row.id);
+            // Keep the failed ID visited until the END of this scroll/page pass.
+            // Refiltering here can reopen the same broken dialog forever.
             continue;
           }
           if (!counted.has(row.id)) {

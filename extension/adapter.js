@@ -153,11 +153,9 @@
     }
     async prepare() {
       if (this.filtered()) throw new Halt("filtered", "Danh sách đang tìm kiếm hoặc có bộ lọc khác. Xóa bộ lọc đó để kiểm tra toàn bộ bài công khai.");
-      // Start with the post list. A filter's markup must never block the first pass.
+      // Verify the public queue before the first post mutation.
       await this.wait(() => this.rows().length || this.empty() || this.filterTrigger(), "Đang chờ danh sách Bài đăng trong Studio.", 45000);
-      await this.settledList(false);
-      await this.firstPage(false);
-      this.pageSignatures.add(this.signature());
+      await this.selectEveryone(true);
     }
     filterTrigger() {
       const choices = named(document, /^(privacy|quyen rieng tu)(?:\s*\(?\d+\)?)?$/).filter((el) => !el.closest(`${ROW},thead,[role='columnheader']`));
@@ -354,18 +352,42 @@
     }
     async dismissRowMenu() {
       this.assert();
-      const dialogs = this.privacyDialog();
-      if (dialogs.length) {
-        const cancels = [...dialogs[0].querySelectorAll("button,[role='button']")].filter((el) => visible(el) && /^(cancel|huy)$/.test(n(exact(el))));
-        if (cancels.length !== 1) throw new Halt("ambiguous_dialog", "Có hộp thoại chưa đóng. Không thể khôi phục bộ lọc tự động.");
-        await this.click(cancels[0]);
-        await this.wait(() => !this.privacyDialog().length, "Hộp thoại chưa đóng.", this.settings.timeoutMs, "filter_state");
-      }
+      // Escape works for menus and dialogs with no textual Cancel button.
+      // Do this BEFORE looking for buttons; the old order threw before Escape.
       await this.guard();
       const target = document.activeElement || document.body;
       target.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", code: "Escape", bubbles: true }));
       target.dispatchEvent(new KeyboardEvent("keyup", { key: "Escape", code: "Escape", bubbles: true }));
-      await this.sleep(150);
+      await this.sleep(200);
+      for (let attempt = 0; attempt < 3; attempt++) {
+        const dialogs = this.privacyDialog();
+        if (!dialogs.length) return;
+        const dialog = dialogs.at(-1);
+        const cancels = named(dialog, /^(cancel|huy|huy bo)$/).filter((el) => !disabled(el));
+        const closes = [...dialog.querySelectorAll("button,[role='button'],[aria-label],[title],[data-e2e*='close' i],[class*='close' i]")]
+          .filter((el) => visible(el) && !disabled(el) && (
+            /^(close(?: dialog| modal)?|dismiss|dong(?: hop thoai)?|[×✕✖])$/.test(n(exact(el))) ||
+            /^(close(?: dialog| modal)?|dismiss|dong(?: hop thoai)?)$/.test(n(el.getAttribute("title"))) ||
+            /(?:^|[\s_-])(?:modal-)?close(?:[\s_-]|$)/i.test(`${el.getAttribute("class") || ""} ${el.getAttribute("data-e2e") || ""}`)))
+          .map((el) => el.closest("button,[role='button']") || el)
+          .filter((el) => dialog.contains(el));
+        const unique = [...new Set(closes)].filter((el, _, all) => !all.some((other) => other !== el && other.contains(el)));
+        const close = cancels.length === 1 ? cancels[0] : unique.length === 1 ? unique[0] : null;
+        if (!close) break;
+        await this.click(close);
+        await this.sleep(250);
+        if (visible(dialog) && this.privacyDialog().includes(dialog)) break;
+      }
+      if (this.privacyDialog().length) throw new Halt("dialog_blocked", "Hộp thoại chưa đóng được bằng Escape hoặc nút đóng.");
+    }
+    async skipProblem() {
+      try { await this.dismissRowMenu(); }
+      catch (error) { if (!["dialog_blocked", "unavailable"].includes(error.code)) throw error; }
+      await this.guard(); this.assert();
+      const scroller = this.scroller();
+      scroller.scrollTop = Math.min(Math.max(0, scroller.scrollHeight - scroller.clientHeight),
+        scroller.scrollTop + Math.max(180, scroller.clientHeight * 0.7));
+      await this.sleep(Math.max(600, this.settings.delayMs));
     }
     async recover() { await this.selectEveryone(true); }
     async confirmEmpty() { return (await this.selectEveryone(true)) === "empty"; }
@@ -378,7 +400,7 @@
     }
     privacyDialog() {
       const filter = this.filterPanel();
-      const dialogs = [...document.querySelectorAll("[role='dialog'],[aria-modal='true'],[class*='ModalContent'],[class*='modal-content']")]
+      const dialogs = [...document.querySelectorAll("[role='dialog'],dialog[open],[aria-modal='true'],[class*='ModalContent'],[class*='modal-content']")]
         .filter((el) => visible(el) && !filter?.contains(el) && !el.contains(filter) && /privacy|who can (?:watch|view|see)|quyen rieng tu|ai co the xem|only (?:me|you)|chi (?:minh toi|ban)/.test(n(el.innerText || el.textContent)));
       return dialogs.filter((el) => !dialogs.some((other) => other !== el && el.contains(other)));
     }
@@ -388,7 +410,7 @@
       if (!dialogs.length) return false;
       const dialog = dialogs[0];
       if (!/only (?:me|you)|chi (?:minh toi|ban)|rieng tu/.test(n(dialog.innerText || dialog.textContent))) return false;
-      const buttons = [...dialog.querySelectorAll("button,[role='button']")].filter((el) => visible(el) && /^(save|confirm|apply|update|luu|xac nhan|ap dung|cap nhat)$/.test(n(exact(el))));
+      const buttons = named(dialog, /^(save|confirm|apply|update|luu|xac nhan|ap dung|cap nhat)$/);
       if (buttons.length !== 1 || disabled(buttons[0])) return false;
       await this.click(buttons[0]);
       return true;
@@ -440,7 +462,7 @@
         } else stableSince = 0;
         await this.sleep(120);
       }
-      throw new Halt("verification", "Chưa xác nhận bài đã lưu thành Chỉ mình tôi. Dừng tại bài này; kiểm tra Studio trước khi chạy lại.");
+      throw new Halt("verification", "Chưa xác nhận bài đã lưu thành Chỉ mình tôi.");
     }
     async rest(outcome) { await this.sleep(outcome === "changed" ? this.settings.delayMs : 80); }
     scroller() {
@@ -494,6 +516,7 @@
       const next = this.nextButton();
       if (next && disabled(next)) return "end";
       if (next) {
+        await this.dismissRowMenu();
         this.leftFirstPage = true;
         const previous = this.signature();
         await this.click(next);

@@ -2,7 +2,7 @@ const { test } = require("node:test");
 const assert = require("node:assert/strict");
 const { dom } = require("./helpers.cjs");
 
-test("missing Only me after five posts reapplies Everyone and continues until confirmed empty", async () => {
+test("missing Only me after five posts defers the failure and continues until confirmed empty", async () => {
   const d = dom("");
   try {
     const remaining = Array.from({ length: 7 }, (_, i) => String(7000000000000000000n + BigInt(i)));
@@ -15,7 +15,7 @@ test("missing Only me after five posts reapplies Everyone and continues until co
         remaining.splice(remaining.indexOf(id), 1); return "changed";
       },
       rest: async () => {}, advance: async () => "end",
-      recover: async () => { recoveries++; },
+      skipProblem: async () => { recoveries++; },
       confirmEmpty: async () => { confirmations++; return remaining.length === 0; },
       backoff: async () => {},
     };
@@ -50,10 +50,10 @@ test("repeated menu failures remain retryable with backoff and stop is always ho
       prepare: async () => {}, rows: () => [{ id: "7000000000000000009" }],
       makePrivate: async () => { throw new d.window.TSP.Halt("privacy_menu", "Menu chưa mở"); },
       advance: async () => "end", confirmEmpty: async () => false,
-      recover: async () => { recoveries++; }, backoff: async (attempt) => waits.push(attempt),
+      skipProblem: async () => { recoveries++; }, backoff: async (attempt) => waits.push(attempt),
     };
     await d.window.TSP.run(a, async (r) => reports.push(r), async () => { if (recoveries >= 4) throw new d.window.TSP.Halt("stopped", "Dừng"); });
-    assert.equal(recoveries, 4); assert(waits.length >= 4);
+    assert.equal(recoveries, 4); assert(waits.length >= 3);
     assert.equal(reports.at(-1).status, "stopped"); assert.equal(reports.at(-1).changed, 0);
     assert(!reports.some((r) => r.status === "completed"));
   } finally { d.window.close(); }

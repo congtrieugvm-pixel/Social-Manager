@@ -62,7 +62,7 @@ test("vanishing rows without an explicit empty state cannot report completion", 
   try { studio(d.window, [], { noEmptyMarker: true }); await assert.rejects(adapter(d.window).confirmEmpty(), { code: "filter_state" }); }
   finally { d.window.close(); }
 });
-test("real DOM recovery after five successful posts drains Everyone and does not edit Friends", async () => {
+test("DOM fixture recovery after five successful posts drains Everyone and does not edit Friends", async () => {
   const d = dom("");
   try {
     const publicIds = Array.from({ length: 8 }, (_, i) => String(7100000000000000000n + BigInt(i)));
@@ -71,6 +71,6 @@ test("real DOM recovery after five successful posts drains Everyone and does not
     assert.equal(reports.at(-1).status, "completed"); assert.equal(reports.at(-1).changed, 8);
     assert(ui.applies.length >= 4); assert.equal([...ui.posts.values()].filter((value) => value === "public").length, 0);
     assert.equal(ui.posts.get(ids[0]), "friends"); assert.equal(new Set(ui.edits).size, 8);
-    assert(reports.some((report) => report.message.includes("chọn lại bộ lọc")));
+    assert(reports.some((report) => report.message.includes("Tạm bỏ qua bài này")));
   } finally { d.window.close(); }
 });

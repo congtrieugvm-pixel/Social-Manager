@@ -104,7 +104,7 @@ test("engine integrates the public filter and only finishes at a rechecked empty
     studio(d.window, [{ id: ids[0] }, { id: ids[1], privacy: "private" }]); const reports = [];
     await d.window.TSP.run(adapter(d.window), async (r) => reports.push(r), async () => {});
     const last = reports.at(-1);
-    assert.equal(last.status, "completed"); assert.equal(last.changed, 1); assert.equal(last.skipped, 1); assert.equal(last.scanned, 2);
+    assert.equal(last.status, "completed"); assert.equal(last.changed, 1); assert.equal(last.skipped, 0); assert.equal(last.scanned, 1);
   } finally { d.window.close(); }
 });
 test("engine does not count a CAPTCHA-interrupted save or continue to following posts", async () => {
@@ -136,12 +136,15 @@ test("privacy filter outside rows rejects partial-account scope", async () => {
   try { await assert.rejects(adapter(d.window).prepare(), { code: "filtered" }); }
   finally { d.window.close(); }
 });
-test("engine reports an error instead of success when an empty public list cannot be confirmed", async () => {
+test("unknown empty state retries until stopped and never reports completion", async () => {
   const d = dom("");
   try {
     studio(d.window, [], { noEmptyMarker: true });
-    const reports = []; await d.window.TSP.run(adapter(d.window), async (r) => reports.push(r), async () => {});
-    assert.equal(reports.at(-1).status, "error"); assert.equal(reports.at(-1).errorCode, "filter_state");
+    const reports = []; const a = adapter(d.window); let retries = 0;
+    a.backoff = async () => { retries++; };
+    await d.window.TSP.run(a, async (r) => reports.push(r), async () => { if (retries === 2) throw new d.window.TSP.Halt("stopped", "Dừng"); });
+    assert.equal(reports.at(-1).status, "stopped"); assert(reports.some((r) => r.errorCode === "filter_state"));
+    assert(!reports.some((r) => r.status === "completed"));
   } finally { d.window.close(); }
 });
 test("infinite scroll new rows are processed before end checks", async () => {

@@ -70,7 +70,15 @@ function studio(w, initialPosts, options = {}) {
     for (const button of list.querySelectorAll(".privacy")) {
       const id = button.closest("tr").querySelector("a").href.match(/\d+$/)[0];
       button.onclick = () => {
-        if (id === options.failId && failed++ < (options.failTimes || 1)) return;
+        if (id === options.failId && failed++ < (options.failTimes || 1)) {
+          if (options.failDialog) {
+            const dialog = w.document.createElement("div"); dialog.setAttribute("role", "dialog"); dialog.className = "fixture-dialog";
+            dialog.innerHTML = '<p>Quyền riêng tư chưa tải</p><div role="button" aria-label="Close dialog"><svg width="20" height="20"><path d="M2 2L18 18M18 2L2 18" stroke="black" /></svg></div>';
+            dialog.querySelector('[role="button"]').onclick = () => dialog.remove();
+            w.document.body.append(dialog);
+          }
+          return;
+        }
         const menu = w.document.createElement("div"); menu.dataset.postMenu = "true"; menu.setAttribute("role", "listbox");
         const option = w.document.createElement("div"); option.setAttribute("role", "option"); option.textContent = "Chỉ mình tôi";
         option.onclick = () => {

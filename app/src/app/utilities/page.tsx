@@ -30,14 +30,14 @@ export default async function UtilitiesPage() {
           <span className={styles.category}>TIỆN ÍCH TRÌNH DUYỆT</span>
           <h2 id="extension-title">{release.name}</h2>
           <p className={styles.description}>
-            Chuyển các bài đăng sang <strong>Chỉ mình tôi</strong>.
-            Tự mở Studio và cuộn xử lý bài, rồi lọc Mọi người để kiểm tra đến khi không còn bài công khai.
+            Chuyển các bài đăng công khai sang <strong>Chỉ mình tôi</strong>.
+            Tự mở Studio, lọc Mọi người và Áp dụng trước khi cuộn xử lý bài. Gặp bài lỗi thì làm bài khác rồi kiểm tra lại cuối lượt.
           </p>
           <ul className={styles.features}>
             <li><Check size={16} aria-hidden="true" />Tự mở Studio → Bài đăng</li>
-            <li><Check size={16} aria-hidden="true" />Tự cuộn danh sách và đổi quyền riêng tư</li>
+            <li><Check size={16} aria-hidden="true" />Chọn Mọi người → Áp dụng trước khi đổi bài</li>
+            <li><Check size={16} aria-hidden="true" />Lỗi hộp thoại: thử đóng, cuộn xuống làm bài khác</li>
             <li><Check size={16} aria-hidden="true" />Cuối lượt: lọc Mọi người và xử lý bài còn sót</li>
-            <li><Check size={16} aria-hidden="true" />Lỗi menu hoặc bộ lọc: chờ rồi tự thử lại</li>
             <li><Check size={16} aria-hidden="true" />Có tiến độ, nhật ký và nút dừng</li>
             <li><Check size={16} aria-hidden="true" />Dùng phiên TikTok đang đăng nhập</li>
           </ul>
@@ -48,7 +48,7 @@ export default async function UtilitiesPage() {
             <div className={styles.fileInfo}><Monitor size={14} aria-hidden="true" />Chrome / Edge trên máy tính<span>ZIP · {size} KB</span></div>
           </div>
           <p className={styles.notice}>
-            Bản thử nghiệm: đã kiểm thử bằng trang giả lập, chưa xác minh trên TikTok Studio đăng nhập thật.
+            Bản thử nghiệm: đã kiểm thử DOM và cuộn/hộp thoại trên Chromium với trang mô phỏng, chưa xác minh trên TikTok Studio đăng nhập thật.
             Giao diện khác có thể khiến tiện ích dừng để bạn kiểm tra.
           </p>
           <details className={styles.checksum}>
@@ -63,7 +63,7 @@ export default async function UtilitiesPage() {
             <li><strong>Tải và giải nén</strong><p>Giải nén ZIP vào một thư mục cố định trên máy tính.</p></li>
             <li><strong>Mở trang tiện ích</strong><p>Nhập <code>chrome://extensions</code> hoặc <code>edge://extensions</code> vào thanh địa chỉ.</p></li>
             <li><strong>Tải thư mục đã giải nén</strong><p>Bật <b>Developer mode</b>, chọn <b>Load unpacked</b> rồi chọn thư mục chứa <code>manifest.json</code>.</p></li>
-            <li><strong>Đăng nhập TikTok và bắt đầu</strong><p>Mở tiện ích, bấm <b>Ẩn tất cả bài đăng</b>. Giữ tab Studio mở đến khi bộ lọc Mọi người không còn bài.</p></li>
+            <li><strong>Đăng nhập TikTok và bắt đầu</strong><p>Mở tiện ích, bấm <b>Ẩn tất cả bài công khai</b>. Giữ tab Studio mở đến khi bộ lọc Mọi người không còn bài.</p></li>
           </ol>
           <div className={styles.update}>
             <RefreshCw size={19} aria-hidden="true" />

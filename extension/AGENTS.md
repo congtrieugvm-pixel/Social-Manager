@@ -18,11 +18,14 @@ existing Social Manager website automatically, with a download in **Tiện ích*
   download is automatic; users replace their extracted files and click Reload.
 - Document the actual test coverage. The initial implementation was tested with
   DOM/Chrome API fixtures, not an authenticated real TikTok Studio account.
-- From version 1.0.3, first process the visible post list, scroll/load more and
-  paginate without requiring the privacy filter. At the end, use **Everyone**
-  as the remaining work queue and repeat until verified empty. Recover
-  missing post-menu options by reapplying that filter and keep retrying with a
-  delay, honoring Stop. Only report completion after reapplying Everyone,
+- From version 1.0.4 (latest user correction), select **Everyone** and Apply
+  BEFORE any post mutation. Keep Friends/private posts out of the queue.
+  On per-post menu/dialog/verification errors, dismiss with Escape or a scoped
+  Cancel/Close control, defer that ID, scroll down and try other posts. Do not
+  refilter after every failed post. Retry deferred IDs after reaching the end.
+  Never dismiss dialogs by deleting their DOM or by clicking Save during recovery.
+  If a dialog cannot close, do not mutate posts behind it or report success.
+  Honor Stop during all recovery/scroll/backoff steps. Only report completion after reapplying Everyone,
   returning to page one, and seeing a stable explicit empty state. A disabled
   Next button or no new row IDs is insufficient. Never confuse filter checkboxes
   with per-post privacy options, and re-read rows after every mutation.
@@ -30,4 +33,6 @@ existing Social Manager website automatically, with a download in **Tiện ích*
   Scope Clear/Apply to a panel containing all three privacy labels; verify the
   cleared decoration, selection changes and persisted selection after Apply.
   Retry temporary filter errors with backoff and Stop; never equate detection
-  failure with an empty list. Test scroll-before-filter order and lazy rows.
+  failure with an empty list. Test filter-before-edit order, lazy rows, and dialog
+  failures after several successes. `npm run test:browser` uses a separate
+  Chromium fixture with blocked external networking, not the user's Chrome.
