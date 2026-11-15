@@ -64,3 +64,15 @@ test("invalid settings and forged external controls cannot change the session", 
   assert.equal((await h.send({ type: "STOP" }, h.content(job))).ok, false);
   assert.equal(h.data.session.job.status, "opening");
 });
+
+test("progress accepts sanitized DOM row keys for captionless posts", async () => {
+  const h = harness();
+  const { job } = await h.send({ type: "START" });
+  await h.send({ type: "CLAIM" }, h.content(job));
+  const data = { changed: 0, skipped: 0, scanned: 1, pages: 1, currentId: "dom:0123456789abcdef" };
+  assert.equal((await h.send({ type: "REPORT", runId: job.runId, data }, h.content(job))).allowed, true);
+  assert.equal(h.data.session.job.currentId, data.currentId);
+  data.currentId = "https://example.test/private-url";
+  await h.send({ type: "REPORT", runId: job.runId, data }, h.content(job));
+  assert.equal(h.data.session.job.currentId, "dom:0123456789abcdef");
+});

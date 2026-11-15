@@ -88,7 +88,7 @@ async function handle(message, sender) {
       if (!Number.isSafeInteger(data[field]) || data[field] < job[field]) throw new Error("Tiến độ không hợp lệ.");
       job[field] = data[field];
     }
-    if (typeof data.currentId === "string" && /^\d{6,30}$/.test(data.currentId)) job.currentId = data.currentId;
+    if (typeof data.currentId === "string" && /^(?:\d{6,30}|dom:[a-f0-9]{16})$/.test(data.currentId)) job.currentId = data.currentId;
     if (data.currentId === null) job.currentId = null;
     if (["completed", "review", "error", "stopped"].includes(data.status)) job.status = data.status;
     job.errorCode = typeof data.errorCode === "string" ? data.errorCode.slice(0, 60) : null;

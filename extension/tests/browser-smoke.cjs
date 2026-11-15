@@ -64,6 +64,47 @@ const { chromium } = require(require.resolve("playwright", { paths: [path.resolv
     fs.writeFileSync(path.join(out, "studio-private-recovery.json"), JSON.stringify(result, null, 2));
     console.log(JSON.stringify({ browser: "Chromium (isolated fixture)", changed: result.last.changed, publicLeft: result.publicLeft,
       firstFilterBeforeEdits: true, failedAfter: 9, scrollAfterFailure: true, retryAfterOtherPosts: true, errors: errors.length }));
+    const studioMarkup = await page.evaluate(async () => {
+      const ui = window.fixtureStudio(window, [{ id: "7500000000000000001" }, { id: "7500000000000000002" }]);
+      const original = document.getElementById("privacy-filter");
+      const filter = document.createElement("div");
+      filter.id = original.id;
+      filter.dataset.tt = "components_FilterButton_FlexCenter";
+      filter.innerHTML = "<span>Quyền riêng tư</span>";
+      filter.onclick = original.onclick;
+      original.replaceWith(filter);
+      const header = document.createElement("div");
+      header.dataset.tt = "components_PostTableHeader_FlexRow";
+      header.innerHTML = "<span>Quyền riêng tư</span>";
+      document.getElementById("toolbar").append(header);
+      filter.addEventListener("click", () => {
+        for (const label of document.querySelectorAll("#filter-panel label")) {
+          const option = document.createElement("div");
+          option.dataset.tt = "components_CheckboxGroupWithConfirm_FlexRow";
+          label.replaceWith(option);
+          option.append(label);
+          label.style.pointerEvents = "none";
+          label.className = "Checkbox__root Checkbox__root--disabled-false";
+          label.setAttribute("aria-disabled", "false");
+          option.onclick = () => { const input = option.querySelector("input"); input.checked = !input.checked; };
+        }
+      });
+      const a = new TSP.DomAdapter({ delayMs: 20, timeoutMs: 1000, settleMs: 30 }, async () => {}, () => false);
+      const sleep = a.sleep.bind(a);
+      a.sleep = ms => sleep(Math.min(ms, 20));
+      const reports = [], deadline = Date.now() + 12000;
+      await TSP.run(a, async report => reports.push(report), async () => {
+        if (Date.now() > deadline) throw new TSP.Halt("stopped", "Studio markup test deadline");
+      });
+      return { last: reports.at(-1), selected: ui.selected, publicLeft: [...ui.posts.values()].filter(value => value === "public").length };
+    });
+    assert.equal(studioMarkup.last.status, "completed", JSON.stringify(studioMarkup));
+    assert.equal(studioMarkup.last.changed, 2);
+    assert.equal(studioMarkup.publicLeft, 0);
+    assert.deepEqual(studioMarkup.selected, ["public"]);
+    assert.deepEqual(errors, []);
+    console.log(JSON.stringify({ browser: "Chromium (observed Studio markup fixture)", changed: 2, publicLeft: 0,
+      duplicatePrivacyHeader: true, pointerEventsNoneCheckbox: true, disabledFalseClass: true }));
     await context.close();
   } finally { await browser.close(); }
 })().catch((error) => { console.error(error); process.exitCode = 1; });

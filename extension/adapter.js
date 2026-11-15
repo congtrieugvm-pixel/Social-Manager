@@ -1,7 +1,8 @@
 (() => {
   "use strict";
   const { normalize: n, privacy, isStudio, Halt } = TSP;
-  const ROW = "tbody tr,[role='row'],[data-video-id],[data-item-id]";
+  const STUDIO_ROW = "[data-tt='components_RowLayout_FlexRow']";
+  const ROW = `tbody tr,[role='row'],[data-video-id],[data-item-id],${STUDIO_ROW}`;
   const CLICKABLE = "button,[role='button'],[role='combobox'],[aria-haspopup],select,[tabindex='0']";
   const PRIVATE_OPTIONS = "[role='option'],[role='menuitem'],[role='menuitemradio'],[role='radio'],label,li,button,div,span";
   const exact = (element) => (element?.getAttribute("aria-label") || element?.innerText || element?.textContent || "").trim();
@@ -18,8 +19,8 @@
     }
     return element.getClientRects().length > 0;
   }
-  const disabled = (el) => el.disabled || el.getAttribute("aria-disabled") === "true" ||
-    /(^|[\s_-])disabled([\s_-]|$)/i.test(el.className || "");
+  const disabled = (el) => el.disabled || el.getAttribute("aria-disabled") === "true" || el.getAttribute("data-disabled") === "true" ||
+    /(^|[\s_-])disabled(?![-_]false(?:[\s_-]|$))([\s_-]|$)/i.test(el.className || "");
   const currentPage = (el) => el && (disabled(el) || ["page", "true"].includes(el.getAttribute("aria-current")) ||
     el.getAttribute("aria-selected") === "true" || /(^|[\s_-])(active|current|selected)([\s_-]|$)/i.test(el.className || ""));
   function kind(el) {
@@ -44,7 +45,22 @@
         } catch { /* unrelated links are not post identities */ }
       }
     }
-    return ids.size === 1 ? [...ids][0] : null;
+    if (ids.size) return ids.size === 1 ? [...ids][0] : null;
+    if (!element.matches(STUDIO_ROW)) return null;
+    const cover = element.querySelector("img[data-tt='VideoCover_index_Image']")?.getAttribute("src");
+    const published = n(exact(element.querySelector("[data-tt='components_PublishStageLabel_TUXText']")));
+    const duration = exact(element.querySelector("[data-tt='VideoCover_index_TUXText']"));
+    if (!cover || !published || !duration) return null;
+    try {
+      // Captionless posts expose no post ID. Keep a namespaced DOM key from
+      // stable cover/date/duration evidence, excluding signed URL parameters.
+      const path = new URL(cover, location.href).pathname.split("~")[0];
+      let hash = 14695981039346656037n;
+      for (const character of JSON.stringify([path, published, duration])) {
+        hash = BigInt.asUintN(64, (hash ^ BigInt(character.codePointAt(0))) * 1099511628211n);
+      }
+      return `dom:${hash.toString(16).padStart(16, "0")}`;
+    } catch { return null; }
   }
   function control(row) {
     // A privacy column is stronger evidence than an arbitrary caption containing "Everyone".
@@ -107,6 +123,7 @@
     async click(el) {
       await this.guard();
       this.assert();
+      el = el?.closest("button,[role='button']") || el;
       if (!visible(el) || disabled(el)) throw new Halt("unavailable", "Nút thao tác không còn khả dụng. Kiểm tra Studio rồi chạy lại.");
       el.scrollIntoView({ block: "nearest", inline: "nearest" });
       el.click();
@@ -137,7 +154,7 @@
       return [...found.values()];
     }
     empty() {
-      return [...document.querySelectorAll("[class*='empty' i],[data-e2e*='empty'],[role='status']")]
+      return [...document.querySelectorAll("[class*='empty' i],[data-e2e*='empty'],[role='status'],[data-tt='components_EmptySearch_TUXText']")]
         .some((el) => visible(el) && /^(no (?:posts|videos|content|results|data)|(?:ban )?chua co (?:bai dang|video)|khong (?:co|tim thay) (?:bai (?:dang|viet)|video|du lieu|ket qua))\b/.test(n(exact(el))));
     }
     filtered() {
@@ -158,7 +175,11 @@
       await this.selectEveryone(true);
     }
     filterTrigger() {
-      const choices = named(document, /^(privacy|quyen rieng tu)(?:\s*\(?\d+\)?)?$/).filter((el) => !el.closest(`${ROW},thead,[role='columnheader']`));
+      const label = /^(privacy|quyen rieng tu)(?:\s*\(?\d+\)?)?$/;
+      const studioButtons = [...document.querySelectorAll("[data-tt='components_FilterButton_FlexCenter']")]
+        .filter((el) => visible(el) && label.test(n(exact(el))));
+      const choices = studioButtons.length ? studioButtons : named(document, label)
+        .filter((el) => !el.closest(`${ROW},thead,[role='columnheader'],[data-tt^='components_PostTableHeader_']`));
       const unique = choices.filter((el) => !choices.some((other) => other !== el && el.contains(other)));
       if (unique.length > 1) throw new Halt("filter_control", "Có nhiều nút lọc Quyền riêng tư, chưa thể xác định bộ lọc bài đăng.");
       return unique[0];
@@ -177,6 +198,10 @@
         }
         const value = privacy(label);
         if (!value || !visible(action)) continue;
+        // Studio disables pointer events on the label and handles the click on
+        // its option row. Clicking the label can also toggle the input twice.
+        while (getComputedStyle(action).pointerEvents === "none" && action.parentElement !== panel &&
+            action.parentElement && privacy(exact(action.parentElement)) === value) action = action.parentElement;
         // A role wrapper containing a native input is the same checkbox, not a second option.
         if (input.getAttribute("role") === "checkbox" && input.querySelector("input[type='checkbox']")) continue;
         const checked = input.tagName === "INPUT" ? input.checked : input.getAttribute("aria-checked");

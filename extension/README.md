@@ -33,7 +33,7 @@ Nếu chưa đăng nhập, hoàn tất đăng nhập trong Studio. Nếu lượt
 - **Đang thử lại bộ lọc**: chưa xác nhận lựa chọn được TikTok nhận hoặc danh sách chưa ổn định. Chờ rồi mở lại menu; bấm Dừng nếu giao diện không tương thích.
 - **Cần kiểm tra**: ID bài không rõ, có bộ lọc tìm kiếm khác, CAPTCHA, mất đăng nhập hoặc TikTok báo lỗi/giới hạn thao tác. Các trường hợp này dừng, không coi là hoàn tất và không cố vượt CAPTCHA/giới hạn.
 
-Hỗ trợ nhãn giao diện Việt/Anh: Everyone/Public/Mọi người/Công khai; Friends/Followers/Bạn bè/Người theo dõi; Only me/Only you/Private/Chỉ mình tôi/Chỉ bạn/Riêng tư. Bài phải có ID trong liên kết video/ảnh hoặc thuộc tính hàng. Từ v1.0.4 luôn xác nhận Mọi người trước khi sửa bài, theo yêu cầu mới nhất. Không sửa bài Bạn bè, bản nháp, bài lên lịch, quyền riêng tư tài khoản, bình luận hoặc nội dung bài.
+Hỗ trợ nhãn giao diện Việt/Anh với Everyone/Public/Mọi người/Công khai, Friends/Followers/Bạn bè/Người theo dõi, Only me/Only you/Private/Chỉ mình tôi/Chỉ bạn/Riêng tư. Ưu tiên ID trong liên kết video/ảnh hoặc thuộc tính hàng. Với hàng Studio không có mô tả và liên kết, v1.0.5 tạo khóa DOM từ đường dẫn ảnh bìa, ngày đăng và thời lượng. Khóa được băm, loại bỏ tham số URL có chữ ký và được kiểm tra trùng hàng. Từ v1.0.4 luôn xác nhận Mọi người trước khi sửa bài, theo yêu cầu mới nhất.
 
 Luồng duyệt hỗ trợ bảng phân trang và danh sách tải thêm/cuộn ảo có ID ổn định; đọc lại hàng sau mỗi thay đổi. Bộ lọc được nhận qua ba nhãn và Áp dụng, hỗ trợ cả input/ARIA và checkbox vẽ bằng CSS/SVG. Với checkbox không có trạng thái HTML, extension bấm **Xóa trong menu bộ lọc**, so sánh ba ô đã về cùng trạng thái, rồi chọn và kiểm tra hình thức ô có thay đổi; mở lại menu sau Áp dụng để kiểm tra lựa chọn còn được giữ. Khi cần tải mới danh sách, tạm chọn cả ba mức và Áp dụng rồi lọc riêng Mọi người; đây chỉ là lọc danh sách. Kiểm tra Studio không còn bộ lọc ngày/loại bài hay từ khóa tìm kiếm; không thể tự chứng minh các bộ lọc không có nhãn ngữ nghĩa. Không đổi tài khoản trong lượt chạy.
 
@@ -43,7 +43,9 @@ Luồng duyệt hỗ trợ bảng phân trang và danh sách tải thêm/cuộn 
 
 Kiểm thử bổ sung trên **Chromium riêng với trang mô phỏng** chạy 24 bài công khai: bài thứ 10 phát sinh hộp thoại không có Cancel, tiện ích đóng bằng icon, cuộn và làm các bài còn lại trước khi quay lại bài lỗi; danh sách Mọi người hết bài và bài Bạn bè không bị đổi. Bài kiểm thử có bố cục/cuộn thật, chặn truy cập mạng và không dùng hồ sơ Chrome của người dùng. Kết quả và ảnh được ghi vào `dist/tests/`.
 
-**Chưa kiểm thử end-to-end trên TikTok Studio đăng nhập thật**: công cụ báo kết nối trình duyệt chưa khả dụng. Các kiểm thử trên không chứng minh tương thích với mọi phiên bản DOM của TikTok; giao diện khác có thể khiến tiện ích chờ thử lại hoặc dừng để kiểm tra. Không có bài thật nào bị thay đổi trong quá trình kiểm thử.
+Đã kết nối Chrome đăng nhập thật và tái hiện lỗi v1.0.4 nhầm tiêu đề cột thành nút lọc. Bản v1.0.5 sửa theo DOM quan sát được, nhận đúng nút lọc, xử lý checkbox có label chặn pointer events, đọc đúng lớp `disabled-false`, nhận diện hàng không có mô tả và thông báo trống của Studio. Kiểm thử hồi quy dùng cấu trúc đã loại bỏ dữ liệu tài khoản. Chromium mô phỏng đã chạy thêm luồng checkbox theo cấu trúc này đến hết bài.
+
+Lượt chạy tự động v1.0.5 trên tài khoản thật đang chờ nạp lại extension để kiểm chứng toàn bộ. Kết quả kiểm thử mô phỏng và quan sát DOM được ghi riêng để thể hiện rõ phạm vi đã xác nhận.
 
 ## Quyền và dữ liệu
 

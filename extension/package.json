@@ -1,6 +1,6 @@
 {
   "name": "tiktok-studio-private",
-  "version": "1.0.4",
+  "version": "1.0.5",
   "private": true,
   "description": "Standalone Manifest V3 TikTok Studio privacy extension",
   "scripts": {

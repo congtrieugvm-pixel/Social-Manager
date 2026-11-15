@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "TikTok Studio Private",
-  "version": "1.0.4",
+  "version": "1.0.5",
   "description": "Lọc Mọi người trước, tự cuộn đổi sang Chỉ mình tôi; gặp bài lỗi thì làm bài khác và kiểm tra lại cuối lượt.",
   "minimum_chrome_version": "120",
   "permissions": ["storage", "alarms"],
