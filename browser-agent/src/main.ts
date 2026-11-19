@@ -13,8 +13,9 @@ import { Operation } from './operation.js';
 import { readPassword } from './password.js';
 import { postVideo } from './posting.js';
 import { hidePosts, waitForLogin, type HideProgress } from './hide.js';
+import { startManager, openManagerWindow, ensureShortcut, type Tile } from './manager.js';
 
-const VERSION = '1.0.6';
+const VERSION = '1.0.7';
 const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
 async function api<T>(s: Pick<Settings, 'origin'> & Partial<Settings>, route: string, body: unknown): Promise<T> {
   const payload = JSON.stringify(body).replace(/[\u007f-\uffff]/g, c => '\\u' + c.charCodeAt(0).toString(16).padStart(4, '0'));
@@ -114,8 +115,11 @@ async function run() {
   let stopped = false, lastLease = 0, lastStart = 0, backoff = 3000;
   // Several jobs run at once (one per account); the website sets how many windows this machine may keep open.
   let maxWindows = 3, opening = 0;
-  const running = new Map<string, { operation: Operation; profileId?: string }>();
+  const running = new Map<string, { operation: Operation; profileId?: string; kind: string; startedAt: number; hide?: HideProgress }>();
+  // For the Browser Manager tiles: last window status and when each window opened.
+  const windowStatus = new Map<string, string>(), openedAt = new Map<string, number>();
   let journalWrite: Promise<void> = Promise.resolve();
+  let manager: Awaited<ReturnType<typeof startManager>> | null = null;
   let allowed = new Set<string>();
   const stopFile = join(root, 'stop'); await unlink(stopFile).catch(() => {});
   await writeFile(join(root, 'running.pid'), String(process.pid));
@@ -143,7 +147,7 @@ async function run() {
     opening++;
     try {
       await startGate(); task.check();
-      const session = await openSession(s.origin, job, task); sessions.set(job.profileId!, session);
+      const session = await openSession(s.origin, job, task); sessions.set(job.profileId!, session); openedAt.set(job.profileId!, Date.now());
       return session;
     } finally { opening--; }
   }
@@ -154,7 +158,7 @@ async function run() {
       reports.set(job.id, { jobId: job.id, profileId: job.profileId, status: 'error', done: true, error: 'PROFILE_BUSY' });
       job.password = null; job.twofa = null; return;
     }
-    running.set(job.id, { operation: task, profileId: job.profileId });
+    running.set(job.id, { operation: task, profileId: job.profileId, kind: job.kind, startedAt: Date.now() });
     try {
       if (journal.includes(job.id)) { reports.set(job.id, { jobId: job.id, profileId: job.profileId, status: 'interrupted', done: true, error: 'INTERRUPTED' }); return; }
       await remember(job.id);
@@ -176,7 +180,7 @@ async function run() {
         }
         const active = session;
         await task.own(() => active.close());
-        const progress = (hide: HideProgress) => reports.set(`${job.id}:hide`, { jobId: job.id, hide });
+        const progress = (hide: HideProgress) => { reports.set(`${job.id}:hide`, { jobId: job.id, hide }); const r = running.get(job.id); if (r) r.hide = hide; };
         await waitForLogin(active, task, progress);
         const result = await hidePosts(active, job, task, progress);
         reports.set(`${job.id}:hide`, { jobId: job.id, hide: result, done: true,
@@ -194,11 +198,23 @@ async function run() {
   }
   try {
     console.log('Da san sang nhan lenh. Dung bang Stop hoac Ctrl+C.');
+    // Browser Manager: live tiles of every open window, on this PC only.
+    manager = await startManager({
+      tiles: () => [...sessions.entries()].map(([id, session]): Tile => {
+        const job = [...running.values()].find(r => r.profileId === id && r.kind !== 'open');
+        return { profileId: id, username: session.job.username ?? '?', status: windowStatus.get(id) ?? 'starting', openedAt: openedAt.get(id) ?? Date.now(),
+          ...(job ? { job: { kind: job.kind, startedAt: job.startedAt, ...(job.hide ? { hide: { changed: job.hide.changed, skipped: job.hide.skipped, message: job.hide.message } } : {}) } } : {}) };
+      }),
+      page: id => { const pages = sessions.get(id)?.context.pages() ?? []; return pages.filter(p => !p.isClosed()).at(-1); },
+      close: async id => { await cancelProfile(id); await close(id); },
+      limit: () => ({ max: maxWindows, used: sessions.size, opening }),
+    }).catch(() => null);
+    if (manager?.url) ensureShortcut(fileURLToPath(new URL('..', import.meta.url)));
     while (!stopped) {
       try { await readFile(stopFile); stopped = true; break; } catch { /* absent */ }
       try {
         for (const [id, session] of sessions) {
-          const status = await session.inspect(); reports.set(session.job.id, { jobId: session.job.id, profileId: id, status });
+          const status = await session.inspect(); reports.set(session.job.id, { jobId: session.job.id, profileId: id, status }); windowStatus.set(id, status);
           if (status === 'closed') sessions.delete(id);
         }
         const sent = [...reports.values()].slice(0, 25); // the server reads at most 25 per sync
@@ -240,6 +256,7 @@ async function run() {
     while (running.size) await sleep(250);
     for (const id of sessions.keys()) await close(id);
     await api(s, 'sync', { runId, capacity: 0, slots: 0, reports: [...reports.values()] }).catch(() => {});
+    await manager?.close().catch(() => {});
     clearInterval(watchdog); guard.close(); await unlink(join(root, 'running.pid')).catch(() => {});
   }
 }
@@ -250,6 +267,7 @@ async function main() {
   else if (process.argv[2] === 'setup') await setup();
   else if (process.argv[2] === 'fetch') await fetchBrowser();
   else if (process.argv[2] === 'stop') await writeFile(join(root, 'stop'), 'stop');
+  else if (process.argv[2] === 'manager') await openManagerWindow();
   else await run();
 }
 main().catch(e => {

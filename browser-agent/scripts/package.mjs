@@ -15,7 +15,7 @@ const run = (args, cwd) => {
   if (result.status !== 0) throw new Error('Build failed');
 };
 run(['run', 'build'], root);
-for (const name of ['package.json', 'package-lock.json', 'README.md', 'Setup.vbs', 'setup.ps1', 'Stop.cmd', 'dist']) {
+for (const name of ['package.json', 'package-lock.json', 'README.md', 'Setup.vbs', 'setup.ps1', 'Stop.cmd', 'Browser-Manager.cmd', 'dist']) {
   await fs.cp(path.join(root, name), path.join(stage, name), { recursive: true });
 }
 run(['ci', '--omit=dev', '--ignore-scripts'], stage);
