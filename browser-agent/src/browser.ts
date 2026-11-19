@@ -8,8 +8,8 @@ import { navigateAccount, observe } from './login.js';
 import type { Operation } from './operation.js';
 
 export const BROWSER_BUILD = 'official/158.0.1-beta.41';
-export interface Job { id: string; kind: string; ownerId: number; expiresAt: number; accountId?: number; profileId?: string; username?: string; password?: string | null; autofill?: boolean; folder?: string; caption?: string; proxy?: { server: string; username?: string; password?: string } | null }
-export interface Report { jobId: string; profileId?: string; status?: string; done?: boolean; ip?: string; latency?: number; error?: string }
+export interface Job { id: string; kind: string; ownerId: number; expiresAt: number; accountId?: number; profileId?: string; username?: string; password?: string | null; autofill?: boolean; folder?: string; caption?: string; proxy?: { server: string; username?: string; password?: string } | null; reuse?: boolean }
+export interface Report { jobId: string; profileId?: string; status?: string; done?: boolean; ip?: string; latency?: number; error?: string; hide?: { changed: number; skipped: number; scanned: number; message: string; status?: string; errorCode?: string } }
 export interface Session { context: BrowserContext; job: Job; inspect: () => Promise<string>; close: () => Promise<void> }
 export async function check(context: BrowserContext) {
   const page = await context.newPage();

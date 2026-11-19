@@ -151,6 +151,57 @@ const req = token => new Request('https://test.invalid', { headers: { Authorizat
     sqlite.exec('UPDATE browser_login_attempts SET attempts=20');
     await assert.rejects(s.loginDevice({ username: 'one', password, name: 'limited', version: '1' }, 'test-ip'), e => e.status === 429);
   });
+  await test('hide posts: opens the profile itself or reuses an open window; progress and outcome recorded', async () => {
+    sqlite.exec("INSERT INTO accounts(id,owner_user_id,username,enc_password) VALUES (10,1,'dave',NULL),(11,1,'erin',NULL)");
+    const pair = await s.createPairing(1);
+    const enrolled = await s.enroll({ code: pair.code, name: 'hide fixture', version: '1.0.3' });
+    let device = await s.authenticateDevice(req(enrolled.token));
+    const old = await s.queue(1, { deviceId: device.id, kind: 'hide', ids: [10] }).catch(e => e);
+    assert.equal(old.status, 409, 'agents older than 1.0.4 cannot run hide');
+    await s.sync(device, { runId: 'hide-run', version: '1.0.4', capacity: 0 });
+    device = await s.authenticateDevice(req(enrolled.token));
+    assert.equal(device.version, '1.0.4');
+
+    // 1) No window yet: the hide job opens the profile (credentials only at claim) and owns it.
+    assert.equal((await s.queue(1, { deviceId: device.id, kind: 'hide', ids: [10] })).results[0].ok, true);
+    assert.equal((await s.queue(1, { deviceId: device.id, kind: 'hide', ids: [10] })).results[0].ok, false, 'one active hide per account');
+    let sync = await s.sync(device, { runId: 'hide-run', capacity: 0 });
+    assert.equal(sync.job.kind, 'hide', 'hide is delivered even when the agent reports no free window slot');
+    const first = await s.claim(device, sync.job.id);
+    assert.equal(first.reuse, false); assert.ok(first.profileId);
+    assert.equal(row('browser_profiles').find(p => p.account_id === 10).job_id, first.id);
+    sync = await s.sync(device, { runId: 'hide-run', capacity: 0, knownJobs: [first.id], reports: [
+      { jobId: first.id, profileId: first.profileId, status: 'logged_in' },
+      { jobId: first.id, hide: { changed: 4, skipped: 1, scanned: 5, message: 'Đang xử lý', caption: 'not stored' } },
+    ] });
+    assert.deepEqual(sync.allowed, [first.profileId], 'the window stays allowed while hiding');
+    const progress = JSON.parse(row('browser_jobs').find(j => j.id === first.id).result);
+    assert.equal(progress.changed, 4); assert.equal('caption' in progress, false);
+    sync = await s.sync(device, { runId: 'hide-run', capacity: 0, knownJobs: [first.id], reports: [{ jobId: first.id, done: true, hide: { changed: 9, skipped: 1, scanned: 10, message: 'Hoàn tất', status: 'completed' } }] });
+    assert.equal(row('browser_jobs').find(j => j.id === first.id).state, 'done');
+    assert.equal(row('browser_profiles').find(p => p.account_id === 10).status, 'closed', 'its own window is released when done');
+    assert.deepEqual(sync.allowed, []);
+
+    // 2) A window already open on this device: hide reuses it, gets no credentials, leaves it open.
+    await s.queue(1, { deviceId: device.id, kind: 'open', ids: [11] });
+    sync = await s.sync(device, { runId: 'hide-run', capacity: 3 });
+    const opened = await s.claim(device, sync.job.id);
+    await s.sync(device, { runId: 'hide-run', capacity: 3, knownJobs: [opened.id], reports: [{ jobId: opened.id, profileId: opened.profileId, status: 'logged_in' }] });
+    await s.queue(1, { deviceId: device.id, kind: 'hide', ids: [11] });
+    sync = await s.sync(device, { runId: 'hide-run', capacity: 2, knownJobs: [opened.id] });
+    const second = await s.claim(device, sync.job.id);
+    assert.equal(second.reuse, true); assert.equal(second.password, null); assert.equal(second.proxy, null);
+    assert.equal(row('browser_profiles').find(p => p.account_id === 11).job_id, opened.id, 'the open job keeps the window');
+    sync = await s.sync(device, { runId: 'hide-run', capacity: 2, knownJobs: [opened.id, second.id], reports: [{ jobId: second.id, done: true, error: 'HIDE_FAILED', hide: { changed: 2, skipped: 0, scanned: 2, message: 'Còn bài', status: 'error' } }] });
+    const failed = row('browser_jobs').find(j => j.id === second.id);
+    assert.equal(failed.state, 'error'); assert.equal(failed.error, 'HIDE_FAILED');
+    assert.equal(row('browser_profiles').find(p => p.account_id === 11).status, 'logged_in');
+    assert.deepEqual(sync.allowed, [opened.profileId]);
+
+    // 3) Another user can never queue hide on this account.
+    const foreign = await s.queue(2, { deviceId: device.id, kind: 'hide', ids: [10] }).catch(e => e);
+    assert.ok(foreign.status === 409 || foreign.results?.[0]?.ok === false);
+  });
   await test('posting config scoped to account/device and commands require verified session', async () => {
     const pair = await s.createPairing(1);
     const enrolled = await s.enroll({ code: pair.code, name: 'posting fixture', version: '1.0.3' });

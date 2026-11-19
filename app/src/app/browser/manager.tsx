@@ -1,7 +1,7 @@
 'use client';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
-import { Monitor, Shield, Play, Square, Send, Users, History, Search, RefreshCw, FolderOpen, Plus, X, CheckCircle2, AlertCircle } from 'lucide-react';
+import { Monitor, Shield, Play, Square, Send, Users, History, Search, RefreshCw, FolderOpen, Plus, X, CheckCircle2, AlertCircle, EyeOff } from 'lucide-react';
 import { confirmDialog } from '@/app/_components/notify';
 import { postJson, safeJson } from '@/lib/req-body';
 import type { dashboard } from '@/lib/browser-service';
@@ -27,7 +27,17 @@ const errorMessages: Record<string, string> = {
   POST_MANUAL: 'Cần kiểm tra tài khoản, CAPTCHA hoặc form đăng trong cửa sổ TikTok',
   BROWSER_FAILED: 'Không mở được browser. Cập nhật chương trình Windows và thử lại',
   PROFILE_BUSY: 'Hồ sơ đang được dùng hoặc còn khóa sau sự cố', PROXY_FAILED: 'Kiểm tra kết nối proxy trên máy Windows',
+  HIDE_MANUAL: 'Chưa vào được TikTok Studio đúng tài khoản (cần đăng nhập/xác minh, hoặc trang bị tải lại). Chạy lại sau khi kiểm tra cửa sổ',
+  HIDE_FAILED: 'Chưa ẩn hết bài. Xem thông báo cuối rồi chạy lại; bài đã riêng tư sẽ được bỏ qua',
+  CLOSED: 'Cửa sổ bị đóng trước khi xong', INTERRUPTED: 'Đã dừng giữa chừng', CONFIG_CHANGED: 'Cấu hình đã đổi; gửi lại lệnh',
 };
+const kindLabels: Record<string, string> = { open: 'Mở browser', close: 'Đóng browser', post: 'Đăng video', preview: 'Xem trước video', check_proxy: 'Kiểm tra proxy', hide: 'Ẩn bài (Chỉ mình tôi)' };
+type HideResult = { changed: number; skipped: number; scanned: number; message: string; status: string | null };
+function hideResult(job: { kind: string; result: string | null }): HideResult | null {
+  if (job.kind !== 'hide' || !job.result) return null;
+  try { return JSON.parse(job.result) as HideResult; } catch { return null; }
+}
+const hideSummary = (r: HideResult) => `${r.changed} bài đã ẩn · ${r.skipped} bài vốn riêng tư`;
 const blankProxy = { id: 0, name: '', server: '', username: '', password: '', enabled: true, clearUsername: false, clearPassword: false };
 export default function BrowserManager() {
   const [section, setSection] = useState<Section>('accounts');
@@ -157,6 +167,21 @@ export default function BrowserManager() {
   }
   const readyCount = selectedAccounts.filter(account => readiness(account).ready).length;
   const canPost = !busy && !loadingPostGroup && selected.length > 0 && readyCount === selected.length;
+  const hideVersionOk = !!selectedDevice && /^\d+\.\d+\.\d+$/.test(selectedDevice.version) && (() => {
+    const [a, b, c] = selectedDevice.version.split('.').map(Number);
+    return a !== 1 ? a > 1 : b !== 0 ? b > 0 : c >= 4;
+  })();
+  const hideBlockedReason = openBlockedReason || (!hideVersionOk ? 'Cập nhật chương trình Windows lên 1.0.4 để dùng Ẩn bài.' : '');
+  async function hidePosts(ids: number[]) {
+    if (!ids.length || !selectedDevice || !hideVersionOk) return;
+    const names = data?.accounts.filter(account => ids.includes(account.id)).map(account => '@' + account.username) ?? [];
+    const confirmed = await confirmDialog({
+      title: 'Ẩn bài sang Chỉ mình tôi',
+      message: `Mở TikTok Studio trên ${selectedDevice?.name} và chuyển TOÀN BỘ bài công khai của ${ids.length === 1 ? names[0] : `${ids.length} tài khoản`} sang Chỉ mình tôi? Bài đã riêng tư được giữ nguyên. Bấm Đóng ở tài khoản để dừng giữa chừng.`,
+      confirmLabel: 'Ẩn bài',
+    });
+    if (confirmed) await act('jobs', { kind: 'hide', ids, deviceId, autofill });
+  }
   async function publish() {
     if (!canPost) return;
     const confirmed = await confirmDialog({
@@ -225,6 +250,7 @@ export default function BrowserManager() {
           <div className={styles.selectionButtons}>
             <button className="btn btn-primary" title={openBlockedReason || 'Mở các tài khoản đã chọn'} aria-describedby={openBlockedReason ? 'browser-open-status' : undefined} disabled={!!openBlockedReason} onClick={() => void act('jobs', { kind: 'open', ids: selected, deviceId, autofill })}><Play size={15} />Mở trình duyệt</button>
             <button className="btn" disabled={busy || loadingPostGroup || !selected.length || !selectedDevice} onClick={() => void act('jobs', { kind: 'close', ids: selected, deviceId })}><Square size={15} />Đóng</button>
+            <button className="btn" title={hideBlockedReason || 'Chuyển toàn bộ bài công khai sang Chỉ mình tôi'} disabled={!!hideBlockedReason} onClick={() => void hidePosts(selected)}><EyeOff size={15} />Ẩn bài</button>
             <button className="btn" disabled={!selected.length || loadingPostGroup} onClick={() => setSection('posting')}><Send size={15} />Đăng bài</button>
           </div>
         </div>
@@ -235,13 +261,21 @@ export default function BrowserManager() {
         </tr></thead><tbody>{data?.accounts.map(account => {
           const profile = data.profiles.find(profile => profile.accountId === account.id);
           const device = data.devices.find(device => device.id === profile?.deviceId);
+          const hideJob = data.jobs.find(job => job.accountId === account.id && job.kind === 'hide'); // newest first
+          const hiding = hideJob && ['queued', 'claimed', 'running'].includes(hideJob.state) ? hideJob : null;
+          const hide = hideJob ? hideResult(hideJob) : null;
           return <tr key={account.id} className={selected.includes(account.id) ? styles.selectedRow : ''}>
             <td><input aria-label={`Chọn ${account.username}`} type="checkbox" checked={selected.includes(account.id)} disabled={busy || loadingPostGroup || (!selected.includes(account.id) && selected.length >= 20)} onChange={event => changeSelection(account.id, event.target.checked)} /></td>
             <td><b>@{account.username}</b><small>{data.groups.find(group => group.id === account.groupId)?.name ?? 'Không nhóm'}</small></td>
             <td>{connection(account)}{profile && <small>Phiên gần nhất · {profile.proxyLabel}</small>}{configurationChanged(account) && <small>Cấu hình mới áp dụng khi mở lại</small>}</td>
-            <td><Badge tone={profile?.status === 'logged_in' ? 'good' : ['error', 'wrong_account', 'needs_verification', 'interrupted'].includes(profile?.status ?? '') ? 'warn' : 'neutral'}>{profile ? labels[profile.status] ?? profile.status : 'Chưa mở'}</Badge>{profile && <small>{new Date(profile.updatedAt * 1000).toLocaleString('vi-VN')}</small>}</td>
+            <td><Badge tone={profile?.status === 'logged_in' ? 'good' : ['error', 'wrong_account', 'needs_verification', 'interrupted'].includes(profile?.status ?? '') ? 'warn' : 'neutral'}>{profile ? labels[profile.status] ?? profile.status : 'Chưa mở'}</Badge>{profile && <small>{new Date(profile.updatedAt * 1000).toLocaleString('vi-VN')}</small>}
+              {hideJob && (hiding || hideJob.createdAt > data.now - 86400) && <div className={styles.hideStatus} role="status">
+                <Badge tone={hiding ? 'warn' : hideJob.state === 'done' ? 'good' : 'danger'}><EyeOff size={12} />{hiding ? (hiding.state === 'running' ? 'Đang ẩn bài' : 'Chờ máy ẩn bài') : hideJob.state === 'done' ? 'Đã ẩn hết bài công khai' : 'Ẩn bài chưa xong'}</Badge>
+                {hide && <small>{hideSummary(hide)}</small>}
+                {hiding ? hide?.message && <small>{hide.message}</small> : hideJob.error && <small>{errorMessages[hideJob.error] ?? hideJob.error}</small>}
+              </div>}</td>
             <td>{device?.name ?? '—'}{device && <small>{online.some(item => item.id === device.id) ? 'Online' : 'Offline'}</small>}</td>
-            <td><button className="btn" aria-label={`Mở trình duyệt ${account.username}`} disabled={busy || loadingPostGroup || !selectedDevice} title={!selectedDevice ? 'Chọn máy Windows đang online để mở' : undefined} onClick={() => void act('jobs', { kind: 'open', ids: [account.id], deviceId, autofill })}><Play size={14} />Mở</button>{profile && <button className="btn btn-quiet" disabled={busy} onClick={async () => {
+            <td><button className="btn btn-quiet" aria-label={`Ẩn bài ${account.username}`} title={hiding ? 'Đang ẩn bài' : !selectedDevice ? 'Chọn máy Windows đang online' : !hideVersionOk ? 'Cần Windows 1.0.4' : 'Chuyển toàn bộ bài công khai sang Chỉ mình tôi'} disabled={busy || loadingPostGroup || !selectedDevice || !hideVersionOk || !!hiding} onClick={() => void hidePosts([account.id])}><EyeOff size={14} />Ẩn bài</button><button className="btn" aria-label={`Mở trình duyệt ${account.username}`} disabled={busy || loadingPostGroup || !selectedDevice} title={!selectedDevice ? 'Chọn máy Windows đang online để mở' : undefined} onClick={() => void act('jobs', { kind: 'open', ids: [account.id], deviceId, autofill })}><Play size={14} />Mở</button>{profile && <button className="btn btn-quiet" disabled={busy} onClick={async () => {
               if (await confirmDialog({ title: 'Tạo hồ sơ trên máy khác', message: `Xác nhận đã dừng browser của @${account.username} trên máy cũ. Hồ sơ mới cần đăng nhập lại.`, confirmLabel: 'Tạo hồ sơ mới' })) void act('profiles/relocate', { accountId: account.id, confirmStopped: true });
             }}>Chuyển máy</button>}</td>
           </tr>;
@@ -326,7 +360,7 @@ export default function BrowserManager() {
     <div hidden={section !== 'activity'}>
       <section className={styles.panel}><div className={styles.sectionHeading}><div><h2>Hàng đợi & lịch sử</h2><p>{pendingJobs.length} lệnh chờ · tối đa 3 cửa sổ mỗi máy</p></div></div>
         <div className={styles.table}><table><thead><tr><th>Thao tác</th><th>Tài khoản / proxy</th><th>Trạng thái</th><th>Thời gian</th><th><span className={styles.srOnly}>Hủy lệnh</span></th></tr></thead><tbody>{data?.jobs.map(job => <tr key={job.id}>
-          <td>{job.kind === 'open' ? 'Mở browser' : job.kind === 'close' ? 'Đóng browser' : job.kind === 'post' ? 'Đăng video' : 'Kiểm tra proxy'}</td>
+          <td>{kindLabels[job.kind] ?? job.kind}{(() => { const r = hideResult(job); return r && <small>{hideSummary(r)}</small>; })()}</td>
           <td>{data.accounts.find(account => account.id === job.accountId)?.username ?? (job.accountId ? `#${job.accountId}` : data.proxies.find(proxy => proxy.id === job.proxyId)?.name)}</td>
           <td><Badge tone={job.state === 'done' ? 'good' : job.state === 'error' ? 'danger' : ['queued', 'claimed', 'running'].includes(job.state) ? 'warn' : 'neutral'}>{labels[job.state] ?? job.state}</Badge>{job.error && <small>{errorMessages[job.error] ?? job.error}</small>}</td>
           <td>{new Date(job.createdAt * 1000).toLocaleString('vi-VN')}</td><td>{['queued', 'claimed'].includes(job.state) && <button className="btn" disabled={busy} onClick={() => void act('jobs/cancel', { id: job.id })}>Hủy</button>}</td>

@@ -12,8 +12,9 @@ import { openSession, checkProxy, type Job, type Report, type Session } from './
 import { Operation } from './operation.js';
 import { readPassword } from './password.js';
 import { postVideo } from './posting.js';
+import { hidePosts, waitForLogin, type HideProgress } from './hide.js';
 
-const VERSION = '1.0.3';
+const VERSION = '1.0.4';
 const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
 async function api<T>(s: Pick<Settings, 'origin'> & Partial<Settings>, route: string, body: unknown): Promise<T> {
   const payload = JSON.stringify(body).replace(/[\u007f-\uffff]/g, c => '\\u' + c.charCodeAt(0).toString(16).padStart(4, '0'));
@@ -143,13 +144,30 @@ async function run() {
         reports.set(job.id, { jobId: job.id, done: true });
       }
       else if (job.kind === 'check_proxy') reports.set(job.id, { jobId: job.id, done: true, ...await checkProxy(job, task) });
+      else if (job.kind === 'hide') {
+        // Reuse the open window when there is one; otherwise open the profile like an `open` job.
+        let session = sessions.get(job.profileId!);
+        if (!session) {
+          if (job.reuse) throw new Error('HIDE_MANUAL');
+          await sleep(Math.max(0, 2000 - (Date.now() - lastStart))); lastStart = Date.now();
+          session = await openSession(s.origin, job, task); sessions.set(job.profileId!, session);
+        }
+        const active = session;
+        await task.own(() => active.close());
+        const progress = (hide: HideProgress) => reports.set(`${job.id}:hide`, { jobId: job.id, hide });
+        await waitForLogin(active, task, progress);
+        const result = await hidePosts(active, job, task, progress);
+        reports.set(`${job.id}:hide`, { jobId: job.id, hide: result, done: true,
+          ...(result.status === 'completed' ? {} : { error: result.status === 'stopped' ? 'INTERRUPTED' : 'HIDE_FAILED' }) });
+      }
+      else if (job.kind !== 'open') throw new Error('UNSUPPORTED');
       else {
         await sleep(Math.max(0, 2000 - (Date.now() - lastStart))); lastStart = Date.now();
         const session = await openSession(s.origin, job, task); sessions.set(job.profileId!, session);
         if (stopped || Date.now() - lastLease > 90000 || !allowed.has(job.profileId!)) await close(job.profileId!);
       }
     } catch (e) {
-      const error = e instanceof Error && ['PROFILE_BUSY', 'INTERRUPTED', 'FOLDER_EMPTY', 'FOLDER_INVALID', 'POST_UNKNOWN', 'POST_MANUAL'].includes(e.message) ? e.message : job.proxy ? 'PROXY_FAILED' : 'BROWSER_FAILED';
+      const error = e instanceof Error && ['PROFILE_BUSY', 'INTERRUPTED', 'FOLDER_EMPTY', 'FOLDER_INVALID', 'POST_UNKNOWN', 'POST_MANUAL', 'HIDE_MANUAL', 'HIDE_FAILED'].includes(e.message) ? e.message : job.proxy ? 'PROXY_FAILED' : 'BROWSER_FAILED';
       reports.set(job.id, { jobId: job.id, profileId: job.profileId, status: 'error', done: true, error });
     } finally { job.password = null; busy = false; executingId = null; operation = undefined; operationProfile = undefined; }
   }
@@ -165,7 +183,8 @@ async function run() {
         const sent = [...reports.values()];
         const knownJobs: string[] = [...sessions.values()].map(session => session.job.id).concat([...reports.keys()], executingId ? [executingId] : []);
         const sync = await api<{ allowed: string[]; job: { id: string; kind: string } | null; pollSeconds: number }>(s, 'sync', { runId, version: VERSION, capacity: busy ? 0 : 3 - sessions.size, reports: sent, knownJobs });
-        for (const r of sent) if (reports.get(r.jobId) === r) reports.delete(r.jobId);
+        // Keys are job IDs or `${jobId}:hide`; drop exactly the objects that were sent.
+        for (const [key, r] of reports) if (sent.includes(r)) reports.delete(key);
         lastLease = Date.now(); allowed = new Set(sync.allowed); backoff = 3000;
         if (process.connected) process.send?.('connected');
         if (operationProfile && !allowed.has(operationProfile)) await operation?.cancel();
@@ -180,7 +199,7 @@ async function run() {
           try {
             const job = await api<Job>(s, 'claim', { id: sync.job.id });
             executingId = job.id;
-            if (job.profileId && job.kind === 'open') allowed.add(job.profileId);
+            if (job.profileId && (job.kind === 'open' || (job.kind === 'hide' && !job.reuse))) allowed.add(job.profileId);
             void execute(job);
           } catch { busy = false; }
         }

@@ -16,7 +16,23 @@ export const token = () => Array.from(crypto.getRandomValues(new Uint8Array(32))
 const pending = ["queued", "claimed"];
 const active = [...pending, "running"];
 const statuses = ["starting", "open", "needs_verification", "unverified", "logged_in", "wrong_account", "closed", "error", "interrupted"];
-const errorCodes = ["PROXY_FAILED", "BROWSER_FAILED", "PROFILE_BUSY", "LOGIN_MANUAL", "NETWORK", "INTERRUPTED", "CONFIG_CHANGED", "CLOSED", 'FOLDER_EMPTY', 'FOLDER_INVALID', 'POST_UNKNOWN', 'POST_MANUAL', 'FILE_CHANGED'];
+const errorCodes = ["PROXY_FAILED", "BROWSER_FAILED", "PROFILE_BUSY", "LOGIN_MANUAL", "NETWORK", "INTERRUPTED", "CONFIG_CHANGED", "CLOSED", 'FOLDER_EMPTY', 'FOLDER_INVALID', 'POST_UNKNOWN', 'POST_MANUAL', 'FILE_CHANGED', 'HIDE_MANUAL', 'HIDE_FAILED'];
+const atLeast = (version: string, [a, b, c]: [number, number, number]) => {
+  if (!/^\d+\.\d+\.\d+$/.test(version)) return false;
+  const [x, y, z] = version.split('.').map(Number);
+  return x !== a ? x > a : y !== b ? y > b : z >= c;
+};
+/** Progress of an "Ẩn bài" job, stored in browser_jobs.result. Counters + a short message only. */
+function hideProgress(raw: unknown) {
+  if (!raw || typeof raw !== 'object') return null;
+  const r = raw as Record<string, unknown>;
+  const n = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) && v >= 0 ? Math.min(1e6, Math.round(v)) : 0);
+  return {
+    changed: n(r.changed), skipped: n(r.skipped), scanned: n(r.scanned),
+    message: typeof r.message === 'string' ? r.message.slice(0, 300) : '',
+    status: ['completed', 'stopped', 'error'].includes(r.status as string) ? (r.status as string) : null,
+  };
+}
 const code = (v: unknown) => typeof v === "string" && errorCodes.includes(v) ? v : "BROWSER_FAILED";
 
 export function normalizeServer(value: unknown): string {
@@ -185,7 +201,8 @@ export async function queue(owner: number, b: Record<string, unknown>) {
   const deviceId = str(b.deviceId, 40); const kind = str(b.kind);
   const [device] = await db.select().from(devices).where(and(eq(devices.id, deviceId), eq(devices.ownerUserId, owner), eq(devices.revoked, 0)));
   if (!device || device.lastSeenAt < now() - 60) fail("Máy Windows chưa kết nối hoặc đang offline", 409);
-  if (!["open", "close", "check_proxy", 'post', 'preview'].includes(kind)) fail("Lệnh không hợp lệ");
+  if (!["open", "close", "check_proxy", 'post', 'preview', 'hide'].includes(kind)) fail("Lệnh không hợp lệ");
+  if (kind === 'hide' && !atLeast(device.version, [1, 0, 4])) fail('Cập nhật chương trình Windows lên 1.0.4 để dùng Ẩn bài', 409);
   const version = device.version.split('.').map(Number);
   if (['post', 'preview'].includes(kind) && (!/^\d+\.\d+\.\d+$/.test(device.version) || version[0] < 1 || (version[0] === 1 && version[1] === 0 && version[2] < 4))) fail('Cập nhật chương trình Windows lên 1.0.4 để xem trước và đăng bài', 409);
   const targets = kind === "check_proxy" ? [id(b.proxyId)] : ids(b.ids);
@@ -203,6 +220,10 @@ export async function queue(owner: number, b: Record<string, unknown>) {
       if (kind === 'open') {
         const [existing] = await db.select().from(jobs).where(and(eq(jobs.accountId, target), eq(jobs.ownerUserId, owner), eq(jobs.kind, 'open'), inArray(jobs.state, active)));
         if (existing) { result.push({ id: target, ok: true }); continue; }
+      }
+      if (kind === 'hide') {
+        const [existing] = await db.select().from(jobs).where(and(eq(jobs.accountId, target), eq(jobs.ownerUserId, owner), eq(jobs.kind, 'hide'), inArray(jobs.state, active)));
+        if (existing) fail('Tài khoản đang ẩn bài', 409);
       }
       const jobId = uuid();
       let payload: string | null = null;
@@ -280,6 +301,20 @@ export async function sync(device: Device, b: Record<string, unknown>) {
         await db.insert(checks).values({ jobId: job.id, ownerUserId: device.ownerUserId, deviceId: device.id, proxyId: job.proxyId!, revision: Number(job.configKey), ip, latency: Number.isFinite(r.latency) ? Math.max(0, Math.min(60000, Number(r.latency))) : null, error: ip ? null : code(r.error), checkedAt: now() }).onConflictDoNothing();
         await db.update(jobs).set({ state: ip ? "done" : "error", error: ip ? null : code(r.error) }).where(eq(jobs.id, job.id));
       }
+    } else if (job.kind === 'hide') {
+      // Window status (only when this job opened the profile) …
+      const status = typeof r.status === "string" && statuses.includes(r.status) ? r.status : null;
+      if (status) await db.update(profiles).set({ status, updatedAt: now() }).where(and(eq(profiles.accountId, job.accountId!), eq(profiles.jobId, job.id), eq(profiles.ownerUserId, device.ownerUserId), eq(profiles.id, String(r.profileId))));
+      // … Studio progress …
+      const progress = hideProgress(r.hide);
+      if (progress) await db.update(jobs).set({ result: JSON.stringify(progress) }).where(eq(jobs.id, job.id));
+      // … and the outcome. A window closed before the run finished is an interruption.
+      if (r.done === true) {
+        await db.update(jobs).set({ state: r.error ? "error" : "done", error: r.error ? code(r.error) : null }).where(eq(jobs.id, job.id));
+        // A window this job opened is closed by the agent once the job ends (it is no longer allowed).
+        await db.update(profiles).set({ status: "closed", updatedAt: now() }).where(and(eq(profiles.accountId, job.accountId!), eq(profiles.jobId, job.id), eq(profiles.ownerUserId, device.ownerUserId)));
+      }
+      else if (status && ["closed", "error", "interrupted"].includes(status)) await db.update(jobs).set({ state: "error", error: status === "closed" ? "CLOSED" : code(r.error) }).where(eq(jobs.id, job.id));
     } else if (job.kind === "close" || job.kind === 'post') {
       if (r.done === true) await db.update(jobs).set({ state: r.error ? "error" : "done", error: r.error ? code(r.error) : null }).where(eq(jobs.id, job.id));
     } else {
@@ -294,7 +329,7 @@ export async function sync(device: Device, b: Record<string, unknown>) {
   const known = Array.isArray(b.knownJobs) ? b.knownJobs.filter(v => typeof v === 'string').slice(0, 50) : [];
   const candidates = await db.select().from(jobs).where(and(eq(jobs.deviceId, device.id), inArray(jobs.state, active))).orderBy(asc(jobs.createdAt)).limit(50);
   const capacity = Number.isInteger(b.capacity) ? Math.max(0, Math.min(3, Number(b.capacity))) : 0;
-  const next = candidates.find(j => !known.includes(j.id) && j.kind === 'close') ?? candidates.find(j => !known.includes(j.id) && (j.kind === 'post' || j.kind === 'preview' || capacity > 0));
+  const next = candidates.find(j => !known.includes(j.id) && j.kind === 'close') ?? candidates.find(j => !known.includes(j.id) && (j.kind === 'post' || j.kind === 'preview' || j.kind === 'hide' || capacity > 0));
   let nextJob: { id: string; kind: string } | null = null;
   if (next) {
     const updated = await db.update(jobs).set({ state: next.state === 'running' ? 'running' : 'claimed' }).where(and(eq(jobs.id, next.id), eq(jobs.state, next.state))).returning({ id: jobs.id, kind: jobs.kind });
@@ -323,9 +358,17 @@ export async function claim(device: Device, jobId: string) {
       payload = { proxy: await proxySecret(p) };
     } else {
       const e = await effective(device.ownerUserId, j.accountId!);
-      if (j.kind === "open" && (e.key !== j.configKey || e.proxy?.enabled === 0)) fail("Cấu hình đã đổi; hãy mở lại", 409);
       let [p] = await db.select().from(profiles).where(eq(profiles.accountId, j.accountId!));
-      if (j.kind === "open") {
+      // "Ẩn bài" reuses a window already open on this device (its open job still running);
+      // otherwise it opens the profile itself, exactly like an `open` job.
+      let reuse = false;
+      if (j.kind === 'hide' && p && p.ownerUserId === device.ownerUserId && p.deviceId === device.id && p.status !== 'revoked' && p.jobId) {
+        const [current] = await db.select({ id: jobs.id }).from(jobs).where(and(eq(jobs.id, p.jobId), eq(jobs.state, 'running'), eq(jobs.deviceId, device.id)));
+        reuse = !!current;
+      }
+      const opens = j.kind === "open" || (j.kind === 'hide' && !reuse);
+      if (opens && (e.key !== j.configKey || e.proxy?.enabled === 0)) fail("Cấu hình đã đổi; hãy mở lại", 409);
+      if (opens) {
         if (p && p.ownerUserId === device.ownerUserId && p.status !== "revoked" && p.deviceId !== device.id) fail("Hồ sơ nằm trên máy khác", 409);
         if (!p || p.ownerUserId !== device.ownerUserId || p.status === "revoked") {
           const fresh = { accountId: j.accountId!, ownerUserId: device.ownerUserId, deviceId: device.id, id: uuid(), status: "closed", updatedAt: now() };
@@ -336,7 +379,7 @@ export async function claim(device: Device, jobId: string) {
       }
       if (!p || p.ownerUserId !== device.ownerUserId || p.deviceId !== device.id) fail("Không tìm thấy hồ sơ trên máy này", 409);
       if (j.kind === 'post' && p.status !== 'logged_in') fail('Phiên chưa xác minh đúng tài khoản', 409);
-      payload = { accountId: j.accountId, profileId: p.id, username: e.account.username, password: j.kind === "open" && j.autofill ? await decrypt(e.account.encPassword) : null, autofill: !!j.autofill, proxy: j.kind === "open" ? await proxySecret(e.proxy) : null, ...(j.kind === 'post' ? JSON.parse(j.payload!) : {}) };
+      payload = { accountId: j.accountId, profileId: p.id, username: e.account.username, password: opens && j.autofill ? await decrypt(e.account.encPassword) : null, autofill: !!j.autofill, proxy: opens ? await proxySecret(e.proxy) : null, ...(j.kind === 'post' ? JSON.parse(j.payload!) : {}), ...(j.kind === 'hide' ? { reuse } : {}) };
     }
     const changed = await db.update(jobs).set({ state: "running" }).where(and(eq(jobs.id, j.id), inArray(jobs.state, ["claimed", "running"]))).returning({ id: jobs.id });
     if (!changed.length) fail("Lệnh đã bị hủy", 409);

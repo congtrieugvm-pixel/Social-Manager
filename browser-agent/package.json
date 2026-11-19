@@ -1,11 +1,11 @@
 {
   "name": "social-manager-browser",
-  "version": "1.0.3",
+  "version": "1.0.4",
   "private": true,
   "type": "module",
   "engines": { "node": ">=22.15" },
   "scripts": {
-    "build": "tsc",
+    "build": "tsc && node scripts/copy-studio.mjs",
     "start": "node dist/main.js",
     "setup": "node dist/main.js setup",
     "fetch": "camoufox fetch",

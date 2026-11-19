@@ -51,7 +51,8 @@ for (const name of files.sort()) manifest.push(`${hash(await fs.readFile(path.jo
 await fs.writeFile(path.join(stage, 'SHA256SUMS'), manifest.join('\n') + '\n');
 const zip = new Zip(); zip.addLocalFolder(stage);
 const output = path.resolve(root, '../dist'); await fs.mkdir(output, { recursive: true });
-const releaseName = 'social-manager-browser-1.0.3-win-x64.zip';
+const { version: agentVersion } = JSON.parse(await fs.readFile(path.join(root, 'package.json'), 'utf8'));
+const releaseName = `social-manager-browser-${agentVersion}-win-x64.zip`;
 const archive = zip.toBuffer(); await fs.writeFile(path.join(output, releaseName), archive);
 const verify = new Zip(archive);
 for (const line of manifest) {
