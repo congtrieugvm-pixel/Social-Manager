@@ -264,7 +264,7 @@ export async function queue(owner: number, b: Record<string, unknown>) {
         }
       }
       await db.insert(jobs).values({ id: jobId, ownerUserId: owner, deviceId, kind, accountId: config ? target : null, proxyId: p?.id ?? null,
-        payload, configKey: config?.key ?? String(p?.revision), autofill: b.autofill === false ? 0 : 1, createdAt: now(), expiresAt: now() + 600 });
+        payload, configKey: config?.key ?? String(p?.revision), autofill: b.autofill === false ? 0 : 1, createdAt: now(), expiresAt: now() + (kind === 'open' || kind === 'hide' ? 3600 : 600) }); // open/hide may wait for a free window
       result.push({ id: target, ok: true });
     } catch (e) { result.push({ id: target, ok: false, error: e instanceof AuthError ? e.message : "Đã có lệnh/phiên đang chạy cho tài khoản này" }); }
   }
