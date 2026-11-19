@@ -1520,6 +1520,86 @@ a.btn {
   .yt-foot .select { flex: none; width: 100%; }
 }
 
+/* ── Bookmark Key: Tìm ngách (NexLev) — data-dense panel ── */
+.nx { margin-bottom: 14px; padding: 16px; display: flex; flex-direction: column; gap: 12px; border-top: 3px solid var(--accent); }
+.nx-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; flex-wrap: wrap; }
+.nx-title { display: inline-flex; align-items: center; gap: 8px; margin: 0; font-size: 16px; font-weight: 650; color: var(--ink); }
+.nx-title svg { color: var(--accent); }
+.nx-hint { margin: 4px 0 0; font-size: 13px; color: var(--muted); }
+.nx-quota { font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; padding: 3px 10px; border: 1px solid var(--line); border-radius: 999px; background: var(--bg-1); }
+.nx-modes { align-self: flex-start; flex-wrap: wrap; }
+.nx-cost { font-size: 11px; color: var(--dim); font-variant-numeric: tabular-nums; margin-left: 2px; }
+.btn-seg.active .nx-cost { color: var(--muted); }
+.nx-form { display: flex; gap: 10px; align-items: flex-end; flex-wrap: wrap; }
+.nx-field { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--muted); font-weight: 500; }
+.nx-field .select { min-width: 130px; }
+.nx-grow { flex: 1 1 280px; min-width: 0; }
+.nx-grow .input { width: 100%; }
+.nx-check { padding-bottom: 8px; }
+.nx-run { white-space: nowrap; }
+.nx-error { color: var(--danger); background: var(--danger-soft); border: 1px solid var(--danger-soft); border-radius: 8px; padding: 10px 12px; font-size: 13px; }
+.nx-toolbar { display: flex; justify-content: space-between; align-items: center; gap: 10px; flex-wrap: wrap; padding-top: 12px; border-top: 1px solid var(--line); }
+.nx-summary { font-size: 13px; color: var(--ink-soft); font-variant-numeric: tabular-nums; }
+.nx-filters { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.nx-mini { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--muted); }
+.nx-mini .input { width: 92px; font-variant-numeric: tabular-nums; }
+.nx-empty { font-size: 13px; color: var(--muted); padding: 14px; text-align: center; border: 1px dashed var(--line-strong); border-radius: 8px; }
+
+.nx-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 10px; }
+.nx-card { display: flex; flex-direction: column; gap: 10px; padding: 12px; border: 1px solid var(--line); border-radius: 10px; background: var(--paper); min-width: 0; transition: border-color 0.18s ease, box-shadow 0.18s ease; }
+.nx-card:hover { border-color: var(--line-strong); box-shadow: var(--shadow-1); }
+.nx-card-head { display: flex; gap: 10px; align-items: center; }
+.nx-avatar { flex-basis: 40px; width: 40px; height: 40px; }
+.nx-name { flex: 1; min-width: 0; }
+.nx-link { display: inline-flex; align-items: center; gap: 4px; max-width: 100%; color: var(--ink); font-weight: 600; font-size: 14px; text-decoration: none; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.nx-link svg { flex: 0 0 auto; color: var(--dim); }
+.nx-link:hover { color: var(--accent-hover); }
+.nx-link:focus-visible, .nx-vtitle:focus-visible, .nx-thumb:focus-visible { outline: none; box-shadow: var(--focus); border-radius: 4px; }
+.nx-meta { font-size: 12px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.nx-save { padding: 5px 10px; font-size: 12px; white-space: nowrap; }
+.nx-saved { display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; }
+.nx-stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 1px; margin: 0; background: var(--line); border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+.nx-stats div { background: var(--bg-1); padding: 6px 8px; min-width: 0; }
+.nx-stats dt { font-size: 10.5px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; }
+.nx-stats dd { margin: 2px 0 0; font-size: 14px; font-weight: 650; color: var(--ink); font-variant-numeric: tabular-nums; }
+.nx-sim { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--muted); }
+.nx-sim b { font-variant-numeric: tabular-nums; color: var(--ink); min-width: 22px; text-align: right; }
+.nx-bar { flex: 1; height: 6px; border-radius: 3px; background: var(--bg-3); overflow: hidden; }
+.nx-bar i { display: block; height: 100%; background: var(--accent); border-radius: 3px; }
+.nx-tags { display: flex; gap: 4px; flex-wrap: wrap; }
+.nx-tag { font-size: 11px; padding: 2px 8px; border-radius: 999px; background: var(--bg-2); color: var(--ink-soft); white-space: nowrap; max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
+.nx-desc { margin: 0; font-size: 12.5px; color: var(--muted); line-height: 1.5; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+
+.nx-videos { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
+.nx-video { display: flex; gap: 12px; align-items: center; padding: 10px 12px; background: var(--paper); border-top: 1px solid var(--line); transition: background-color 0.15s ease; }
+.nx-video:first-child { border-top: 0; }
+.nx-video:hover { background: var(--bg-1); }
+.nx-thumb { position: relative; flex: 0 0 136px; aspect-ratio: 16 / 9; border-radius: 6px; overflow: hidden; background: var(--bg-3); }
+.nx-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.nx-dur { position: absolute; right: 4px; bottom: 4px; padding: 1px 5px; border-radius: 4px; background: rgba(0, 0, 0, 0.75); color: #fff; font-size: 11px; font-variant-numeric: tabular-nums; }
+.nx-vbody { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+.nx-vtitle { color: var(--ink); font-size: 13.5px; font-weight: 600; text-decoration: none; line-height: 1.4; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.nx-vtitle:hover { color: var(--accent-hover); }
+.nx-vstats { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; font-size: 12px; color: var(--ink-soft); font-variant-numeric: tabular-nums; }
+.nx-vstats span { display: inline-flex; align-items: center; gap: 4px; }
+.nx-outlier { padding: 1px 8px; border-radius: 999px; background: var(--bg-2); border: 1px solid var(--line-strong); font-weight: 650; }
+.nx-outlier.hot { background: var(--accent-soft); border-color: var(--accent); color: var(--accent); }
+.nx-more { align-self: center; }
+@media (max-width: 768px) {
+  .nx { padding: 12px; }
+  .nx-form { flex-direction: column; align-items: stretch; }
+  .nx-grow { flex: none; }
+  .nx-grow .input { min-height: 44px; }
+  .nx-field .select, .nx-run { width: 100%; min-height: 44px; }
+  .nx-grid { grid-template-columns: 1fr; }
+  .nx-toolbar, .nx-filters { align-items: stretch; }
+  .nx-filters .select { flex: 1 1 100%; min-height: 44px; }
+  .nx-save { min-height: 40px; }
+  .nx-video { flex-wrap: wrap; }
+  .nx-thumb { flex-basis: 112px; }
+  .nx-video .nx-save, .nx-video .nx-saved { margin-left: auto; }
+}
+
 /* ── TikTok: số ngày chưa đăng video ── */
 .idle-badge {
   display: inline-flex;

@@ -3,8 +3,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { patchJson, postJson, safeJson } from "@/lib/req-body";
 import { confirmDialog } from "@/app/_components/notify";
-import { BookmarkPlus, Plus, RotateCw, X } from "lucide-react";
+import { BookmarkPlus, Plus, RotateCw, Sparkles, X } from "lucide-react";
 import { SkeletonCard } from "@/app/_components/skeleton";
+import NichePanel from "./niche-panel";
 
 // Bookmark Key: saved links of any kind. YouTube channels, TikTok profiles
 // and sites with an RSS/Atom feed are tracked: a small red badge counts items
@@ -77,6 +78,7 @@ export default function YoutubePage() {
   const [onlyNew, setOnlyNew] = useState(false);
   const [showAdd, setShowAdd] = useState(false);
   const [showGroups, setShowGroups] = useState(false);
+  const [showNiche, setShowNiche] = useState(false);
   const [refreshing, setRefreshing] = useState<{ done: number; total: number } | null>(null);
   const refreshingRef = useRef(false);
   const channelsRef = useRef<Channel[] | null>(null);
@@ -186,6 +188,14 @@ export default function YoutubePage() {
   }, [channels]);
 
   const totalUnread = useMemo(() => (channels ?? []).reduce((s, c) => s + c.unread, 0), [channels]);
+  const savedYtIds = useMemo(() => new Set((channels ?? []).filter((c) => c.kind === "youtube").map((c) => c.channelId)), [channels]);
+
+  const addChannels = useCallback((list: Channel[]) => {
+    setChannels((cur) => {
+      const have = new Set((cur ?? []).map((c) => c.id));
+      return [...list.filter((c) => !have.has(c.id)), ...(cur ?? [])];
+    });
+  }, []);
 
   const visible = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -212,6 +222,10 @@ export default function YoutubePage() {
             <RotateCw size={14} aria-hidden="true" className={refreshing ? "spin" : undefined} />
             {refreshing ? `Đang kiểm tra ${refreshing.done}/${refreshing.total}…` : "Kiểm tra bài mới"}
           </button>
+          <button className={`btn${showNiche ? " btn-accent" : ""}`} onClick={() => setShowNiche((v) => !v)} aria-expanded={showNiche}>
+            <Sparkles size={14} aria-hidden="true" />
+            Tìm ngách
+          </button>
           <button className={`btn${showGroups ? " btn-accent" : ""}`} onClick={() => setShowGroups((v) => !v)}>
             Nhóm ({groups.length})
           </button>
@@ -233,14 +247,11 @@ export default function YoutubePage() {
         <AddForm
           groups={groups}
           defaultGroup={activeGroup?.id ?? null}
-          onAdded={(list) => {
-            setChannels((cur) => {
-              const have = new Set((cur ?? []).map((c) => c.id));
-              return [...list.filter((c) => !have.has(c.id)), ...(cur ?? [])];
-            });
-          }}
+          onAdded={addChannels}
         />
       )}
+
+      {showNiche && <NichePanel groups={groups} savedIds={savedYtIds} onSaved={(list) => addChannels(list as Channel[])} />}
 
       {showGroups && (
         <GroupManager
