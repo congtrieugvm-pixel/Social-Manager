@@ -1,7 +1,7 @@
 'use client';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
-import { Monitor, Shield, Play, Square, Send, Users, History, Search, RefreshCw, FolderOpen, Plus, X, CheckCircle2, AlertCircle, EyeOff } from 'lucide-react';
+import { Monitor, Shield, Play, Send, Users, History, Search, RefreshCw, FolderOpen, Plus, X, CheckCircle2, AlertCircle, EyeOff } from 'lucide-react';
 import { confirmDialog } from '@/app/_components/notify';
 import { postJson, safeJson } from '@/lib/req-body';
 import type { dashboard } from '@/lib/browser-service';
@@ -11,7 +11,7 @@ type Data = Awaited<ReturnType<typeof dashboard>>;
 type Account = Data['accounts'][number];
 type Section = 'accounts' | 'posting' | 'proxies' | 'devices' | 'activity';
 const sections = [
-  { id: 'accounts', label: 'Tài khoản', icon: Users },
+  { id: 'accounts', label: 'Proxy tài khoản', icon: Users },
   { id: 'posting', label: 'Đăng bài', icon: Send },
   { id: 'proxies', label: 'Proxy', icon: Shield },
   { id: 'devices', label: 'Máy Windows', icon: Monitor },
@@ -45,7 +45,7 @@ export default function BrowserManager() {
   const [error, setError] = useState(''); const [message, setMessage] = useState(''); const [busy, setBusy] = useState(false);
   const [query, setQuery] = useState(''); const [filter, setFilter] = useState('');
   const [selected, setSelected] = useState<number[]>([]); const [deviceId, setDeviceId] = useState('');
-  const [autofill, setAutofill] = useState(true); const [mode, setMode] = useState('inherit'); const [proxyId, setProxyId] = useState('');
+  const autofill = true; const [mode, setMode] = useState('inherit'); const [proxyId, setProxyId] = useState('');
   const [editing, setEditing] = useState(false); const [proxy, setProxy] = useState(blankProxy);
   const [postFolder, setPostFolder] = useState('');
   const [postCaption, setPostCaption] = useState('');
@@ -119,11 +119,6 @@ export default function BrowserManager() {
   }
   const online = data?.devices.filter(d => !d.revoked && d.lastSeenAt >= data.now - 60) ?? [];
   const selectedDevice = online.find(d => d.id === deviceId);
-  const openBlockedReason = busy ? 'Đang xử lý thao tác trước…'
-    : loadingPostGroup ? 'Đang chọn tài khoản theo nhóm…'
-    : !selected.length ? 'Chọn tài khoản trong danh sách để mở trình duyệt.'
-    : !deviceId ? online.length ? 'Chọn máy Windows ở phía trên.' : 'Máy Windows chưa online. Mở Setup trên máy Windows để kết nối lại.'
-    : !selectedDevice ? 'Máy đã chọn đang mất kết nối. Mở Setup trên máy Windows rồi bấm làm mới trạng thái.' : '';
   function connection(a: NonNullable<Data>['accounts'][number]) {
     const id = a.mode === 'custom' ? a.proxyId : a.mode === 'inherit' ? data?.groups.find(g => g.id === a.groupId)?.proxyId : null;
     const p = data?.proxies.find(p => p.id === id);
@@ -167,21 +162,6 @@ export default function BrowserManager() {
   }
   const readyCount = selectedAccounts.filter(account => readiness(account).ready).length;
   const canPost = !busy && !loadingPostGroup && selected.length > 0 && readyCount === selected.length;
-  const hideVersionOk = !!selectedDevice && /^\d+\.\d+\.\d+$/.test(selectedDevice.version) && (() => {
-    const [a, b, c] = selectedDevice.version.split('.').map(Number);
-    return a !== 1 ? a > 1 : b !== 0 ? b > 0 : c >= 4;
-  })();
-  const hideBlockedReason = openBlockedReason || (!hideVersionOk ? 'Cập nhật chương trình Windows lên 1.0.4 để dùng Ẩn bài.' : '');
-  async function hidePosts(ids: number[]) {
-    if (!ids.length || !selectedDevice || !hideVersionOk) return;
-    const names = data?.accounts.filter(account => ids.includes(account.id)).map(account => '@' + account.username) ?? [];
-    const confirmed = await confirmDialog({
-      title: 'Ẩn bài sang Chỉ mình tôi',
-      message: `Mở TikTok Studio trên ${selectedDevice?.name} và chuyển TOÀN BỘ bài công khai của ${ids.length === 1 ? names[0] : `${ids.length} tài khoản`} sang Chỉ mình tôi? Bài đã riêng tư được giữ nguyên. Bấm Đóng ở tài khoản để dừng giữa chừng.`,
-      confirmLabel: 'Ẩn bài',
-    });
-    if (confirmed) await act('jobs', { kind: 'hide', ids, deviceId, autofill });
-  }
   async function publish() {
     if (!canPost) return;
     const confirmed = await confirmDialog({
@@ -199,8 +179,8 @@ export default function BrowserManager() {
   const allVisibleSelected = toggleableAccounts.length > 0 && toggleableAccounts.every(account => selected.includes(account.id));
   return <div className={styles.page}>
     <header className={styles.header}>
-      <div><h1>Proxy & trình duyệt</h1><p>Quản lý phiên TikTok và đăng video từ máy Windows.</p></div>
-      <Link href="/" className="btn"><Users size={16} />Danh sách TikTok</Link>
+      <div><h1>Cài đặt trình duyệt</h1><p>Proxy, máy Windows và lịch sử lệnh. Mở trình duyệt, Ẩn bài và Đóng nằm ngay ở danh sách TikTok.</p></div>
+      <Link href="/" className="btn btn-primary"><Users size={16} />Về danh sách TikTok</Link>
     </header>
 
     <div className={styles.overview} aria-label="Tổng quan trình duyệt">
@@ -248,13 +228,10 @@ export default function BrowserManager() {
           <span><b>{selected.length}</b> đã chọn</span>
           <button className="btn btn-quiet" disabled={!selected.length || busy} onClick={() => { groupRequest.current++; setLoadingPostGroup(false); setSelected([]); setPostGroup(''); }}>Bỏ chọn</button>
           <div className={styles.selectionButtons}>
-            <button className="btn btn-primary" title={openBlockedReason || 'Mở các tài khoản đã chọn'} aria-describedby={openBlockedReason ? 'browser-open-status' : undefined} disabled={!!openBlockedReason} onClick={() => void act('jobs', { kind: 'open', ids: selected, deviceId, autofill })}><Play size={15} />Mở trình duyệt</button>
-            <button className="btn" disabled={busy || loadingPostGroup || !selected.length || !selectedDevice} onClick={() => void act('jobs', { kind: 'close', ids: selected, deviceId })}><Square size={15} />Đóng</button>
-            <button className="btn" title={hideBlockedReason || 'Chuyển toàn bộ bài công khai sang Chỉ mình tôi'} disabled={!!hideBlockedReason} onClick={() => void hidePosts(selected)}><EyeOff size={15} />Ẩn bài</button>
+            <Link href="/" className="btn"><Play size={15} />Mở / Ẩn bài ở danh sách TikTok</Link>
             <button className="btn" disabled={!selected.length || loadingPostGroup} onClick={() => setSection('posting')}><Send size={15} />Đăng bài</button>
           </div>
         </div>
-        {openBlockedReason && <p id="browser-open-status" role="status" className={styles.openStatus}>{openBlockedReason}</p>}
         <div className={styles.table}><table><thead><tr>
           <th><input aria-label="Chọn 20 tài khoản đầu đang hiển thị" type="checkbox" checked={allVisibleSelected} disabled={busy || loadingPostGroup || !toggleableAccounts.length} onChange={event => { setPostGroup(''); setSelected(event.target.checked ? toggleableAccounts.map(account => account.id) : []); }} /></th>
           <th>Tài khoản TikTok</th><th>Proxy lần mở tới</th><th>Phiên trình duyệt</th><th>Máy lưu hồ sơ</th><th><span className={styles.srOnly}>Thao tác hồ sơ</span></th>
@@ -275,14 +252,13 @@ export default function BrowserManager() {
                 {hiding ? hide?.message && <small>{hide.message}</small> : hideJob.error && <small>{errorMessages[hideJob.error] ?? hideJob.error}</small>}
               </div>}</td>
             <td>{device?.name ?? '—'}{device && <small>{online.some(item => item.id === device.id) ? 'Online' : 'Offline'}</small>}</td>
-            <td><button className="btn btn-quiet" aria-label={`Ẩn bài ${account.username}`} title={hiding ? 'Đang ẩn bài' : !selectedDevice ? 'Chọn máy Windows đang online' : !hideVersionOk ? 'Cần Windows 1.0.4' : 'Chuyển toàn bộ bài công khai sang Chỉ mình tôi'} disabled={busy || loadingPostGroup || !selectedDevice || !hideVersionOk || !!hiding} onClick={() => void hidePosts([account.id])}><EyeOff size={14} />Ẩn bài</button><button className="btn" aria-label={`Mở trình duyệt ${account.username}`} disabled={busy || loadingPostGroup || !selectedDevice} title={!selectedDevice ? 'Chọn máy Windows đang online để mở' : undefined} onClick={() => void act('jobs', { kind: 'open', ids: [account.id], deviceId, autofill })}><Play size={14} />Mở</button>{profile && <button className="btn btn-quiet" disabled={busy} onClick={async () => {
+            <td>{profile &&<button className="btn btn-quiet" disabled={busy} onClick={async () => {
               if (await confirmDialog({ title: 'Tạo hồ sơ trên máy khác', message: `Xác nhận đã dừng browser của @${account.username} trên máy cũ. Hồ sơ mới cần đăng nhập lại.`, confirmLabel: 'Tạo hồ sơ mới' })) void act('profiles/relocate', { accountId: account.id, confirmStopped: true });
             }}>Chuyển máy</button>}</td>
           </tr>;
         })}</tbody></table></div>
         {data && !data.accounts.length && <div className={styles.empty}><Users size={30} /><b>Chưa có tài khoản phù hợp</b><span>Thay đổi tìm kiếm hoặc chọn nhóm khác.</span><Link href="/" className="btn">Xem tài khoản TikTok</Link></div>}
         <div className={styles.accountOptions}>
-          <label><input type="checkbox" checked={autofill} onChange={event => setAutofill(event.target.checked)} />Điền thông tin đăng nhập đã lưu</label>
           <div className={styles.row}><label>Proxy cho tài khoản đã chọn<select value={mode} onChange={event => setMode(event.target.value)}><option value="inherit">Dùng proxy của nhóm</option><option value="custom">Dùng proxy riêng</option><option value="direct">Không dùng proxy</option></select></label>
             {mode === 'custom' && <label>Proxy riêng<select value={proxyId} onChange={event => setProxyId(event.target.value)}><option value="">Chọn proxy</option>{data?.proxies.map(proxy => <option key={proxy.id} value={proxy.id}>{proxy.name}</option>)}</select></label>}
             <button className="btn" disabled={busy || loadingPostGroup || !selected.length || (mode === 'custom' && !proxyId)} onClick={() => void act('assign', { ids: selected, mode, proxyId: mode === 'custom' ? Number(proxyId) : null })}>Gán proxy</button>

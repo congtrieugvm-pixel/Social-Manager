@@ -28,6 +28,7 @@ async function handle(req: Request, ctx: { params: Promise<{ path: string[] }> }
       const selected = raw ? service.ids(raw.split(",").map(Number)) : [];
       return reply(await service.dashboard(owner, u.searchParams.get("q") ?? "", selected));
     }
+    if (route === "state" && req.method === "GET") return reply(await service.browserState(owner));
     if (req.method !== "POST") service.fail("Phương thức không hỗ trợ", 405);
     if (route === "proxies/save") return reply(await service.saveProxy(owner, b));
     if (route === "proxies/delete") return reply(await service.deleteProxy(owner, service.id(b.id)));

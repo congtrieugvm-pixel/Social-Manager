@@ -16,6 +16,8 @@ import {
   Folder,
   FolderOpen,
   Play,
+  EyeOff,
+  Square,
   MoreHorizontal,
   Inbox,
   SearchX,
@@ -43,6 +45,7 @@ import { SkeletonRows } from "./_components/skeleton";
 import { DensityToggle } from "./_components/density-toggle";
 import { Sheet } from "./_components/sheet";
 import { HotmailConnect } from "./_components/hotmail-connect";
+import { BrowserBulkActions, BrowserMenuItems, BrowserRowStatus, useTikTokBrowser } from "./_components/tiktok-browser";
 
 interface Video {
   id: string;
@@ -311,6 +314,10 @@ export default function Dashboard() {
   const [employeesList, setEmployeesList] = useState<EmployeeRow[]>([]);
   const [groupFilter, setGroupFilter] = useState<GroupFilter>("all");
   const [selected, setSelected] = useState<Set<number>>(new Set());
+  const rowsRef = useRef<AccountRow[]>([]);
+  rowsRef.current = rows;
+  const usernameOf = useCallback((id: number) => rowsRef.current.find((r) => r.id === id)?.username, []);
+  const browser = useTikTokBrowser(usernameOf);
   const [selectionGroups, setSelectionGroups] = useState<Array<number | 'none'>>([]);
   const [selectingGroups, setSelectingGroups] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -1286,7 +1293,6 @@ export default function Dashboard() {
       <header className="page-header tt-head">
         <div className="page-header-left">
           <h1 className="h1-serif">Tài khoản TikTok</h1>
-          <Link href="/browser" className="btn btn-quiet">Proxy & trình duyệt</Link>
           <p className="tt-sub">
             {total.toLocaleString("vi-VN")} tài khoản · {groups.length} nhóm · {statusesList.length} trạng thái
           </p>
@@ -1319,6 +1325,10 @@ export default function Dashboard() {
                 Hiện số ngày chưa đăng
               </label>
               <div className="menu-sep" role="separator" />
+              <Link href="/browser" role="menuitem" className="menu-item">
+                <Settings2 size={16} aria-hidden="true" />
+                Cài đặt trình duyệt
+              </Link>
               {CATALOG.map(({ href, label, icon: Icon }) => (
                 <Link key={href} href={href} role="menuitem" className="menu-item">
                   <Icon size={16} aria-hidden="true" />
@@ -1329,6 +1339,10 @@ export default function Dashboard() {
           </details>
         </div>
         <div className="tt-head-actions only-wide">
+          <Link href="/browser" className="btn" title="Proxy, máy Windows và lịch sử lệnh trình duyệt">
+            <Settings2 size={15} aria-hidden="true" />
+            <span className="btn-label">Cài đặt trình duyệt</span>
+          </Link>
           <details className="menu">
             <summary className="btn" aria-label="Danh mục">
               <SlidersHorizontal size={15} aria-hidden="true" />
@@ -1444,7 +1458,6 @@ export default function Dashboard() {
 
           {selected.size > 0 ? (
             <div className="tt-selbar only-wide" role="toolbar" aria-label="Thao tác với tài khoản đã chọn">
-              <Link className="btn" href={`/browser?ids=${Array.from(selected).slice(0, 20).join(',')}`}>Trình duyệt & đăng bài{selected.size > 20 ? ' (20 tài khoản đầu)' : ''}</Link>
               <span className="tt-selcount">
                 <b>{selected.size}</b> đã chọn
               </span>
@@ -1470,6 +1483,8 @@ export default function Dashboard() {
                 <ImageIcon size={15} aria-hidden="true" />
                 {fetchLabel("fetch-avatar", "Lấy ảnh đại diện")}
               </button>
+              <span className="tt-sep" aria-hidden="true" />
+              <BrowserBulkActions browser={browser} ids={Array.from(selected)} />
               <span className="tt-sep" aria-hidden="true" />
               <BulkSelect
                 label="Chuyển nhóm"
@@ -1709,6 +1724,7 @@ export default function Dashboard() {
                         @{r.username}
                       </a>
                       {idleCfg.enabled && <IdleDaysBadge videos={r.lastVideos} cfg={idleCfg} />}
+                      <BrowserRowStatus view={browser.views.get(r.id)} />
                     </div>
                   </td>
                   <td>
@@ -2093,6 +2109,7 @@ export default function Dashboard() {
                   </a>
                   <span className="m-tags">
                     {idleCfg.enabled && <IdleDaysBadge videos={r.lastVideos} cfg={idleCfg} />}
+                    <BrowserRowStatus view={browser.views.get(r.id)} />
                     {r.groupName && (
                       <span className="m-tag">
                         <span className="fchip-dot" style={{ background: r.groupColor ?? "var(--dim)" }} />
@@ -2176,7 +2193,15 @@ export default function Dashboard() {
         )}
         <Sheet open={actionsOpen && selected.size > 0} title={`${selected.size} tài khoản đã chọn`} onClose={() => setActionsOpen(false)}>
           <div className="sheet-actions">
-            <Link className="sheet-btn" href={`/browser?ids=${Array.from(selected).slice(0, 20).join(',')}`}>Trình duyệt & đăng bài{selected.size > 20 ? ' (20 tài khoản đầu)' : ''}</Link>
+            <button className="sheet-btn" disabled={!browser.device || !!browser.sending} onClick={() => { setActionsOpen(false); void browser.run("open", Array.from(selected)); }}>
+              <Play size={20} aria-hidden="true" /> Mở trình duyệt{browser.device ? ` · ${browser.device.name}` : " (chưa có máy online)"}
+            </button>
+            <button className="sheet-btn" disabled={!browser.device || !!browser.sending} onClick={() => { setActionsOpen(false); void browser.run("hide", Array.from(selected)); }}>
+              <EyeOff size={20} aria-hidden="true" /> Ẩn bài (Chỉ mình tôi)
+            </button>
+            <button className="sheet-btn" disabled={!browser.device || !!browser.sending} onClick={() => { setActionsOpen(false); void browser.run("close", Array.from(selected)); }}>
+              <Square size={18} aria-hidden="true" /> Đóng trình duyệt / hủy lệnh
+            </button>
             <button className="sheet-btn" disabled={action !== null} onClick={() => { setActionsOpen(false); runFetchBulk("fetch-avatar"); }}>
               <ImageIcon size={20} aria-hidden="true" /> Lấy ảnh đại diện
             </button>
@@ -3183,6 +3208,7 @@ export default function Dashboard() {
                   copied={copiedLabel === `ctx-${ctxMenu.id}-totp`}
                   onCopy={(code) => copyText(code, `ctx-${ctxMenu.id}-totp`)}
                 />
+                <BrowserMenuItems browser={browser} id={ctxMenu.id} onDone={() => setCtxMenu(null)} />
                 <div style={{ padding: "4px 4px 0" }}>
                   <button
                     disabled={ctxMenu.browserLogin === "loading" || !d.email}

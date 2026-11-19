@@ -83,6 +83,18 @@ export async function dashboard(owner: number, search: string, selected: number[
   const posting = await db.select().from(browserPosting).where(eq(browserPosting.ownerUserId, owner));
   return { owner, now: now(), accounts: accountRows, proxies: ps, devices: ds, groups: gs, profiles: fs, jobs: js, checks: cs, posting };
 }
+/** Light snapshot for the TikTok accounts table: machines, window status per account, recent jobs. */
+export async function browserState(owner: number) {
+  await expireJobs(owner);
+  const [ds, fs, js] = await Promise.all([
+    db.select({ id: devices.id, name: devices.name, version: devices.version, lastSeenAt: devices.lastSeenAt }).from(devices).where(and(eq(devices.ownerUserId, owner), eq(devices.revoked, 0))),
+    db.select({ accountId: profiles.accountId, deviceId: profiles.deviceId, status: profiles.status, updatedAt: profiles.updatedAt }).from(profiles).where(eq(profiles.ownerUserId, owner)),
+    db.select({ id: jobs.id, kind: jobs.kind, accountId: jobs.accountId, state: jobs.state, error: jobs.error, result: jobs.result, createdAt: jobs.createdAt })
+      .from(jobs).where(and(eq(jobs.ownerUserId, owner), gt(jobs.createdAt, now() - 86400), inArray(jobs.kind, ['open', 'close', 'hide'])))
+      .orderBy(desc(jobs.createdAt)).limit(300),
+  ]);
+  return { now: now(), owner, devices: ds, profiles: fs, jobs: js };
+}
 export async function savePosting(owner: number, b: Record<string, unknown>) {
   const targets = ids(b.ids);
   const deviceId = str(b.deviceId, 40);
