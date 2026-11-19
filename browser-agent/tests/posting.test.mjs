@@ -7,11 +7,21 @@ import { reserveVideo, postVideo } from '../dist/posting.js';
 import { Operation } from '../dist/operation.js';
 import { navigateAccount } from '../dist/login.js';
 
-test('authenticated navigation survives TikTok redirect without filling login', async () => {
+// The nav shows the signed-in user when `signedIn`, nothing otherwise.
+const navPage = (signedIn, urls) => ({
+  url: () => 'https://www.tiktok.com/',
+  goto: async url => { urls.push(url); throw new Error('Navigation interrupted by redirect'); },
+  locator: () => ({ first: () => ({ isVisible: async () => false, getAttribute: async () => { if (signedIn) return '/@fixture'; throw new Error('absent'); } }) }),
+});
+test('a session that the page confirms survives TikTok redirect without filling login', async () => {
   const urls = [];
-  const page = { goto: async url => { urls.push(url); throw new Error('Navigation interrupted by redirect'); } };
-  await navigateAccount(page, true, 'fixture', 'password', true);
+  assert.deepEqual(await navigateAccount(navPage(true, urls), true, 'fixture', 'password', true), { result: 'logged_in' });
   assert.deepEqual(urls, ['https://www.tiktok.com/']);
+});
+test('an expired session cookie no longer skips the saved-credentials login', async () => {
+  const urls = [];
+  await navigateAccount(navPage(false, urls), true, 'fixture', 'password', true);
+  assert.deepEqual(urls, ['https://www.tiktok.com/', 'https://www.tiktok.com/login/phone-or-email/email']);
 });
 test('posting takes one file, skips reserved files per account and records confirmation', async () => {
   const folder = await mkdtemp(join(tmpdir(), 'sm-post-fixture-'));

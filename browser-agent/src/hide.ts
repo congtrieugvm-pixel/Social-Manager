@@ -60,14 +60,27 @@ export function cleanProgress(raw: unknown): HideProgress {
 const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 const onStudio = (page: Page) => { try { const u = new URL(page.url()); return u.hostname === 'www.tiktok.com' && u.pathname.startsWith('/tiktokstudio'); } catch { return false; } };
 
+/** What to tell the user while waiting, based on how the saved-credentials login went. */
+export function loginMessage(status: string, login: Session['login']): string {
+  if (status === 'needs_verification' || login?.result === 'challenge') return 'TikTok cần xác minh (CAPTCHA/OTP). Hoàn tất trong cửa sổ trình duyệt để tiếp tục.';
+  if (status === 'wrong_account' || login?.result === 'wrong_account') return 'Cửa sổ đang đăng nhập tài khoản khác. Đăng xuất rồi đăng nhập đúng tài khoản.';
+  switch (login?.result) {
+    case 'rejected': return `TikTok từ chối đăng nhập: “${login.error}”. Kiểm tra mật khẩu đã lưu hoặc đăng nhập tay trong cửa sổ.`;
+    case 'no_password': return 'Tài khoản chưa lưu mật khẩu nên không tự đăng nhập được. Đăng nhập tay trong cửa sổ trình duyệt.';
+    case 'no_form': return `Không tự đăng nhập được${login.error ? ` (${login.error})` : ' (không thấy form đăng nhập email)'}. Đăng nhập tay trong cửa sổ trình duyệt.`;
+    case 'pending': case 'submitted': return 'Đã tự điền và bấm Đăng nhập. Đang chờ TikTok xác nhận…';
+    default: return 'Đang chờ đăng nhập đúng tài khoản trong cửa sổ trình duyệt…';
+  }
+}
+
 /** Wait until the session's TikTok tab proves the expected account is signed in. */
 export async function waitForLogin(session: Session, operation: Operation, report: (p: HideProgress) => void) {
   const deadline = Date.now() + LOGIN_WAIT_MS;
   let status = await session.inspect();
   while (status !== 'logged_in') {
     operation.check();
-    if (status === 'wrong_account' || status === 'closed' || Date.now() > deadline) throw new Error('HIDE_MANUAL');
-    report({ changed: 0, skipped: 0, scanned: 0, message: status === 'needs_verification' ? 'TikTok cần xác minh (CAPTCHA/OTP). Hoàn tất trong cửa sổ trình duyệt để tiếp tục.' : 'Đang chờ đăng nhập đúng tài khoản trong cửa sổ trình duyệt…' });
+    if (status === 'closed' || Date.now() > deadline) throw new Error('HIDE_MANUAL');
+    report({ changed: 0, skipped: 0, scanned: 0, message: loginMessage(status, session.login) });
     await sleep(3000);
     status = await session.inspect();
   }
