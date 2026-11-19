@@ -1,4 +1,5 @@
 import type { Page } from 'playwright-core';
+import { base32, totp, totpRemaining } from './totp.js';
 
 export function identityStatus(actual: string | null, expected: string, challenge: boolean) {
   if (challenge) return 'needs_verification';
@@ -32,7 +33,13 @@ const LOGIN_URL = 'https://www.tiktok.com/login/phone-or-email/email';
 const ERROR_TEXT = /incorrect|wrong|try again|too many|maximum number|doesn['’]t exist|not registered|sai|không đúng|không chính xác|thử lại|quá nhiều|không tồn tại/i;
 const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 const onLoginPage = (page: Page) => { try { return new URL(page.url()).pathname.startsWith('/login'); } catch { return false; } };
-const challengeVisible = (page: Page) => page.locator('iframe[src*="captcha"], [id*="captcha"], input[autocomplete="one-time-code"]').first().isVisible().catch(() => false);
+const captchaVisible = (page: Page) => page.locator('iframe[src*="captcha"], [id*="captcha"]').first().isVisible().catch(() => false);
+// The 2-step verification code box (never the username/password fields).
+const CODE_INPUT = ['input[autocomplete="one-time-code"]', 'input[placeholder*="code" i]', 'input[placeholder*="mã" i]', 'input[name*="code" i]', 'input[inputmode="numeric"]']
+  .map(s => `${s}:not([name="username"]):not([type="password"])`).join(', ');
+const codeInput = (page: Page) => page.locator(CODE_INPUT).first();
+const AUTH_METHOD = /authenticator|ứng dụng xác thực|trình xác thực/i;
+const nextButton = (page: Page) => page.getByRole('button', { name: /^\s*(next|verify|submit|continue|confirm|log in|tiếp|tiếp tục|xác minh|xác nhận|gửi|đăng nhập)\s*$/i }).first();
 
 async function loginError(page: Page): Promise<string | null> {
   const text = await page.locator('form').getByText(ERROR_TEXT).first().innerText({ timeout: 300 }).catch(() => null);
@@ -40,7 +47,7 @@ async function loginError(page: Page): Promise<string | null> {
 }
 
 /** Fill the saved username/password and press Log in at most once. Never retries a submission. */
-export async function fillOnce(page: Page, username: string, password: string | null, check = () => {}): Promise<LoginOutcome> {
+export async function fillOnce(page: Page, username: string, password: string | null, check = () => {}, twofa: string | null = null): Promise<LoginOutcome> {
   check();
   if (!password) return { result: 'no_password' };
   if (new URL(page.url()).hostname !== 'www.tiktok.com') return { result: 'no_form' };
@@ -75,14 +82,52 @@ export async function fillOnce(page: Page, username: string, password: string | 
   }
   check();
   await submit.click({ timeout: 5000 });
-  // Watch the result for a while: leave the login page = accepted; or a challenge / an error message.
-  for (let i = 0; i < 40; i++) {
+  // Watch the result: a CAPTCHA (wait for the person, up to 5 min), the 2-step code
+  // (typed from the saved 2FA secret, once), leaving the login page = accepted, or an error.
+  const started = Date.now();
+  let deadline = started + 20000, codeSent = false, methodPicked = false;
+  while (Date.now() < deadline) {
     await sleep(500); check();
-    if (await challengeVisible(page)) return { result: 'challenge' };
+    if (await captchaVisible(page)) { deadline = Math.max(deadline, Math.min(started + 300000, Date.now() + 20000)); continue; }
+    const code = codeInput(page);
+    if (await code.isVisible().catch(() => false)) {
+      if (codeSent) continue;
+      if (!twofa) return { result: 'challenge', error: 'TikTok hỏi mã xác minh nhưng tài khoản chưa lưu khoá 2FA' };
+      const key = base32(twofa);
+      if (!key) return { result: 'challenge', error: 'Khoá 2FA đã lưu không đúng định dạng (cần chuỗi base32 của ứng dụng xác thực)' };
+      // Don't type a code that expires mid-typing.
+      if (totpRemaining() < 6000) await sleep(totpRemaining() + 500);
+      check();
+      await code.click({ timeout: 5000 }); await code.press('Control+a'); await code.press('Delete');
+      await code.pressSequentially(totp(key), { delay: 60 }); check();
+      await sleep(800);
+      const next = nextButton(page);
+      if (await code.isVisible().catch(() => false)) {
+        if (await next.isVisible().catch(() => false) && await next.isEnabled().catch(() => false)) await next.click({ timeout: 5000 }).catch(() => {});
+        else await code.press('Enter').catch(() => {});
+      }
+      codeSent = true; deadline = Date.now() + 25000;
+      continue;
+    }
+    // TikTok may first ask which way to verify: choose the authenticator app.
+    if (twofa && !methodPicked) {
+      const method = page.getByText(AUTH_METHOD).first();
+      if (await method.isVisible().catch(() => false)) {
+        methodPicked = true;
+        await method.click({ timeout: 5000 }).catch(() => {});
+        await sleep(500);
+        const next = nextButton(page);
+        if (await next.isVisible().catch(() => false)) await next.click({ timeout: 5000 }).catch(() => {});
+        deadline = Math.max(deadline, Date.now() + 20000);
+        continue;
+      }
+    }
     if (!onLoginPage(page)) return { result: 'submitted' };
     const error = await loginError(page);
     if (error) return { result: 'rejected', error };
   }
+  if (codeSent) return { result: 'challenge', error: 'Đã nhập mã 2FA nhưng TikTok chưa chấp nhận (kiểm tra khoá 2FA đã lưu)' };
+  if (await captchaVisible(page)) return { result: 'challenge' };
   return { result: 'pending' };
 }
 
@@ -94,7 +139,7 @@ async function signedInAs(page: Page, username: string, ms: number) {
   return status;
 }
 
-export async function navigateAccount(page: Page, hasSession: boolean, username: string, password: string | null, autofill: boolean, check = () => {}): Promise<LoginOutcome> {
+export async function navigateAccount(page: Page, hasSession: boolean, username: string, password: string | null, autofill: boolean, check = () => {}, twofa: string | null = null): Promise<LoginOutcome> {
   await page.goto('https://www.tiktok.com/', { timeout: 45000, waitUntil: 'domcontentloaded' }).catch(() => {});
   check();
   // A session cookie alone isn't proof: expired/revoked sessions keep their cookies.
@@ -110,7 +155,7 @@ export async function navigateAccount(page: Page, hasSession: boolean, username:
   check();
   // TikTok sends an already signed-in profile away from /login.
   if (!onLoginPage(page)) return { result: (await signedInAs(page, username, 5000)) === 'logged_in' ? 'logged_in' : 'no_form' };
-  return fillOnce(page, username, password, check).catch((e: unknown) => {
+  return fillOnce(page, username, password, check, twofa).catch((e: unknown) => {
     if (e instanceof Error && e.message === 'INTERRUPTED') throw e;
     return { result: 'no_form' as const, error: 'Lỗi khi điền form đăng nhập' };
   });

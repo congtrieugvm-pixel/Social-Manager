@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { identityStatus, fillOnce } from '../dist/login.js';
 import { validateOrigin, siteKey, dpapi } from '../dist/storage.js';
 import { Operation } from '../dist/operation.js';
+import { base32, totp } from '../dist/totp.js';
 
 test('cancel during startup closes late browser and prevents credentials', async () => {
   let closed = 0;
@@ -33,20 +34,40 @@ test('login evidence distinguishes verification, unknown and wrong user', () => 
 });
 // A login page fixture: Log in enables `enableAfter` checks after filling; clicking
 // either leaves /login (accepted) or shows `errorText` in the form.
-function loginPage({ enableAfter = 0, errorText = null, needsTyping = false } = {}) {
-  const state = { clicks: 0, fills: [], typed: [], url: 'https://www.tiktok.com/login/phone-or-email/email', checks: 0 };
-  const field = selector => ({
+function loginPage({ enableAfter = 0, errorText = null, needsTyping = false, askCode = false } = {}) {
+  const state = { clicks: 0, fills: [], typed: [], url: 'https://www.tiktok.com/login/phone-or-email/email', checks: 0, codeShown: false, code: null };
+  const codeBox = {
+    isVisible: async () => state.codeShown, click: async () => {}, press: async () => {},
+    pressSequentially: async value => { state.code = value; state.codeShown = false; state.url = 'https://www.tiktok.com/foryou'; },
+  };
+  const field = selector => selector.includes('one-time-code') ? { first: () => codeBox } : ({
     waitFor: async () => {}, count: async () => 1, isVisible: async () => true,
     isEnabled: async () => (needsTyping ? state.typed.length >= 2 : state.fills.length >= 2) && ++state.checks > enableAfter,
     fill: async value => state.fills.push([selector, value]),
     press: async () => {}, inputValue: async () => '',
     pressSequentially: async value => state.typed.push([selector, value]),
-    click: async () => { if (!selector.includes('login-button')) return; state.clicks++; if (!errorText) state.url = 'https://www.tiktok.com/foryou'; },
+    click: async () => { if (!selector.includes('login-button')) return; state.clicks++; if (askCode) state.codeShown = true; else if (!errorText) state.url = 'https://www.tiktok.com/foryou'; },
     getByText: () => ({ first: () => ({ innerText: async () => { if (errorText && state.clicks) return errorText; throw new Error('none'); } }) }),
     first: () => ({ isVisible: async () => false }),
   });
-  return { state, page: { url: () => state.url, locator: field } };
+  const hidden = { first: () => ({ isVisible: async () => false, isEnabled: async () => false }) };
+  return { state, page: { url: () => state.url, locator: field, getByText: () => hidden, getByRole: () => hidden } };
 }
+test('TOTP matches RFC 6238 and accepts authenticator-style secrets', () => {
+  const key = base32('GEZD GNBV GY3T QOJQ GEZD GNBV GY3T QOJQ');
+  assert.equal(totp(key, 59000), '287082');
+  assert.equal(totp(key, 1111111109000), '081804');
+  assert.deepEqual(base32('otpauth://totp/TikTok:a?secret=GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ'), key);
+  assert.equal(base32('not a secret!'), null);
+});
+test('after Log in, the 2-step code is typed from the saved 2FA secret', async () => {
+  const two = loginPage({ askCode: true });
+  assert.deepEqual(await fillOnce(two.page, 'alice', 'secret', () => {}, 'GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ'), { result: 'submitted' });
+  assert.match(two.state.code, /^\d{6}$/); assert.equal(two.state.clicks, 1);
+  const none = loginPage({ askCode: true });
+  const out = await fillOnce(none.page, 'alice', 'secret');
+  assert.equal(out.result, 'challenge'); assert.match(out.error, /2FA/);
+});
 test('autofill waits for Log in to enable, clicks exactly once and reports the outcome', async () => {
   const ok = loginPage({ enableAfter: 3 });
   assert.deepEqual(await fillOnce(ok.page, 'alice', 'secret'), { result: 'submitted' });

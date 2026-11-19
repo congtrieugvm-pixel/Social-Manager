@@ -14,7 +14,7 @@ import { readPassword } from './password.js';
 import { postVideo } from './posting.js';
 import { hidePosts, waitForLogin, type HideProgress } from './hide.js';
 
-const VERSION = '1.0.4';
+const VERSION = '1.0.5';
 const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
 async function api<T>(s: Pick<Settings, 'origin'> & Partial<Settings>, route: string, body: unknown): Promise<T> {
   const payload = JSON.stringify(body).replace(/[\u007f-\uffff]/g, c => '\\u' + c.charCodeAt(0).toString(16).padStart(4, '0'));
@@ -169,7 +169,7 @@ async function run() {
     } catch (e) {
       const error = e instanceof Error && ['PROFILE_BUSY', 'INTERRUPTED', 'FOLDER_EMPTY', 'FOLDER_INVALID', 'POST_UNKNOWN', 'POST_MANUAL', 'HIDE_MANUAL', 'HIDE_FAILED'].includes(e.message) ? e.message : job.proxy ? 'PROXY_FAILED' : 'BROWSER_FAILED';
       reports.set(job.id, { jobId: job.id, profileId: job.profileId, status: 'error', done: true, error });
-    } finally { job.password = null; busy = false; executingId = null; operation = undefined; operationProfile = undefined; }
+    } finally { job.password = null; job.twofa = null; busy = false; executingId = null; operation = undefined; operationProfile = undefined; }
   }
   try {
     console.log('Da san sang nhan lenh. Dung bang Stop hoac Ctrl+C.');

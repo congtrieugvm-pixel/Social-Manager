@@ -62,6 +62,7 @@ const onStudio = (page: Page) => { try { const u = new URL(page.url()); return u
 
 /** What to tell the user while waiting, based on how the saved-credentials login went. */
 export function loginMessage(status: string, login: Session['login']): string {
+  if (login?.result === 'challenge' && login.error) return `${login.error}. Hoàn tất xác minh trong cửa sổ trình duyệt để tiếp tục.`;
   if (status === 'needs_verification' || login?.result === 'challenge') return 'TikTok cần xác minh (CAPTCHA/OTP). Hoàn tất trong cửa sổ trình duyệt để tiếp tục.';
   if (status === 'wrong_account' || login?.result === 'wrong_account') return 'Cửa sổ đang đăng nhập tài khoản khác. Đăng xuất rồi đăng nhập đúng tài khoản.';
   switch (login?.result) {

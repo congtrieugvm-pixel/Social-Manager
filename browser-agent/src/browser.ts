@@ -8,7 +8,7 @@ import { navigateAccount, observe, type LoginOutcome } from './login.js';
 import type { Operation } from './operation.js';
 
 export const BROWSER_BUILD = 'official/158.0.1-beta.41';
-export interface Job { id: string; kind: string; ownerId: number; expiresAt: number; accountId?: number; profileId?: string; username?: string; password?: string | null; autofill?: boolean; folder?: string; caption?: string; proxy?: { server: string; username?: string; password?: string } | null; reuse?: boolean }
+export interface Job { id: string; kind: string; ownerId: number; expiresAt: number; accountId?: number; profileId?: string; username?: string; password?: string | null; twofa?: string | null; autofill?: boolean; folder?: string; caption?: string; proxy?: { server: string; username?: string; password?: string } | null; reuse?: boolean }
 export interface Report { jobId: string; profileId?: string; status?: string; done?: boolean; ip?: string; latency?: number; error?: string; hide?: { changed: number; skipped: number; scanned: number; message: string; status?: string; errorCode?: string } }
 export interface Session { context: BrowserContext; job: Job; inspect: () => Promise<string>; close: () => Promise<void>; login?: LoginOutcome }
 export async function check(context: BrowserContext) {
@@ -63,15 +63,15 @@ export async function openSession(origin: string, job: Job, operation: Operation
     // requested login navigation while redirecting an already logged-in user.
     const loginCookies = await context.cookies('https://www.tiktok.com');
     const hasSession = loginCookies.some(cookie => ['sessionid', 'sessionid_ss', 'sid_tt'].includes(cookie.name));
-    const login = await navigateAccount(page, hasSession, job.username!, job.password ?? null, !!job.autofill, () => operation.check());
+    const login = await navigateAccount(page, hasSession, job.username!, job.password ?? null, !!job.autofill, () => operation.check(), job.twofa ?? null);
     operation.check();
     if (closed) throw new Error('INTERRUPTED');
-    job.password = null;
+    job.password = null; job.twofa = null;
     const activeContext = context;
     return { context: activeContext, job, login, inspect: async () => closed ? 'closed' : observe(activeContext.pages().find(p => p.url().startsWith('https://www.tiktok.com/')) ?? page, job.username!).catch(() => 'unverified'),
       close: async () => { await activeContext.close(); await unlink(lock).catch(() => {}); } };
   } catch (e) {
-    job.password = null;
+    job.password = null; job.twofa = null;
     // Retain marker if shutdown fails: reopening may corrupt an active profile.
     if (context) await context.close();
     await unlink(lock).catch(() => {});

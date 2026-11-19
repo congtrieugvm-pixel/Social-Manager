@@ -391,7 +391,7 @@ export async function claim(device: Device, jobId: string) {
       }
       if (!p || p.ownerUserId !== device.ownerUserId || p.deviceId !== device.id) fail("Không tìm thấy hồ sơ trên máy này", 409);
       if (j.kind === 'post' && p.status !== 'logged_in') fail('Phiên chưa xác minh đúng tài khoản', 409);
-      payload = { accountId: j.accountId, profileId: p.id, username: e.account.username, password: opens && j.autofill ? await decrypt(e.account.encPassword) : null, autofill: !!j.autofill, proxy: opens ? await proxySecret(e.proxy) : null, ...(j.kind === 'post' ? JSON.parse(j.payload!) : {}), ...(j.kind === 'hide' ? { reuse } : {}) };
+      payload = { accountId: j.accountId, profileId: p.id, username: e.account.username, password: opens && j.autofill ? await decrypt(e.account.encPassword) : null, twofa: opens && j.autofill ? await decrypt(e.account.enc2fa) : null, autofill: !!j.autofill, proxy: opens ? await proxySecret(e.proxy) : null, ...(j.kind === 'post' ? JSON.parse(j.payload!) : {}), ...(j.kind === 'hide' ? { reuse } : {}) };
     }
     const changed = await db.update(jobs).set({ state: "running" }).where(and(eq(jobs.id, j.id), inArray(jobs.state, ["claimed", "running"]))).returning({ id: jobs.id });
     if (!changed.length) fail("Lệnh đã bị hủy", 409);
