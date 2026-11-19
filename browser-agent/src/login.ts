@@ -52,10 +52,28 @@ export async function fillOnce(page: Page, username: string, password: string | 
   const ready = await user.waitFor({ state: 'visible', timeout: 20000 }).then(() => true, () => false);
   check();
   if (!ready || await user.count() !== 1 || await pass.count() !== 1 || await submit.count() !== 1 || !(await pass.isVisible())) return { result: 'no_form' };
-  await user.fill(username); check(); await pass.fill(password); check();
   // TikTok enables Log in only after React sees both values.
-  for (let i = 0; i < 25 && !(await submit.isEnabled().catch(() => false)); i++) { await sleep(200); check(); }
-  if (!(await submit.isEnabled().catch(() => false))) return { result: 'no_form', error: 'Nút Log in không bật sau khi điền' };
+  const enabled = async (ms: number) => {
+    for (let i = 0; i * 200 < ms; i++) { if (await submit.isEnabled().catch(() => false)) return true; await sleep(200); check(); }
+    return submit.isEnabled().catch(() => false);
+  };
+  // 1) Fast path: set the values directly.
+  await user.fill(username); check(); await pass.fill(password); check();
+  if (!(await enabled(2000))) {
+    // 2) In a visible window TikTok's React may ignore programmatic values: clear and type like a person.
+    for (const [field, value] of [[user, username], [pass, password]] as const) {
+      await field.click({ timeout: 5000 }); check();
+      await field.press('Control+a'); await field.press('Delete'); check();
+      await field.pressSequentially(value, { delay: 45 }); check();
+    }
+    await pass.press('Tab').catch(() => {});
+  }
+  if (!(await enabled(5000))) {
+    const userLen = (await user.inputValue().catch(() => '')).length;
+    const passLen = (await pass.inputValue().catch(() => '')).length;
+    return { result: 'no_form', error: `Nút Log in không bật sau khi điền (ô tài khoản ${userLen}/${username.length} ký tự, mật khẩu ${passLen}/${password.length})` };
+  }
+  check();
   await submit.click({ timeout: 5000 });
   // Watch the result for a while: leave the login page = accepted; or a challenge / an error message.
   for (let i = 0; i < 40; i++) {

@@ -33,13 +33,15 @@ test('login evidence distinguishes verification, unknown and wrong user', () => 
 });
 // A login page fixture: Log in enables `enableAfter` checks after filling; clicking
 // either leaves /login (accepted) or shows `errorText` in the form.
-function loginPage({ enableAfter = 0, errorText = null } = {}) {
-  const state = { clicks: 0, fills: [], url: 'https://www.tiktok.com/login/phone-or-email/email', checks: 0 };
+function loginPage({ enableAfter = 0, errorText = null, needsTyping = false } = {}) {
+  const state = { clicks: 0, fills: [], typed: [], url: 'https://www.tiktok.com/login/phone-or-email/email', checks: 0 };
   const field = selector => ({
     waitFor: async () => {}, count: async () => 1, isVisible: async () => true,
-    isEnabled: async () => state.fills.length >= 2 && ++state.checks > enableAfter,
+    isEnabled: async () => (needsTyping ? state.typed.length >= 2 : state.fills.length >= 2) && ++state.checks > enableAfter,
     fill: async value => state.fills.push([selector, value]),
-    click: async () => { state.clicks++; if (!errorText) state.url = 'https://www.tiktok.com/foryou'; },
+    press: async () => {}, inputValue: async () => '',
+    pressSequentially: async value => state.typed.push([selector, value]),
+    click: async () => { if (!selector.includes('login-button')) return; state.clicks++; if (!errorText) state.url = 'https://www.tiktok.com/foryou'; },
     getByText: () => ({ first: () => ({ innerText: async () => { if (errorText && state.clicks) return errorText; throw new Error('none'); } }) }),
     first: () => ({ isVisible: async () => false }),
   });
@@ -49,6 +51,11 @@ test('autofill waits for Log in to enable, clicks exactly once and reports the o
   const ok = loginPage({ enableAfter: 3 });
   assert.deepEqual(await fillOnce(ok.page, 'alice', 'secret'), { result: 'submitted' });
   assert.equal(ok.state.clicks, 1); assert.equal(ok.state.fills.length, 2);
+
+  // A visible window where React ignores fill(): falls back to typing, still one click.
+  const typed = loginPage({ needsTyping: true });
+  assert.deepEqual(await fillOnce(typed.page, 'alice', 'secret'), { result: 'submitted' });
+  assert.deepEqual(typed.state.typed.map(([, v]) => v), ['alice', 'secret']); assert.equal(typed.state.clicks, 1);
 
   const wrong = loginPage({ errorText: 'Incorrect account or password' });
   assert.deepEqual(await fillOnce(wrong.page, 'alice', 'bad'), { result: 'rejected', error: 'Incorrect account or password' });

@@ -1,23 +1,29 @@
-// Diagnostic (no credentials typed): how TikTok's email login form appears over
-// time in Camoufox, and whether the agent's selectors match it.
-import { Camoufox } from 'camoufox';
+// Diagnostic, never submits: does TikTok's email login form accept the agent's
+// input? Types DUMMY values and reports when "Log in" becomes enabled, for
+// fill() and for typed keys. `--headful` runs a visible window like the agent.
+import { Camoufox, getRandomPreset } from 'camoufox';
 import { BROWSER_BUILD } from '../dist/browser.js';
 
-const URL = 'https://www.tiktok.com/login/phone-or-email/email';
-const browser = await Camoufox({ headless: true, browser: BROWSER_BUILD });
+const headful = process.argv.includes('--headful');
+const browser = await Camoufox({ headless: !headful, browser: BROWSER_BUILD, fingerprint_preset: getRandomPreset('windows', '158') });
 try {
-  const page = await browser.newPage();
-  const t0 = Date.now();
-  await page.goto(URL, { waitUntil: 'domcontentloaded', timeout: 60000 });
-  for (const wait of [0, 1500, 4000, 8000]) {
-    if (wait) await page.waitForTimeout(wait - (Date.now() - t0) > 0 ? wait - (Date.now() - t0) : 0);
-    const probe = await page.evaluate(() => {
-      const count = s => document.querySelectorAll(s).length;
-      const inputs = [...document.querySelectorAll('input')].map(i => `${i.type}|name=${i.name}|ph=${i.placeholder}|ac=${i.autocomplete}`);
-      const buttons = [...document.querySelectorAll('button')].map(b => `${b.getAttribute('data-e2e') ?? ''}|${(b.innerText || '').trim().slice(0, 30)}|type=${b.type}`);
-      return { url: location.pathname, user: count('input[name="username"]'), pass: count('input[type="password"]'), submit: count('button[data-e2e="login-button"]'), inputs, buttons: buttons.slice(0, 12) };
-    });
-    console.log(`t+${Date.now() - t0}ms`, JSON.stringify(probe));
+  for (const mode of ['fill', 'type']) {
+    const page = await browser.newPage();
+    await page.goto('https://www.tiktok.com/', { waitUntil: 'domcontentloaded', timeout: 60000 }).catch(() => {});
+    await page.goto('https://www.tiktok.com/login/phone-or-email/email', { waitUntil: 'domcontentloaded', timeout: 60000 });
+    const user = page.locator('input[name="username"]');
+    const pass = page.locator('input[type="password"]');
+    const submit = page.locator('button[data-e2e="login-button"]');
+    await user.waitFor({ state: 'visible', timeout: 20000 });
+    if (mode === 'fill') { await user.fill('probe.user.not.real'); await pass.fill('not-a-password'); }
+    else for (const [f, v] of [[user, 'probe.user.not.real'], [pass, 'not-a-password']]) { await f.click(); await f.press('Control+a'); await f.press('Delete'); await f.pressSequentially(v, { delay: 45 }); }
+    const samples = [];
+    for (const ms of [0, 300, 1000, 2500]) {
+      await page.waitForTimeout(Math.max(0, ms - (samples.at(-1)?.ms ?? 0)));
+      samples.push({ ms, enabled: await submit.isEnabled(), user: (await user.inputValue()).length, pass: (await pass.inputValue()).length });
+    }
+    console.log(`${headful ? 'headful' : 'headless'} ${mode}`, JSON.stringify(samples));
+    await page.close();
   }
 } finally {
   await browser.close();
