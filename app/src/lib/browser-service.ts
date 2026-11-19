@@ -65,6 +65,7 @@ export async function effective(owner: number, accountId: number) {
   const proxy = proxyId ? await proxyFor(owner, proxyId) : null;
   return { account: a, proxy, source, label: proxy ? `${source}: ${proxy.name}` : "Không dùng proxy", key: JSON.stringify([a.groupId, a.browserProxyMode, proxyId, proxy?.revision ?? 0, a.username]) };
 }
+export const MAX_WINDOWS = 10;
 export async function expireJobs(owner: number) {
   await db.update(jobs).set({ state: "expired" }).where(and(eq(jobs.ownerUserId, owner), inArray(jobs.state, pending), lt(jobs.expiresAt, now())));
 }
@@ -74,20 +75,23 @@ export async function dashboard(owner: number, search: string, selected: number[
     .where(and(eq(accounts.ownerUserId, owner), selected.length ? inArray(accounts.id, selected) : search ? like(accounts.username, `%${search.slice(0, 80)}%`) : undefined)).orderBy(asc(accounts.username)).limit(100);
   const [ps, ds, gs, fs, js, cs] = await Promise.all([
     db.select({ id: proxies.id, name: proxies.name, server: proxies.server, enabled: proxies.enabled, revision: proxies.revision, hasUsername: sql<boolean>`(${proxies.encUsername} IS NOT NULL)`, hasPassword: sql<boolean>`(${proxies.encPassword} IS NOT NULL)` }).from(proxies).where(eq(proxies.ownerUserId, owner)),
-    db.select({ id: devices.id, name: devices.name, version: devices.version, lastSeenAt: devices.lastSeenAt, revoked: devices.revoked }).from(devices).where(eq(devices.ownerUserId, owner)),
+    db.select({ id: devices.id, name: devices.name, version: devices.version, lastSeenAt: devices.lastSeenAt, revoked: devices.revoked, maxWindows: devices.maxWindows }).from(devices).where(eq(devices.ownerUserId, owner)),
     db.select({ id: groups.id, name: groups.name, proxyId: groups.browserProxyId }).from(groups).where(eq(groups.ownerUserId, owner)),
     db.select().from(profiles).where(eq(profiles.ownerUserId, owner)),
     db.select().from(jobs).where(eq(jobs.ownerUserId, owner)).orderBy(desc(jobs.createdAt)).limit(100),
     db.select().from(checks).where(eq(checks.ownerUserId, owner)).orderBy(desc(checks.checkedAt)).limit(100),
   ]);
   const posting = await db.select().from(browserPosting).where(eq(browserPosting.ownerUserId, owner));
-  return { owner, now: now(), accounts: accountRows, proxies: ps, devices: ds, groups: gs, profiles: fs, jobs: js, checks: cs, posting };
+  // Every browser profile with its TikTok username, for the window manager (not limited by the account filter).
+  const windows = await db.select({ accountId: profiles.accountId, username: accounts.username, groupId: accounts.groupId }).from(profiles)
+    .innerJoin(accounts, and(eq(accounts.id, profiles.accountId), eq(accounts.ownerUserId, owner))).where(eq(profiles.ownerUserId, owner));
+  return { owner, now: now(), accounts: accountRows, proxies: ps, devices: ds, groups: gs, profiles: fs, jobs: js, checks: cs, posting, windows, maxWindowsLimit: MAX_WINDOWS };
 }
 /** Light snapshot for the TikTok accounts table: machines, window status per account, recent jobs. */
 export async function browserState(owner: number) {
   await expireJobs(owner);
   const [ds, fs, js] = await Promise.all([
-    db.select({ id: devices.id, name: devices.name, version: devices.version, lastSeenAt: devices.lastSeenAt }).from(devices).where(and(eq(devices.ownerUserId, owner), eq(devices.revoked, 0))),
+    db.select({ id: devices.id, name: devices.name, version: devices.version, lastSeenAt: devices.lastSeenAt, maxWindows: devices.maxWindows }).from(devices).where(and(eq(devices.ownerUserId, owner), eq(devices.revoked, 0))),
     db.select({ accountId: profiles.accountId, deviceId: profiles.deviceId, status: profiles.status, updatedAt: profiles.updatedAt }).from(profiles).where(eq(profiles.ownerUserId, owner)),
     db.select({ id: jobs.id, kind: jobs.kind, accountId: jobs.accountId, state: jobs.state, error: jobs.error, result: jobs.result, createdAt: jobs.createdAt })
       .from(jobs).where(and(eq(jobs.ownerUserId, owner), gt(jobs.createdAt, now() - 86400), inArray(jobs.kind, ['open', 'close', 'hide'])))
@@ -340,14 +344,37 @@ export async function sync(device: Device, b: Record<string, unknown>) {
   const allow = await allowedProfiles(device);
   const known = Array.isArray(b.knownJobs) ? b.knownJobs.filter(v => typeof v === 'string').slice(0, 50) : [];
   const candidates = await db.select().from(jobs).where(and(eq(jobs.deviceId, device.id), inArray(jobs.state, active))).orderBy(asc(jobs.createdAt)).limit(50);
-  const capacity = Number.isInteger(b.capacity) ? Math.max(0, Math.min(3, Number(b.capacity))) : 0;
-  const next = candidates.find(j => !known.includes(j.id) && j.kind === 'close') ?? candidates.find(j => !known.includes(j.id) && (j.kind === 'post' || j.kind === 'preview' || j.kind === 'hide' || capacity > 0));
-  let nextJob: { id: string; kind: string } | null = null;
-  if (next) {
-    const updated = await db.update(jobs).set({ state: next.state === 'running' ? 'running' : 'claimed' }).where(and(eq(jobs.id, next.id), eq(jobs.state, next.state))).returning({ id: jobs.id, kind: jobs.kind });
-    nextJob = updated[0] ?? null;
+  const maxWindows = device.maxWindows;
+  // `capacity`: windows the agent can still open. `slots`: jobs it can still run at once
+  // (agents before 1.0.6 run one job at a time and don't send it).
+  let capacity = Number.isInteger(b.capacity) ? Math.max(0, Math.min(maxWindows, Number(b.capacity))) : 0;
+  let slots = Number.isInteger(b.slots) ? Math.max(0, Math.min(maxWindows + 2, Number(b.slots))) : 1;
+  const openProfiles = new Set(allow.map(p => p.accountId));
+  const picked: typeof candidates = [];
+  for (const j of candidates.filter(j => j.kind === 'close').concat(candidates.filter(j => j.kind !== 'close'))) {
+    if (known.includes(j.id)) continue;
+    if (j.kind === 'close') { picked.push(j); continue; } // closing never waits for a free slot
+    if (slots <= 0) continue;
+    // Opening a window (open, or "Ẩn bài" without an open window) needs a free window.
+    const opens = j.kind === 'open' || (j.kind === 'hide' && !openProfiles.has(j.accountId!));
+    if (opens && capacity <= 0) continue;
+    if (picked.some(p => p.accountId !== null && p.accountId === j.accountId)) continue; // one job per account per round
+    picked.push(j); slots--; if (opens) capacity--;
   }
-  return { allowed: allow.map(p => p.id), job: nextJob, leaseSeconds: 90, pollSeconds: allow.length || nextJob ? 3 : 15 };
+  const handed: Array<{ id: string; kind: string }> = [];
+  for (const next of picked) {
+    const updated = await db.update(jobs).set({ state: next.state === 'running' ? 'running' : 'claimed' }).where(and(eq(jobs.id, next.id), eq(jobs.state, next.state))).returning({ id: jobs.id, kind: jobs.kind });
+    if (updated[0]) handed.push(updated[0]);
+  }
+  return { allowed: allow.map(p => p.id), job: handed[0] ?? null, jobs: handed, maxWindows, leaseSeconds: 90, pollSeconds: allow.length || handed.length ? 3 : 15 };
+}
+export async function deviceSettings(owner: number, b: Record<string, unknown>) {
+  const deviceId = str(b.id, 40);
+  const max = Number(b.maxWindows);
+  if (!Number.isInteger(max) || max < 1 || max > MAX_WINDOWS) fail(`Số luồng từ 1 đến ${MAX_WINDOWS}`);
+  const updated = await db.update(devices).set({ maxWindows: max }).where(and(eq(devices.id, deviceId), eq(devices.ownerUserId, owner), eq(devices.revoked, 0))).returning({ id: devices.id });
+  if (!updated.length) fail('Không tìm thấy máy', 404);
+  return { ok: true };
 }
 async function proxySecret(p: typeof proxies.$inferSelect | null | undefined) {
   if (!p) return null;

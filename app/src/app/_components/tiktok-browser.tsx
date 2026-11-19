@@ -199,7 +199,7 @@ export function BrowserBulkActions({ browser, ids }: { browser: TikTokBrowser; i
   return (
     <div className="tb-actions" role="group" aria-label="Trình duyệt TikTok">
       {noMachine ? (
-        <Link href="/browser" className="tb-device offline" title="Mở Cài đặt trình duyệt để kết nối máy Windows">
+        <Link href="/browser" className="tb-device offline" title="Mở Quản lý trình duyệt để kết nối máy Windows">
           <Monitor size={14} aria-hidden="true" /> Chưa có máy online
         </Link>
       ) : online.length > 1 || (deviceId && !device) ? (

@@ -166,7 +166,9 @@ const req = token => new Request('https://test.invalid', { headers: { Authorizat
     assert.equal((await s.queue(1, { deviceId: device.id, kind: 'hide', ids: [10] })).results[0].ok, true);
     assert.equal((await s.queue(1, { deviceId: device.id, kind: 'hide', ids: [10] })).results[0].ok, false, 'one active hide per account');
     let sync = await s.sync(device, { runId: 'hide-run', capacity: 0 });
-    assert.equal(sync.job.kind, 'hide', 'hide is delivered even when the agent reports no free window slot');
+    assert.equal(sync.job, null, 'a hide that must open a window waits for a free window');
+    sync = await s.sync(device, { runId: 'hide-run', capacity: 1 });
+    assert.equal(sync.job.kind, 'hide');
     const first = await s.claim(device, sync.job.id);
     assert.equal(first.reuse, false); assert.ok(first.profileId);
     assert.equal(row('browser_profiles').find(p => p.account_id === 10).job_id, first.id);
@@ -201,6 +203,34 @@ const req = token => new Request('https://test.invalid', { headers: { Authorizat
     // 3) Another user can never queue hide on this account.
     const foreign = await s.queue(2, { deviceId: device.id, kind: 'hide', ids: [10] }).catch(e => e);
     assert.ok(foreign.status === 409 || foreign.results?.[0]?.ok === false);
+  });
+  await test('parallel: one sync hands out several jobs, bounded by the window limit set on the website', async () => {
+    sqlite.exec("INSERT INTO accounts(id,owner_user_id,username,enc_password) VALUES (20,1,'p1',NULL),(21,1,'p2',NULL),(22,1,'p3',NULL),(23,1,'p4',NULL)");
+    const pair = await s.createPairing(1);
+    const enrolled = await s.enroll({ code: pair.code, name: 'parallel fixture', version: '1.0.6' });
+    let device = await s.authenticateDevice(req(enrolled.token));
+    await s.sync(device, { runId: 'par', version: '1.0.6', capacity: 0, slots: 0 });
+    await assert.rejects(s.deviceSettings(2, { id: device.id, maxWindows: 5 }), e => e.status === 404, 'only the owner sets the limit');
+    await assert.rejects(s.deviceSettings(1, { id: device.id, maxWindows: 11 }), e => e.status === 400);
+    await s.deviceSettings(1, { id: device.id, maxWindows: 2 });
+    device = await s.authenticateDevice(req(enrolled.token));
+    assert.equal((await s.queue(1, { deviceId: device.id, kind: 'open', ids: [20, 21, 22, 23] })).results.every(r => r.ok), true);
+    // The agent asks for more than allowed: the server caps at the device's limit (2).
+    let sync = await s.sync(device, { runId: 'par', capacity: 9, slots: 9 });
+    assert.equal(sync.maxWindows, 2); assert.equal(sync.jobs.length, 2); assert.equal(sync.job.id, sync.jobs[0].id);
+    const known = sync.jobs.map(j => j.id);
+    sync = await s.sync(device, { runId: 'par', capacity: 0, slots: 2, knownJobs: known });
+    assert.equal(sync.jobs.length, 0, 'no free window: the rest wait in the queue');
+    // Close jobs never wait for a slot.
+    for (const j of known) await s.claim(device, j);
+    await s.queue(1, { deviceId: device.id, kind: 'close', ids: [20] });
+    sync = await s.sync(device, { runId: 'par', capacity: 0, slots: 0, knownJobs: known });
+    assert.deepEqual(sync.jobs.map(j => j.kind), ['close']);
+    // Old agents (no `slots`) still get one job per sync.
+    await s.deviceSettings(1, { id: device.id, maxWindows: 5 });
+    device = await s.authenticateDevice(req(enrolled.token));
+    sync = await s.sync(device, { runId: 'par', capacity: 3, knownJobs: [...known, sync.jobs[0].id] });
+    assert.equal(sync.jobs.length, 1);
   });
   await test('posting config scoped to account/device and commands require verified session', async () => {
     const pair = await s.createPairing(1);

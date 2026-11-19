@@ -35,6 +35,7 @@ async function handle(req: Request, ctx: { params: Promise<{ path: string[] }> }
     if (route === "assign") return reply(await service.assign(owner, b));
     if (route === 'posting/save') return reply(await service.savePosting(owner, b));
     if (route === "pairings") return reply(await service.createPairing(owner));
+    if (route === "devices/settings") return reply(await service.deviceSettings(owner, b));
     if (route === "devices/revoke") return reply(await service.revokeDevice(owner, service.str(b.id, 40)));
     if (route === "jobs") return reply(await service.queue(owner, b));
     if (route === "jobs/cancel") return reply(await service.cancel(owner, service.str(b.id, 40)));

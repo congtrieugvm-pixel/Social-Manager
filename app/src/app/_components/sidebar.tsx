@@ -38,7 +38,7 @@ const nav: NavItem[] = [
   { href: "/insight", label: "Insight", icon: BarChart3 },
   { href: "/youtube", label: "Bookmark Key", icon: Bookmark },
   { href: "/utilities", label: "Tiện ích", icon: Puzzle },
-  { href: "/browser", label: "Cài đặt trình duyệt", icon: Monitor },
+  { href: "/browser", label: "Quản lý trình duyệt", icon: Monitor },
 ];
 
 interface SidebarProps {

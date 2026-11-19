@@ -1,16 +1,18 @@
 'use client';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
-import { Monitor, Shield, Play, Send, Users, History, Search, RefreshCw, FolderOpen, Plus, X, CheckCircle2, AlertCircle, EyeOff } from 'lucide-react';
+import { Monitor, Shield, Play, Send, Users, History, Search, RefreshCw, FolderOpen, Plus, X, CheckCircle2, AlertCircle, EyeOff, AppWindow } from 'lucide-react';
 import { confirmDialog } from '@/app/_components/notify';
 import { postJson, safeJson } from '@/lib/req-body';
 import type { dashboard } from '@/lib/browser-service';
 import styles from './manager.module.css';
+import WindowsPanel from './windows-panel';
 
 type Data = Awaited<ReturnType<typeof dashboard>>;
 type Account = Data['accounts'][number];
-type Section = 'accounts' | 'posting' | 'proxies' | 'devices' | 'activity';
+type Section = 'windows' | 'accounts' | 'posting' | 'proxies' | 'devices' | 'activity';
 const sections = [
+  { id: 'windows', label: 'Trình duyệt', icon: AppWindow },
   { id: 'accounts', label: 'Proxy tài khoản', icon: Users },
   { id: 'posting', label: 'Đăng bài', icon: Send },
   { id: 'proxies', label: 'Proxy', icon: Shield },
@@ -40,7 +42,7 @@ function hideResult(job: { kind: string; result: string | null }): HideResult | 
 const hideSummary = (r: HideResult) => `${r.changed} bài đã ẩn · ${r.skipped} bài vốn riêng tư`;
 const blankProxy = { id: 0, name: '', server: '', username: '', password: '', enabled: true, clearUsername: false, clearPassword: false };
 export default function BrowserManager() {
-  const [section, setSection] = useState<Section>('accounts');
+  const [section, setSection] = useState<Section>('windows');
   const [data, setData] = useState<Data>();
   const [error, setError] = useState(''); const [message, setMessage] = useState(''); const [busy, setBusy] = useState(false);
   const [query, setQuery] = useState(''); const [filter, setFilter] = useState('');
@@ -179,7 +181,7 @@ export default function BrowserManager() {
   const allVisibleSelected = toggleableAccounts.length > 0 && toggleableAccounts.every(account => selected.includes(account.id));
   return <div className={styles.page}>
     <header className={styles.header}>
-      <div><h1>Cài đặt trình duyệt</h1><p>Proxy, máy Windows và lịch sử lệnh. Mở trình duyệt, Ẩn bài và Đóng nằm ngay ở danh sách TikTok.</p></div>
+      <div><h1>Quản lý trình duyệt</h1><p>Các cửa sổ đang chạy, số luồng mỗi máy, proxy và lịch sử lệnh.</p></div>
       <Link href="/" className="btn btn-primary"><Users size={16} />Về danh sách TikTok</Link>
     </header>
 
@@ -214,6 +216,7 @@ export default function BrowserManager() {
       {sections.map(item => <button key={item.id} className={section === item.id ? styles.navActive : ''} aria-pressed={section === item.id} onClick={() => setSection(item.id)}><item.icon size={17} />{item.label}{item.id === 'activity' && pendingJobs.length > 0 && <span>{pendingJobs.length}</span>}</button>)}
     </nav>
 
+    <div hidden={section !== 'windows'}><WindowsPanel data={data} deviceId={deviceId} busy={busy} act={act} /></div>
     {!data && <div className={styles.loading} role="status">Đang tải tài khoản và phiên trình duyệt…</div>}
     <div hidden={section !== 'accounts'}>
       <section className={styles.panel}>
@@ -334,7 +337,7 @@ export default function BrowserManager() {
     </div>
 
     <div hidden={section !== 'activity'}>
-      <section className={styles.panel}><div className={styles.sectionHeading}><div><h2>Hàng đợi & lịch sử</h2><p>{pendingJobs.length} lệnh chờ · tối đa 3 cửa sổ mỗi máy</p></div></div>
+      <section className={styles.panel}><div className={styles.sectionHeading}><div><h2>Hàng đợi & lịch sử</h2><p>{pendingJobs.length} lệnh chờ · số cửa sổ chạy cùng lúc chỉnh ở tab Trình duyệt</p></div></div>
         <div className={styles.table}><table><thead><tr><th>Thao tác</th><th>Tài khoản / proxy</th><th>Trạng thái</th><th>Thời gian</th><th><span className={styles.srOnly}>Hủy lệnh</span></th></tr></thead><tbody>{data?.jobs.map(job => <tr key={job.id}>
           <td>{kindLabels[job.kind] ?? job.kind}{(() => { const r = hideResult(job); return r && <small>{hideSummary(r)}</small>; })()}</td>
           <td>{data.accounts.find(account => account.id === job.accountId)?.username ?? (job.accountId ? `#${job.accountId}` : data.proxies.find(proxy => proxy.id === job.proxyId)?.name)}</td>

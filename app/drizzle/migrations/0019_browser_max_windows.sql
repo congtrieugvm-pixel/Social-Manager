@@ -1,0 +1,1 @@
+ALTER TABLE browser_devices ADD COLUMN max_windows INTEGER NOT NULL DEFAULT 3;

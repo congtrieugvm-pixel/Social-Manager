@@ -13,6 +13,7 @@ export const browserDevices = sqliteTable("browser_devices", {
   id: text("id").primaryKey(), ownerUserId: integer("owner_user_id").notNull(), name: text("name").notNull(),
   tokenHash: text("token_hash").notNull(), version: text("version").notNull(), runId: text("run_id"),
   lastSeenAt: integer("last_seen_at").notNull(), revoked: integer("revoked").notNull().default(0),
+  maxWindows: integer("max_windows").notNull().default(3),
 });
 export const browserPairings = sqliteTable("browser_pairings", {
   hash: text("hash").primaryKey(), ownerUserId: integer("owner_user_id").notNull(), expiresAt: integer("expires_at").notNull(), usedAt: integer("used_at"),

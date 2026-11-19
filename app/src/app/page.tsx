@@ -1327,7 +1327,7 @@ export default function Dashboard() {
               <div className="menu-sep" role="separator" />
               <Link href="/browser" role="menuitem" className="menu-item">
                 <Settings2 size={16} aria-hidden="true" />
-                Cài đặt trình duyệt
+                Quản lý trình duyệt
               </Link>
               {CATALOG.map(({ href, label, icon: Icon }) => (
                 <Link key={href} href={href} role="menuitem" className="menu-item">
@@ -1341,7 +1341,7 @@ export default function Dashboard() {
         <div className="tt-head-actions only-wide">
           <Link href="/browser" className="btn" title="Proxy, máy Windows và lịch sử lệnh trình duyệt">
             <Settings2 size={15} aria-hidden="true" />
-            <span className="btn-label">Cài đặt trình duyệt</span>
+            <span className="btn-label">Quản lý trình duyệt</span>
           </Link>
           <details className="menu">
             <summary className="btn" aria-label="Danh mục">

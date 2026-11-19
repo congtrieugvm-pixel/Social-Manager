@@ -14,7 +14,7 @@ import { readPassword } from './password.js';
 import { postVideo } from './posting.js';
 import { hidePosts, waitForLogin, type HideProgress } from './hide.js';
 
-const VERSION = '1.0.5';
+const VERSION = '1.0.6';
 const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
 async function api<T>(s: Pick<Settings, 'origin'> & Partial<Settings>, route: string, body: unknown): Promise<T> {
   const payload = JSON.stringify(body).replace(/[\u007f-\uffff]/g, c => '\\u' + c.charCodeAt(0).toString(16).padStart(4, '0'));
@@ -111,10 +111,11 @@ async function run() {
   const journalFile = join(root, `jobs-${siteKey(s.origin, s.ownerId)}.json`);
   let journal: string[] = [];
   try { journal = JSON.parse(await readFile(journalFile, 'utf8')); } catch (e) { if ((e as NodeJS.ErrnoException).code !== 'ENOENT') throw e; }
-  let stopped = false, busy = false, lastLease = 0, lastStart = 0, backoff = 3000;
-  let executingId: string | null = null;
-  let operation: Operation | undefined;
-  let operationProfile: string | undefined;
+  let stopped = false, lastLease = 0, lastStart = 0, backoff = 3000;
+  // Several jobs run at once (one per account); the website sets how many windows this machine may keep open.
+  let maxWindows = 3, opening = 0;
+  const running = new Map<string, { operation: Operation; profileId?: string }>();
+  let journalWrite: Promise<void> = Promise.resolve();
   let allowed = new Set<string>();
   const stopFile = join(root, 'stop'); await unlink(stopFile).catch(() => {});
   await writeFile(join(root, 'running.pid'), String(process.pid));
@@ -123,20 +124,42 @@ async function run() {
     try { await session.close(); sessions.delete(id); reports.set(session.job.id, { jobId: session.job.id, profileId: id, status: 'closed' }); }
     catch { console.error('PROFILE_BUSY: Khong dong duoc cua so; ho so van bi khoa.'); }
   }
+  const cancelProfile = async (id: string) => { for (const r of running.values()) if (r.profileId === id) await r.operation.cancel().catch(() => {}); };
+  const cancelAll = () => { for (const r of running.values()) void r.operation.cancel().catch(() => {}); };
+  // Space window launches 2 s apart even when several start together.
+  const startGate = async () => { const at = Math.max(Date.now(), lastStart + 2000); lastStart = at; await sleep(at - Date.now()); };
+  // Journal writes go one after another (they share a temp file).
+  const remember = (id: string) => {
+    journal = [...journal, id].slice(-2000);
+    const write = journalWrite.then(() => saveJson(journalFile, journal));
+    journalWrite = write.catch(() => {});
+    return write;
+  };
   const watchdog = setInterval(() => {
-    if (Date.now() - lastLease > 90000) { allowed.clear(); void operation?.cancel().catch(() => {}); for (const id of sessions.keys()) void close(id); }
+    if (Date.now() - lastLease > 90000) { allowed.clear(); cancelAll(); for (const id of sessions.keys()) void close(id); }
   }, 1000);
   process.on('SIGINT', () => { stopped = true; }); process.on('SIGTERM', () => { stopped = true; });
+  async function openWindow(job: Job, task: Operation) {
+    opening++;
+    try {
+      await startGate(); task.check();
+      const session = await openSession(s.origin, job, task); sessions.set(job.profileId!, session);
+      return session;
+    } finally { opening--; }
+  }
   async function execute(job: Job) {
-    operationProfile = job.profileId;
     const task = new Operation(() => !stopped && Date.now() - lastLease <= 90000 && (!job.profileId || allowed.has(job.profileId)));
-    operation = task;
+    // One job per browser profile at a time.
+    if (job.profileId && [...running.values()].some(r => r.profileId === job.profileId)) {
+      reports.set(job.id, { jobId: job.id, profileId: job.profileId, status: 'error', done: true, error: 'PROFILE_BUSY' });
+      job.password = null; job.twofa = null; return;
+    }
+    running.set(job.id, { operation: task, profileId: job.profileId });
     try {
       if (journal.includes(job.id)) { reports.set(job.id, { jobId: job.id, profileId: job.profileId, status: 'interrupted', done: true, error: 'INTERRUPTED' }); return; }
-      journal = [...journal, job.id].slice(-2000); await saveJson(journalFile, journal);
+      await remember(job.id);
       if (job.expiresAt * 1000 < Date.now() || Date.now() - lastLease > 90000) throw new Error('INTERRUPTED');
-      if (job.kind === 'close') { await close(job.profileId!); reports.set(job.id, { jobId: job.id, done: true, ...(sessions.has(job.profileId!) ? { error: 'PROFILE_BUSY' } : {}) }); }
-      else if (job.kind === 'post') {
+      if (job.kind === 'post') {
         const session = sessions.get(job.profileId!);
         if (!session) throw new Error('POST_MANUAL');
         await task.own(() => session.close());
@@ -149,8 +172,7 @@ async function run() {
         let session = sessions.get(job.profileId!);
         if (!session) {
           if (job.reuse) throw new Error('HIDE_MANUAL');
-          await sleep(Math.max(0, 2000 - (Date.now() - lastStart))); lastStart = Date.now();
-          session = await openSession(s.origin, job, task); sessions.set(job.profileId!, session);
+          session = await openWindow(job, task);
         }
         const active = session;
         await task.own(() => active.close());
@@ -162,14 +184,13 @@ async function run() {
       }
       else if (job.kind !== 'open') throw new Error('UNSUPPORTED');
       else {
-        await sleep(Math.max(0, 2000 - (Date.now() - lastStart))); lastStart = Date.now();
-        const session = await openSession(s.origin, job, task); sessions.set(job.profileId!, session);
+        await openWindow(job, task);
         if (stopped || Date.now() - lastLease > 90000 || !allowed.has(job.profileId!)) await close(job.profileId!);
       }
     } catch (e) {
       const error = e instanceof Error && ['PROFILE_BUSY', 'INTERRUPTED', 'FOLDER_EMPTY', 'FOLDER_INVALID', 'POST_UNKNOWN', 'POST_MANUAL', 'HIDE_MANUAL', 'HIDE_FAILED'].includes(e.message) ? e.message : job.proxy ? 'PROXY_FAILED' : 'BROWSER_FAILED';
       reports.set(job.id, { jobId: job.id, profileId: job.profileId, status: 'error', done: true, error });
-    } finally { job.password = null; job.twofa = null; busy = false; executingId = null; operation = undefined; operationProfile = undefined; }
+    } finally { job.password = null; job.twofa = null; running.delete(job.id); }
   }
   try {
     console.log('Da san sang nhan lenh. Dung bang Stop hoac Ctrl+C.');
@@ -180,30 +201,33 @@ async function run() {
           const status = await session.inspect(); reports.set(session.job.id, { jobId: session.job.id, profileId: id, status });
           if (status === 'closed') sessions.delete(id);
         }
-        const sent = [...reports.values()];
-        const knownJobs: string[] = [...sessions.values()].map(session => session.job.id).concat([...reports.keys()], executingId ? [executingId] : []);
-        const sync = await api<{ allowed: string[]; job: { id: string; kind: string } | null; pollSeconds: number }>(s, 'sync', { runId, version: VERSION, capacity: busy ? 0 : 3 - sessions.size, reports: sent, knownJobs });
+        const sent = [...reports.values()].slice(0, 25); // the server reads at most 25 per sync
+        const knownJobs: string[] = [...sessions.values()].map(session => session.job.id).concat([...reports.keys()], [...running.keys()]);
+        const capacity = Math.max(0, maxWindows - sessions.size - opening);
+        const slots = Math.max(0, maxWindows + 2 - running.size);
+        const sync = await api<{ allowed: string[]; job: { id: string; kind: string } | null; jobs?: Array<{ id: string; kind: string }>; maxWindows?: number; pollSeconds: number }>(s, 'sync', { runId, version: VERSION, capacity, slots, reports: sent, knownJobs });
         // Keys are job IDs or `${jobId}:hide`; drop exactly the objects that were sent.
         for (const [key, r] of reports) if (sent.includes(r)) reports.delete(key);
         lastLease = Date.now(); allowed = new Set(sync.allowed); backoff = 3000;
+        if (Number.isInteger(sync.maxWindows)) maxWindows = Math.max(1, Math.min(10, sync.maxWindows!));
         if (process.connected) process.send?.('connected');
-        if (operationProfile && !allowed.has(operationProfile)) await operation?.cancel();
+        for (const r of running.values()) if (r.profileId && !allowed.has(r.profileId)) await r.operation.cancel().catch(() => {});
         for (const id of sessions.keys()) if (!allowed.has(id)) await close(id);
-        if (sync.job?.kind === 'close' && busy) {
-          const command = await api<Job>(s, 'claim', { id: sync.job.id });
-          if (command.profileId === operationProfile) await operation?.cancel();
-          await close(command.profileId!);
-          reports.set(command.id, { jobId: command.id, done: true, ...(sessions.has(command.profileId!) ? { error: 'PROFILE_BUSY' } : {}) });
-        } else if (sync.job && !busy) {
-          busy = true;
+        for (const next of sync.jobs ?? (sync.job ? [sync.job] : [])) {
           try {
-            const job = await api<Job>(s, 'claim', { id: sync.job.id });
-            executingId = job.id;
+            const job = await api<Job>(s, 'claim', { id: next.id });
+            if (job.kind === 'close') {
+              // Stop whatever runs in that window, then close it.
+              await cancelProfile(job.profileId!);
+              await close(job.profileId!);
+              reports.set(job.id, { jobId: job.id, done: true, ...(sessions.has(job.profileId!) ? { error: 'PROFILE_BUSY' } : {}) });
+              continue;
+            }
             if (job.profileId && (job.kind === 'open' || (job.kind === 'hide' && !job.reuse))) allowed.add(job.profileId);
             void execute(job);
-          } catch { busy = false; }
+          } catch { /* expired or cancelled meanwhile */ }
         }
-        await sleep(busy || sessions.size || reports.size ? 3000 : sync.pollSeconds * 1000);
+        await sleep(running.size || sessions.size || reports.size ? 3000 : sync.pollSeconds * 1000);
       } catch (e) {
         if (e instanceof Error && e.message === 'REVOKED') { stopped = true; break; }
         console.error('NETWORK: Dang thu ket noi lai.');
@@ -212,10 +236,10 @@ async function run() {
     }
   } finally {
     allowed.clear(); lastLease = 0;
-    await operation?.cancel().catch(() => {});
-    while (busy) await sleep(250);
+    cancelAll();
+    while (running.size) await sleep(250);
     for (const id of sessions.keys()) await close(id);
-    await api(s, 'sync', { runId, capacity: 0, reports: [...reports.values()] }).catch(() => {});
+    await api(s, 'sync', { runId, capacity: 0, slots: 0, reports: [...reports.values()] }).catch(() => {});
     clearInterval(watchdog); guard.close(); await unlink(join(root, 'running.pid')).catch(() => {});
   }
 }
