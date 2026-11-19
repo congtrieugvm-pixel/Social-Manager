@@ -4,6 +4,7 @@ import path from "node:path";
 import fs from "node:fs";
 import crypto from "node:crypto";
 import * as schema from "./schema";
+import { BROWSER_DDL } from "./browser-ddl";
 
 // Node-only DB initialization. NEVER imported on Cloudflare — the runtime
 // proxy in `./index.ts` uses an eval-based require to keep this file (and
@@ -362,6 +363,13 @@ export function initNodeDb(): BetterSQLite3Database<typeof schema> {
   sqlite.exec(
     `CREATE UNIQUE INDEX IF NOT EXISTS accounts_owner_username_unique ON accounts(owner_user_id, username);`,
   );
+
+  ensureColumn("accounts", "browser_proxy_id", "browser_proxy_id INTEGER");
+  ensureColumn("accounts", "browser_proxy_mode", "browser_proxy_mode TEXT NOT NULL DEFAULT 'inherit'");
+  ensureColumn("groups", "browser_proxy_id", "browser_proxy_id INTEGER");
+  sqlite.exec(BROWSER_DDL);
+  ensureColumn('browser_jobs', 'payload', 'payload TEXT');
+  ensureColumn('browser_jobs', 'result', 'result TEXT');
 
   // Seed default statuses on first boot (only if empty)
   const statusCount = sqlite

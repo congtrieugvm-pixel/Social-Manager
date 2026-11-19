@@ -1,10 +1,12 @@
 import { sqliteTable, integer, text } from "drizzle-orm/sqlite-core";
 import { sql } from "drizzle-orm";
+export * from "./browser-schema";
 
 // Multi-tenant: every data row is scoped to an owning app_user. New users
 // register → empty workspace; their inserts auto-set owner_user_id from
 // the active session. Old rows backfilled to first admin in migration 0002.
 export const groups = sqliteTable("groups", {
+  browserProxyId: integer("browser_proxy_id"),
   id: integer("id").primaryKey({ autoIncrement: true }),
   ownerUserId: integer("owner_user_id"),
   name: text("name").notNull(),
@@ -63,6 +65,8 @@ export const employees = sqliteTable("employees", {
 });
 
 export const accounts = sqliteTable("accounts", {
+  browserProxyId: integer("browser_proxy_id"),
+  browserProxyMode: text("browser_proxy_mode").notNull().default("inherit"),
   id: integer("id").primaryKey({ autoIncrement: true }),
   ownerUserId: integer("owner_user_id"),
   username: text("username").notNull(),

@@ -1966,6 +1966,7 @@ kbd { display: inline-flex; align-items: center; justify-content: center; min-wi
   .tt-row { flex-wrap: nowrap; }
   .tt-row .search-field { flex: 1 1 auto; min-width: 0; }
   .tt-row .tt-spacer { display: none; }
+  .tt-group-picker .menu-pop { left: auto; right: 0; }
   .idle-menu > .btn { min-width: 44px; min-height: 44px; }
 }
 

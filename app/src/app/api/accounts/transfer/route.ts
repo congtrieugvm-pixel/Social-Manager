@@ -80,6 +80,8 @@ export async function POST(req: Request) {
     });
 
     const cleared = {
+      browserProxyId: null,
+      browserProxyMode: "inherit",
       ownerUserId: target.id,
       msOAuthNonce: null,
       groupId: null,

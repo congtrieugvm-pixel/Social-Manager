@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useState } from "react";
-import { BarChart3, Bookmark, LogOut, Puzzle, Users, type LucideIcon } from "lucide-react";
+import { BarChart3, Bookmark, LogOut, Monitor, Puzzle, Users, type LucideIcon } from "lucide-react";
 import { ThemeToggle } from "./theme-toggle";
 
 type NavItem = {
@@ -38,6 +38,7 @@ const nav: NavItem[] = [
   { href: "/insight", label: "Insight", icon: BarChart3 },
   { href: "/youtube", label: "Bookmark Key", icon: Bookmark },
   { href: "/utilities", label: "Tiện ích", icon: Puzzle },
+  { href: "/browser", label: "Proxy & trình duyệt", icon: Monitor },
 ];
 
 interface SidebarProps {

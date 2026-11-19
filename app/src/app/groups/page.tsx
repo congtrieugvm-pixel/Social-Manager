@@ -97,7 +97,7 @@ export default function GroupsPage() {
   async function deleteGroup(id: number, count: number) {
     const msg =
       count > 0
-        ? `Xóa nhóm này? ${count} tài khoản sẽ chuyển về "không nhóm".`
+        ? `Xóa nhóm này? ${count} tài khoản sẽ chuyển về "không nhóm". Tài khoản đang dùng proxy của nhóm sẽ dùng kết nối trực tiếp ở lần mở trình duyệt tiếp theo.`
         : "Xóa nhóm này?";
     if (!(await confirmDialog({ message: msg, confirmLabel: "Xoá", danger: true }))) return;
     await fetch(`/api/groups/${id}`, { method: "DELETE" });

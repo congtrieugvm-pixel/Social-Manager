@@ -53,6 +53,13 @@ desktop.ini
 *.pem
 .cache/
 coverage/
+browser-agent/node_modules/
+browser-agent/dist/
+browser-agent/.package/
+/dist/social-manager-browser-*.zip
+/dist/social-manager-browser-*.zip.json
+/app/public/downloads/browser/
+/app/src/generated/browser-release.json
 
 # Extension releases are generated from source by the app prebuild hook.
 /dist/tiktok-studio-private-*.zip

@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import Link from "next/link";
 import { redirect } from "next/navigation";
 import { Check, Download, LockKeyhole, Monitor, Puzzle, RefreshCw } from "lucide-react";
 import { getCurrentUser } from "@/lib/auth";
@@ -18,10 +19,17 @@ export default async function UtilitiesPage() {
           <span className="eyebrow">Công cụ cho công việc hằng ngày</span>
           <h1 className="h1-serif">Tiện ích</h1>
         </div>
-        <span className={styles.count}><Puzzle size={15} aria-hidden="true" />1 tiện ích</span>
+        <span className={styles.count}><Puzzle size={15} aria-hidden="true" />2 tiện ích</span>
       </header>
 
       <div className={styles.grid}>
+        <article className={styles.extension}>
+          <span className={styles.category}>WINDOWS · CAMOUFOX</span>
+          <h2>Trình duyệt TikTok</h2>
+          <p className={styles.description}>Mở hồ sơ riêng cho từng tài khoản trên máy Windows đã ghép nối. Gán proxy theo tài khoản hoặc nhóm, giữ phiên cho lần sử dụng tiếp theo.</p>
+          <Link className="btn btn-primary" href="/browser"><Monitor size={18} />Proxy & trình duyệt</Link>
+          <p className={styles.notice}>Bản thử nghiệm. Xem hướng dẫn cài đặt và trạng thái kiểm chứng tại trang quản lý.</p>
+        </article>
         <article className={styles.extension} aria-labelledby="extension-title">
           <div className={styles.cardTop}>
             <div className={styles.mark}><LockKeyhole size={30} strokeWidth={1.6} aria-hidden="true" /></div>

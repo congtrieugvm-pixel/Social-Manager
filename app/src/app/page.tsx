@@ -37,7 +37,7 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import { generateTotpCode } from "@/lib/totp";
-import { encodeBodyHeader } from "@/lib/req-body";
+import { encodeBodyHeader, postJson, safeJson } from "@/lib/req-body";
 import { confirmDialog, notify, promptDialog } from "./_components/notify";
 import { SkeletonRows } from "./_components/skeleton";
 import { DensityToggle } from "./_components/density-toggle";
@@ -311,6 +311,8 @@ export default function Dashboard() {
   const [employeesList, setEmployeesList] = useState<EmployeeRow[]>([]);
   const [groupFilter, setGroupFilter] = useState<GroupFilter>("all");
   const [selected, setSelected] = useState<Set<number>>(new Set());
+  const [selectionGroups, setSelectionGroups] = useState<Array<number | 'none'>>([]);
+  const [selectingGroups, setSelectingGroups] = useState(false);
   const [loading, setLoading] = useState(false);
   const [action, setAction] = useState<string | null>(null);
   const [fetchProgress, setFetchProgress] = useState<{ done: number; total: number; retry?: boolean } | null>(null);
@@ -477,6 +479,23 @@ export default function Dashboard() {
       setSelected(new Set());
     } else {
       setSelected(new Set(filtered.map((r) => r.id)));
+    }
+  }
+
+  async function selectByGroups(menu: HTMLDetailsElement | null) {
+    setSelectingGroups(true);
+    try {
+      const response = await postJson('/api/accounts/selection', { groups: selectionGroups });
+      const result = await safeJson<{ ids: number[] }>(response);
+      if (!response.ok || result.error) throw new Error(result.error || 'Không thể chọn tài khoản.');
+      setSelected(new Set(result.ids));
+      lastIdxRef.current = null;
+      if (menu) menu.open = false;
+      notify(`Đã chọn ${result.ids.length} tài khoản thuộc các nhóm đã chọn.`);
+    } catch (error) {
+      notify.error(error instanceof Error ? error.message : 'Không thể chọn tài khoản.');
+    } finally {
+      setSelectingGroups(false);
     }
   }
 
@@ -1267,6 +1286,7 @@ export default function Dashboard() {
       <header className="page-header tt-head">
         <div className="page-header-left">
           <h1 className="h1-serif">Tài khoản TikTok</h1>
+          <Link href="/browser" className="btn btn-quiet">Proxy & trình duyệt</Link>
           <p className="tt-sub">
             {total.toLocaleString("vi-VN")} tài khoản · {groups.length} nhóm · {statusesList.length} trạng thái
           </p>
@@ -1395,6 +1415,25 @@ export default function Dashboard() {
               </button>
             </div>
             <DensityToggle />
+            <details className="menu tt-group-picker">
+              <summary className="btn" aria-label="Chọn theo nhóm" title="Chọn theo nhóm"><Folder size={15} aria-hidden="true" /><span className="btn-label">Chọn theo nhóm</span><ChevronDown size={14} /></summary>
+              <div className="menu-pop" style={{ minWidth: 260, maxWidth: '90vw' }}>
+                <p style={{ padding: '8px 12px', fontSize: 12, color: 'var(--muted)' }}>Chọn tài khoản của một hoặc nhiều nhóm trên tất cả các trang.</p>
+                <div style={{ maxHeight: 260, overflowY: 'auto' }}>
+                  {[{ id: 'none' as const, name: 'Không nhóm' }, ...groups].map(group => (
+                    <label className="menu-item" key={group.id}>
+                      <input type="checkbox" disabled={selectingGroups} checked={selectionGroups.includes(group.id)}
+                        onChange={event => setSelectionGroups(current => event.target.checked ? [...current, group.id] : current.filter(id => id !== group.id))} />
+                      {group.name}
+                    </label>
+                  ))}
+                </div>
+                <button className="btn btn-primary" style={{ margin: 12 }} disabled={!selectionGroups.length || selectingGroups || action !== null}
+                  onClick={event => void selectByGroups(event.currentTarget.closest('details'))}>
+                  {selectingGroups ? 'Đang chọn…' : 'Chọn tài khoản'}
+                </button>
+              </div>
+            </details>
             <button onClick={load} disabled={loading} className="btn btn-icon" aria-label="Tải lại danh sách" title="Tải lại danh sách">
               <RotateCw size={15} aria-hidden="true" className={loading ? "spin" : undefined} />
             </button>
@@ -1405,6 +1444,7 @@ export default function Dashboard() {
 
           {selected.size > 0 ? (
             <div className="tt-selbar only-wide" role="toolbar" aria-label="Thao tác với tài khoản đã chọn">
+              <Link className="btn" href={`/browser?ids=${Array.from(selected).slice(0, 20).join(',')}`}>Trình duyệt & đăng bài{selected.size > 20 ? ' (20 tài khoản đầu)' : ''}</Link>
               <span className="tt-selcount">
                 <b>{selected.size}</b> đã chọn
               </span>
@@ -2136,6 +2176,7 @@ export default function Dashboard() {
         )}
         <Sheet open={actionsOpen && selected.size > 0} title={`${selected.size} tài khoản đã chọn`} onClose={() => setActionsOpen(false)}>
           <div className="sheet-actions">
+            <Link className="sheet-btn" href={`/browser?ids=${Array.from(selected).slice(0, 20).join(',')}`}>Trình duyệt & đăng bài{selected.size > 20 ? ' (20 tài khoản đầu)' : ''}</Link>
             <button className="sheet-btn" disabled={action !== null} onClick={() => { setActionsOpen(false); runFetchBulk("fetch-avatar"); }}>
               <ImageIcon size={20} aria-hidden="true" /> Lấy ảnh đại diện
             </button>
