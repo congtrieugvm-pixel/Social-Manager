@@ -92,9 +92,12 @@ export async function browserState(owner: number) {
   await expireJobs(owner);
   const [ds, fs, js] = await Promise.all([
     db.select({ id: devices.id, name: devices.name, version: devices.version, lastSeenAt: devices.lastSeenAt, maxWindows: devices.maxWindows }).from(devices).where(and(eq(devices.ownerUserId, owner), eq(devices.revoked, 0))),
-    db.select({ accountId: profiles.accountId, deviceId: profiles.deviceId, status: profiles.status, updatedAt: profiles.updatedAt }).from(profiles).where(eq(profiles.ownerUserId, owner)),
-    db.select({ id: jobs.id, kind: jobs.kind, accountId: jobs.accountId, state: jobs.state, error: jobs.error, result: jobs.result, createdAt: jobs.createdAt })
-      .from(jobs).where(and(eq(jobs.ownerUserId, owner), gt(jobs.createdAt, now() - 86400), inArray(jobs.kind, ['open', 'close', 'hide'])))
+    // Usernames ride along for the floating thread panel (joined, not an IN list: D1 caps bound parameters).
+    db.select({ accountId: profiles.accountId, deviceId: profiles.deviceId, status: profiles.status, updatedAt: profiles.updatedAt, username: accounts.username }).from(profiles)
+      .leftJoin(accounts, and(eq(accounts.id, profiles.accountId), eq(accounts.ownerUserId, owner))).where(eq(profiles.ownerUserId, owner)),
+    db.select({ id: jobs.id, kind: jobs.kind, accountId: jobs.accountId, state: jobs.state, error: jobs.error, result: jobs.result, createdAt: jobs.createdAt, deviceId: jobs.deviceId, username: accounts.username })
+      .from(jobs).leftJoin(accounts, and(eq(accounts.id, jobs.accountId), eq(accounts.ownerUserId, owner)))
+      .where(and(eq(jobs.ownerUserId, owner), gt(jobs.createdAt, now() - 86400), inArray(jobs.kind, ['open', 'close', 'hide'])))
       .orderBy(desc(jobs.createdAt)).limit(300),
   ]);
   return { now: now(), owner, devices: ds, profiles: fs, jobs: js };

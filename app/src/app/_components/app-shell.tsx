@@ -14,6 +14,7 @@ const TABS: Array<{ href: string; label: string; icon: (p: { size?: number }) =>
   { href: "/youtube", label: "Bookmark", icon: ({ size }) => <Bookmark size={size} aria-hidden="true" /> },
 ];
 import { Notifier } from "./notify";
+import { BrowserDock } from "./browser-dock";
 
 interface AppShellProps {
   user: { username: string; role: string };
@@ -117,6 +118,7 @@ export function AppShell({ user, children }: AppShellProps) {
 
       <main className="main">{children}</main>
       <Notifier />
+      <BrowserDock />
 
       {/* Phones: thumb-reach tab bar. "Thêm" opens the drawer (users, theme, sign out). */}
       <nav className="tabbar" aria-label="Điều hướng chính">
