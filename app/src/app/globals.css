@@ -1585,15 +1585,31 @@ a.btn {
 .nx-outlier { padding: 1px 8px; border-radius: 999px; background: var(--bg-2); border: 1px solid var(--line-strong); font-weight: 650; }
 .nx-outlier.hot { background: var(--accent-soft); border-color: var(--accent); color: var(--accent); }
 .nx-more { align-self: center; }
+.nx-num .input { width: 120px; font-variant-numeric: tabular-nums; }
+.nx-filters .select { width: auto; min-width: 150px; }
+.nx-checks { display: flex; gap: 14px; flex-wrap: wrap; align-items: center; padding-bottom: 8px; }
+.nx-total { color: var(--muted); }
+.nx-flag { background: var(--accent-soft); color: var(--accent); font-weight: 600; }
+.nx-flag.hot { background: var(--accent); color: var(--accent-ink); }
+.nx-tag-btn { border: 1px solid var(--line); cursor: pointer; font-family: inherit; transition: border-color 0.15s ease, color 0.15s ease; }
+.nx-tag-btn:hover { border-color: var(--accent); color: var(--accent); }
+.nx-tag-btn:focus-visible { outline: none; box-shadow: var(--focus); }
+.nx-field .select:disabled { opacity: 0.6; }
 @media (max-width: 768px) {
   .nx { padding: 12px; }
-  .nx-form { flex-direction: column; align-items: stretch; }
+  .nx-form { display: grid; grid-template-columns: 1fr 1fr; align-items: end; }
+  .nx-grow, .nx-checks, .nx-run, .nx-check { grid-column: 1 / -1; }
+  .nx-field { min-width: 0; }
+  .nx-field .select { min-width: 0; }
   .nx-grow { flex: none; }
   .nx-grow .input { min-height: 44px; }
+  .nx-num .input { width: 100%; min-height: 44px; }
+  .nx-checks { padding-bottom: 0; }
+  .nx-checks .yt-check { min-height: 44px; }
   .nx-field .select, .nx-run { width: 100%; min-height: 44px; }
   .nx-grid { grid-template-columns: 1fr; }
   .nx-toolbar, .nx-filters { align-items: stretch; }
-  .nx-filters .select { flex: 1 1 100%; min-height: 44px; }
+  .nx-filters .select { flex: 1 1 100%; width: 100%; min-height: 44px; }
   .nx-save { min-height: 40px; }
   .nx-video { flex-wrap: wrap; }
   .nx-thumb { flex-basis: 112px; }

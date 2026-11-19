@@ -3,15 +3,42 @@ import { getOwnerId } from "@/lib/scope";
 import { readBody } from "@/lib/req-body";
 import { AuthError } from "@/lib/auth";
 import { YtError, resolveChannel } from "@/lib/youtube";
-import { NexlevError, nicheOverview, searchYoutube, similarChannels, type SearchParams } from "@/lib/nexlev";
+import {
+  NexlevError,
+  facelessOutliers,
+  nicheFinder,
+  nicheOverview,
+  searchYoutube,
+  similarChannels,
+  type FinderParams,
+  type OutlierParams,
+  type SearchParams,
+} from "@/lib/nexlev";
 
 // POST — NexLev niche research for Bookmark Key (signed-in users only).
 //   { mode: "search", query, type?, sortBy?, uploadDate?, duration?, token? }
 //   { mode: "similar", channel, level?: 1|2|3, channelType?: "all"|"short" }
 //   { mode: "niche", channel }
+//   { mode: "finder", query, page?, minSubscribers?, …FinderParams }   (MCP)
+//   { mode: "outliers", query?, page?, minOutlierScore?, …OutlierParams } (MCP)
 // `channel` is a UC… id or any YouTube channel / @handle / video link.
 
 const UC_RE = /^UC[\w-]{22}$/;
+const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+
+/** Copy only known keys with the expected type (numbers ≥ 0, booleans, YYYY-MM-DD dates). */
+function filters(body: Record<string, unknown>, spec: { nums?: string[]; bools?: string[]; dates?: string[] }) {
+  const out: Record<string, unknown> = {};
+  for (const k of spec.nums ?? []) {
+    const v = typeof body[k] === "string" ? Number(body[k]) : body[k];
+    if (typeof v === "number" && Number.isFinite(v) && v >= 0) out[k] = v;
+  }
+  for (const k of spec.bools ?? []) if (typeof body[k] === "boolean") out[k] = body[k];
+  for (const k of spec.dates ?? []) if (typeof body[k] === "string" && DATE_RE.test(body[k] as string)) out[k] = body[k];
+  return out;
+}
+
+const page = (v: unknown) => (typeof v === "number" && Number.isInteger(v) && v >= 1 && v <= 50 ? v : 1);
 
 function pick<T extends string>(v: unknown, allowed: readonly T[]): T | undefined {
   return typeof v === "string" && (allowed as readonly string[]).includes(v) ? (v as T) : undefined;
@@ -45,6 +72,33 @@ export async function POST(req: Request) {
         token: typeof body.token === "string" ? body.token.slice(0, 4000) : undefined,
       };
       return NextResponse.json(await searchYoutube(params));
+    }
+
+    if (mode === "finder") {
+      const params: FinderParams = {
+        query: typeof body.query === "string" ? body.query.trim().slice(0, 200) : "",
+        page: page(body.page),
+        sortBy: pick(body.sortBy, ["subscribers", "avgViewsPerVideo", "daysSinceStart", "totalVideos", "totalRevenue", "createdAt"] as const),
+        ...filters(body, {
+          nums: ["minSubscribers", "maxSubscribers", "minMonthlyRevenue", "minRpm", "minAvgViewsPerVideo", "minOutlierScore"],
+          bools: ["isFaceless", "isMonetizationEnabled", "isShortsOnly"],
+          dates: ["channelCreatedAfter", "lastUploadAfter"],
+        }),
+      };
+      const r = await nicheFinder(params);
+      return NextResponse.json({ ...r, videos: [] });
+    }
+
+    if (mode === "outliers") {
+      const params: OutlierParams = {
+        query: typeof body.query === "string" ? body.query.trim().slice(0, 200) : "",
+        page: page(body.page),
+        videoType: pick(body.videoType, ["long", "shorts"] as const),
+        sortBy: pick(body.sortBy, ["outlierScore", "videoViews", "videoPublishedAt", "channelSubCount"] as const),
+        ...filters(body, { nums: ["minOutlierScore", "maxSubscribers", "minViews"], bools: ["isAiContent"], dates: ["minUploadDate"] }),
+      };
+      const r = await facelessOutliers(params);
+      return NextResponse.json({ ...r, channels: [] });
     }
 
     if (mode === "similar" || mode === "niche") {
