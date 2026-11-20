@@ -1,4 +1,4 @@
-import type { Page } from 'playwright-core';
+import type { Locator, Page } from 'playwright-core';
 import { base32, totp, totpRemaining } from './totp.js';
 
 export function identityStatus(actual: string | null, expected: string, challenge: boolean) {
@@ -39,7 +39,28 @@ const CODE_INPUT = ['input[autocomplete="one-time-code"]', 'input[placeholder*="
   .map(s => `${s}:not([name="username"]):not([type="password"])`).join(', ');
 const codeInput = (page: Page) => page.locator(CODE_INPUT).first();
 const AUTH_METHOD = /authenticator|ứng dụng xác thực|trình xác thực/i;
-const EMAIL_METHOD = /email|thư điện tử|gửi mã|send code/i;
+const SEND_CODE = /^\s*(send code|get code|send|gửi mã|nhận mã|gửi)\s*$/i;
+// "Verify it's really you" dialog: the email option shows the masked address (p***1@hotmail.com).
+const MASKED_EMAIL = /[^\s@]*\*{2,}[^\s@]*@\S+/;
+const VERIFY_DIALOG = /verify it.?s really you|verify your identity|xác minh (đó là bạn|danh tính|rằng đó là bạn)/i;
+
+/** First element of a locator that is actually visible (the login page keeps hidden copies). */
+async function firstVisible(locator: Locator): Promise<Locator | null> {
+  try {
+    const all = await locator.all();
+    for (const item of all.slice(0, 20)) if (await item.isVisible().catch(() => false)) return item;
+  } catch { /* detached / unsupported: treat as not found */ }
+  return null;
+}
+
+/** The email row of the verify dialog — never the "Email" tab of the login form behind it. */
+async function emailMethod(page: Page): Promise<Locator | null> {
+  const masked = await firstVisible(page.getByText(MASKED_EMAIL));
+  if (masked) return masked;
+  // Fallback: an "Email" option inside the verify dialog only.
+  const dialog = await firstVisible(page.locator('[role="dialog"], [class*="modal" i], [class*="Modal"]').filter({ hasText: VERIFY_DIALOG }));
+  return dialog ? firstVisible(dialog.getByText(/^\s*(email|e-mail|thư điện tử)\s*$/i)) : null;
+}
 const nextButton = (page: Page) => page.getByRole('button', { name: /^\s*(next|verify|submit|continue|confirm|log in|tiếp|tiếp tục|xác minh|xác nhận|gửi|đăng nhập)\s*$/i }).first();
 
 async function loginError(page: Page): Promise<string | null> {
@@ -89,7 +110,7 @@ export async function fillOnce(page: Page, username: string, password: string | 
   // Watch the result: a CAPTCHA (wait for the person, up to 5 min), the 2-step code
   // (typed from the saved 2FA secret, once), leaving the login page = accepted, or an error.
   const started = Date.now();
-  let deadline = started + 20000, codeSent = false, methodPicked = false;
+  let deadline = started + 20000, codeSent = false, methodTries = 0, sendClicked = false;
   while (Date.now() < deadline) {
     await sleep(500); check();
     if (await captchaVisible(page)) { deadline = Math.max(deadline, Math.min(started + 300000, Date.now() + 20000)); continue; }
@@ -119,17 +140,27 @@ export async function fillOnce(page: Page, username: string, password: string | 
       codeSent = true; deadline = Date.now() + 25000;
       continue;
     }
-    // TikTok may first ask which way to verify: pick authenticator (2FA) or email (no 2FA).
-    if (!methodPicked) {
-      const method = page.getByText(twofa ? AUTH_METHOD : EMAIL_METHOD).first();
-      if (!twofa && !getMailCode) { /* no way to read email: skip, fall through to challenge */ }
-      else if (await method.isVisible().catch(() => false)) {
-        methodPicked = true;
+    // TikTok may first ask "Verify it's really you": pick authenticator (2FA) or the email row (no 2FA).
+    // Retried a few times: a click that lands on the wrong element must not end the attempt.
+    if (methodTries < 4 && (twofa || getMailCode)) {
+      const method = twofa ? await firstVisible(page.getByText(AUTH_METHOD)) : await emailMethod(page);
+      if (method) {
+        methodTries++;
         await method.click({ timeout: 5000 }).catch(() => {});
-        await sleep(500);
+        await sleep(1200);
         const next = nextButton(page);
-        if (await next.isVisible().catch(() => false)) await next.click({ timeout: 5000 }).catch(() => {});
-        deadline = Math.max(deadline, Date.now() + 20000);
+        if (await next.isVisible().catch(() => false) && await next.isEnabled().catch(() => false)) await next.click({ timeout: 5000 }).catch(() => {});
+        deadline = Math.max(deadline, Date.now() + 25000);
+        continue;
+      }
+    }
+    // Some flows show a "Send code" button before the code box.
+    if (!sendClicked && !twofa && getMailCode) {
+      const send = await firstVisible(page.getByRole('button', { name: SEND_CODE }));
+      if (send && await send.isEnabled().catch(() => false)) {
+        sendClicked = true;
+        await send.click({ timeout: 5000 }).catch(() => {});
+        deadline = Math.max(deadline, Date.now() + 25000);
         continue;
       }
     }
