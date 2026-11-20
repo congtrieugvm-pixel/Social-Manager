@@ -19,7 +19,8 @@
     "cf:typegen": "wrangler types --env-interface CloudflareEnv ./cloudflare-env.d.ts",
     "db:generate": "drizzle-kit generate",
     "db:migrate:local": "wrangler d1 migrations apply social-manager --local",
-    "db:migrate:remote": "wrangler d1 migrations apply social-manager --remote"
+    "db:migrate:remote": "wrangler d1 migrations apply social-manager --remote",
+    "test:posting-plan": "node scripts/test-posting-plan.cjs"
   },
   "dependencies": {
     "@tobyg74/tiktok-api-dl": "^1.3.7",
