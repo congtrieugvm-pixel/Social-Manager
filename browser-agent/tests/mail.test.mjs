@@ -71,3 +71,28 @@ test('authorize URL carries PKCE, login hint and the IMAP scope', () => {
   assert.match(u.searchParams.get('scope'), /IMAP\.AccessAsUser\.All/);
   assert.equal(u.searchParams.get('code_challenge_method'), 'S256');
 });
+
+import { ensureMailAccess, pollTikTokCode } from '../dist/maillogin.js';
+
+test('ensureMailAccess: redeem stored token, else browser login; no creds fails', async () => {
+  const stored = { email: 'a@hotmail.com', mailPassword: 'p', recoveryEmail: 'r@fviainboxes.com', refreshToken: 'RT', clientId: 'CID' };
+  let refreshed = 0, logged = 0;
+  const deps = { refresh: async (rt, cid) => { refreshed++; assert.equal(rt, 'RT'); assert.equal(cid, 'CID'); return { accessToken: 'AT', refreshToken: 'RT2', expiresAt: 0 }; },
+    login: async () => { logged++; return { accessToken: 'NEW', refreshToken: 'RT_NEW', expiresAt: 0 }; } };
+  let r = await ensureMailAccess({}, stored, () => {}, deps);
+  assert.equal(r.accessToken, 'AT'); assert.equal(r.tokens, undefined); assert.equal(refreshed, 1); assert.equal(logged, 0);
+
+  const dead = { ...deps, refresh: async () => { throw new Error('invalid_grant'); } };
+  r = await ensureMailAccess({}, stored, () => {}, dead);
+  assert.equal(r.accessToken, 'NEW'); assert.equal(r.tokens.refreshToken, 'RT_NEW'); assert.equal(logged, 1);
+
+  await assert.rejects(ensureMailAccess({}, { ...stored, refreshToken: null, clientId: null, mailPassword: null }, () => {}, deps), /MAIL_NO_PASSWORD/);
+});
+
+test('pollTikTokCode returns the newest TikTok code from the inbox', async () => {
+  const since = Date.parse('Fri, 20 Nov 2026 10:00:00 +0000');
+  let calls = 0;
+  const read = async () => { calls++; return calls < 2 ? [] : [{ headers: 'From: noreply@tiktok.com\r\nSubject: code\r\nDate: Fri, 20 Nov 2026 10:01:00 +0000', body: 'Your code is 445566' }]; };
+  const code = await pollTikTokCode('a@hotmail.com', 'AT', since, () => {}, read);
+  assert.equal(code, '445566');
+});

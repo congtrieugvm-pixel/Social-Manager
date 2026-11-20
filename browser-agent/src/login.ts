@@ -39,6 +39,7 @@ const CODE_INPUT = ['input[autocomplete="one-time-code"]', 'input[placeholder*="
   .map(s => `${s}:not([name="username"]):not([type="password"])`).join(', ');
 const codeInput = (page: Page) => page.locator(CODE_INPUT).first();
 const AUTH_METHOD = /authenticator|ứng dụng xác thực|trình xác thực/i;
+const EMAIL_METHOD = /email|thư điện tử|gửi mã|send code/i;
 const nextButton = (page: Page) => page.getByRole('button', { name: /^\s*(next|verify|submit|continue|confirm|log in|tiếp|tiếp tục|xác minh|xác nhận|gửi|đăng nhập)\s*$/i }).first();
 
 async function loginError(page: Page): Promise<string | null> {
@@ -46,8 +47,11 @@ async function loginError(page: Page): Promise<string | null> {
   return text ? text.trim().replace(/\s+/g, ' ').slice(0, 160) : null;
 }
 
+/** Reads the emailed TikTok code for an account with no 2FA. `since` = when Log in was clicked. */
+export type MailCodeResolver = (since: number) => Promise<string | null>;
+
 /** Fill the saved username/password and press Log in at most once. Never retries a submission. */
-export async function fillOnce(page: Page, username: string, password: string | null, check = () => {}, twofa: string | null = null): Promise<LoginOutcome> {
+export async function fillOnce(page: Page, username: string, password: string | null, check = () => {}, twofa: string | null = null, getMailCode?: MailCodeResolver): Promise<LoginOutcome> {
   check();
   if (!password) return { result: 'no_password' };
   if (new URL(page.url()).hostname !== 'www.tiktok.com') return { result: 'no_form' };
@@ -92,14 +96,20 @@ export async function fillOnce(page: Page, username: string, password: string | 
     const code = codeInput(page);
     if (await code.isVisible().catch(() => false)) {
       if (codeSent) continue;
-      if (!twofa) return { result: 'challenge', error: 'TikTok hỏi mã xác minh nhưng tài khoản chưa lưu khoá 2FA' };
-      const key = base32(twofa);
-      if (!key) return { result: 'challenge', error: 'Khoá 2FA đã lưu không đúng định dạng (cần chuỗi base32 của ứng dụng xác thực)' };
-      // Don't type a code that expires mid-typing.
-      if (totpRemaining() < 6000) await sleep(totpRemaining() + 500);
+      let value: string | null = null;
+      if (twofa) {
+        const key = base32(twofa);
+        if (!key) return { result: 'challenge', error: 'Khoá 2FA đã lưu không đúng định dạng (cần chuỗi base32 của ứng dụng xác thực)' };
+        if (totpRemaining() < 6000) await sleep(totpRemaining() + 500); // don't type a code that expires mid-typing
+        value = totp(key);
+      } else if (getMailCode) {
+        // No 2FA: TikTok emailed the code. Read it from the mailbox.
+        value = await getMailCode(started).catch(() => null);
+        if (!value) return { result: 'challenge', error: 'Không lấy được mã TikTok gửi qua email. Kiểm tra hộp thư/khôi phục rồi nhập tay.' };
+      } else return { result: 'challenge', error: 'TikTok hỏi mã xác minh nhưng tài khoản chưa có 2FA và chưa cấu hình đọc mã email' };
       check();
       await code.click({ timeout: 5000 }); await code.press('Control+a'); await code.press('Delete');
-      await code.pressSequentially(totp(key), { delay: 60 }); check();
+      await code.pressSequentially(value, { delay: 60 }); check();
       await sleep(800);
       const next = nextButton(page);
       if (await code.isVisible().catch(() => false)) {
@@ -109,10 +119,11 @@ export async function fillOnce(page: Page, username: string, password: string | 
       codeSent = true; deadline = Date.now() + 25000;
       continue;
     }
-    // TikTok may first ask which way to verify: choose the authenticator app.
-    if (twofa && !methodPicked) {
-      const method = page.getByText(AUTH_METHOD).first();
-      if (await method.isVisible().catch(() => false)) {
+    // TikTok may first ask which way to verify: pick authenticator (2FA) or email (no 2FA).
+    if (!methodPicked) {
+      const method = page.getByText(twofa ? AUTH_METHOD : EMAIL_METHOD).first();
+      if (!twofa && !getMailCode) { /* no way to read email: skip, fall through to challenge */ }
+      else if (await method.isVisible().catch(() => false)) {
         methodPicked = true;
         await method.click({ timeout: 5000 }).catch(() => {});
         await sleep(500);
@@ -126,7 +137,7 @@ export async function fillOnce(page: Page, username: string, password: string | 
     const error = await loginError(page);
     if (error) return { result: 'rejected', error };
   }
-  if (codeSent) return { result: 'challenge', error: 'Đã nhập mã 2FA nhưng TikTok chưa chấp nhận (kiểm tra khoá 2FA đã lưu)' };
+  if (codeSent) return { result: 'challenge', error: twofa ? 'Đã nhập mã 2FA nhưng TikTok chưa chấp nhận (kiểm tra khoá 2FA đã lưu)' : 'Đã nhập mã email nhưng TikTok chưa chấp nhận (có thể mã cũ/hết hạn)' };
   if (await captchaVisible(page)) return { result: 'challenge' };
   return { result: 'pending' };
 }
@@ -139,7 +150,7 @@ async function signedInAs(page: Page, username: string, ms: number) {
   return status;
 }
 
-export async function navigateAccount(page: Page, hasSession: boolean, username: string, password: string | null, autofill: boolean, check = () => {}, twofa: string | null = null): Promise<LoginOutcome> {
+export async function navigateAccount(page: Page, hasSession: boolean, username: string, password: string | null, autofill: boolean, check = () => {}, twofa: string | null = null, getMailCode?: MailCodeResolver): Promise<LoginOutcome> {
   await page.goto('https://www.tiktok.com/', { timeout: 45000, waitUntil: 'domcontentloaded' }).catch(() => {});
   check();
   // A session cookie alone isn't proof: expired/revoked sessions keep their cookies.
@@ -155,7 +166,7 @@ export async function navigateAccount(page: Page, hasSession: boolean, username:
   check();
   // TikTok sends an already signed-in profile away from /login.
   if (!onLoginPage(page)) return { result: (await signedInAs(page, username, 5000)) === 'logged_in' ? 'logged_in' : 'no_form' };
-  return fillOnce(page, username, password, check, twofa).catch((e: unknown) => {
+  return fillOnce(page, username, password, check, twofa, getMailCode).catch((e: unknown) => {
     if (e instanceof Error && e.message === 'INTERRUPTED') throw e;
     return { result: 'no_form' as const, error: 'Lỗi khi điền form đăng nhập' };
   });

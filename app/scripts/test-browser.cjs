@@ -151,6 +151,29 @@ const req = token => new Request('https://test.invalid', { headers: { Authorizat
     sqlite.exec('UPDATE browser_login_attempts SET attempts=20');
     await assert.rejects(s.loginDevice({ username: 'one', password, name: 'limited', version: '1' }, 'test-ip'), e => e.status === 429);
   });
+  await test('login captures mailbox OAuth token and enabled-2FA key -> stored encrypted on the account', async () => {
+    const pair = await s.createPairing(1);
+    const enrolled = await s.enroll({ code: pair.code, name: 'mail fixture', version: '1.0.9' });
+    let device = await s.authenticateDevice(req(enrolled.token));
+    await s.sync(device, { runId: 'mail-run', version: '1.0.9', capacity: 1 });
+    device = await s.authenticateDevice(req(enrolled.token));
+    await s.queue(1, { deviceId: device.id, kind: 'hide', ids: [3] });
+    let sync = await s.sync(device, { runId: 'mail-run', capacity: 1 });
+    const job = await s.claim(device, sync.job.id);
+    // Agent reports captured secrets while the job runs.
+    await s.sync(device, { runId: 'mail-run', capacity: 1, knownJobs: [job.id], reports: [
+      { jobId: job.id, mail: { refreshToken: 'REFRESH-XYZ', clientId: '9e5f94bc-e8a4-4e73-b8be-63364c29d753' } },
+      { jobId: job.id, twofaSecret: 'JBSWY3DPEHPK3PXP JBSWY3DPEHPK3PXP' },
+    ] });
+    const acc = row('accounts').find(a => a.id === 3);
+    assert.ok(acc.enc_mail_token && acc.enc_mail_token.includes(':'), 'mail token encrypted');
+    assert.equal(acc.mail_client_id, '9e5f94bc-e8a4-4e73-b8be-63364c29d753');
+    assert.ok(acc.enc_2fa && acc.enc_2fa.includes(':'), '2fa secret encrypted');
+    assert.equal(JSON.stringify(row('browser_jobs')).includes('REFRESH-XYZ'), false, 'secret never stored in the job row');
+    // A junk 2FA secret is rejected.
+    await s.sync(device, { runId: 'mail-run', capacity: 1, knownJobs: [job.id], reports: [{ jobId: job.id, twofaSecret: 'not a key!!' }] });
+    assert.equal(row('accounts').find(a => a.id === 3).enc_2fa, acc.enc_2fa, 'invalid 2fa key ignored');
+  });
   await test('hide posts: opens the profile itself or reuses an open window; progress and outcome recorded', async () => {
     sqlite.exec("INSERT INTO accounts(id,owner_user_id,username,enc_password) VALUES (10,1,'dave',NULL),(11,1,'erin',NULL)");
     const pair = await s.createPairing(1);

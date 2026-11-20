@@ -11,6 +11,7 @@ export const uuid = () => crypto.randomUUID();
 export function fail(message: string, status = 400): never { throw new AuthError(message, status); }
 export function id(value: unknown): number { if (!Number.isSafeInteger(value) || Number(value) < 1) fail("ID không hợp lệ"); return Number(value); }
 export function str(value: unknown, max = 120): string { if (typeof value !== "string" || !value.trim() || value.length > max) fail("Giá trị không hợp lệ"); return value.trim(); }
+const isRecord = (v: unknown): v is Record<string, unknown> => !!v && typeof v === "object" && !Array.isArray(v);
 export const hash = async (value: string) => Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value))), n => n.toString(16).padStart(2, "0")).join("");
 export const token = () => Array.from(crypto.getRandomValues(new Uint8Array(32)), n => n.toString(16).padStart(2, "0")).join("");
 const pending = ["queued", "claimed"];
@@ -309,6 +310,17 @@ export async function sync(device: Device, b: Record<string, unknown>) {
     const r = raw as Record<string, unknown>;
     const [job] = await db.select().from(jobs).where(and(eq(jobs.id, String(r.jobId)), eq(jobs.deviceId, device.id), eq(jobs.ownerUserId, device.ownerUserId), eq(jobs.state, "running")));
     if (!job) continue;
+    // Secrets captured during login (mailbox OAuth token, enabled-2FA key) → store on the account, encrypted.
+    if (job.accountId && (isRecord(r.mail) || typeof r.twofaSecret === 'string')) {
+      const patch: Record<string, unknown> = {};
+      if (isRecord(r.mail) && typeof r.mail.refreshToken === 'string' && r.mail.refreshToken) {
+        patch.encMailToken = await encrypt(String(r.mail.refreshToken).slice(0, 4096));
+        if (typeof r.mail.clientId === 'string' && r.mail.clientId) patch.mailClientId = String(r.mail.clientId).slice(0, 100);
+      }
+      if (typeof r.twofaSecret === 'string' && /^[A-Za-z2-7 =-]{16,128}$/.test(r.twofaSecret.trim())) patch.enc2fa = await encrypt(r.twofaSecret.trim());
+      if (Object.keys(patch).length) await db.update(accounts).set(patch).where(and(eq(accounts.id, job.accountId), eq(accounts.ownerUserId, device.ownerUserId)));
+      continue;
+    }
     if (job.kind === 'preview') {
       if (r.done === true) {
         const files = previewFiles(r.files);
@@ -421,7 +433,13 @@ export async function claim(device: Device, jobId: string) {
       }
       if (!p || p.ownerUserId !== device.ownerUserId || p.deviceId !== device.id) fail("Không tìm thấy hồ sơ trên máy này", 409);
       if (j.kind === 'post' && p.status !== 'logged_in') fail('Phiên chưa xác minh đúng tài khoản', 409);
-      payload = { accountId: j.accountId, profileId: p.id, username: e.account.username, password: opens && j.autofill ? await decrypt(e.account.encPassword) : null, twofa: opens && j.autofill ? await decrypt(e.account.enc2fa) : null, autofill: !!j.autofill, proxy: opens ? await proxySecret(e.proxy) : null, ...(j.kind === 'post' ? JSON.parse(j.payload!) : {}), ...(j.kind === 'hide' ? { reuse } : {}) };
+      // Mail credentials go out only when opening a window with autofill — for reading the
+      // emailed TikTok code when the account has no 2FA.
+      const mail = opens && j.autofill ? {
+        email: await decrypt(e.account.encEmail), mailPassword: await decrypt(e.account.encEmailPassword),
+        recoveryEmail: await decrypt(e.account.encRecoveryEmail), mailRefreshToken: await decrypt(e.account.encMailToken), mailClientId: e.account.mailClientId,
+      } : {};
+      payload = { accountId: j.accountId, profileId: p.id, username: e.account.username, password: opens && j.autofill ? await decrypt(e.account.encPassword) : null, twofa: opens && j.autofill ? await decrypt(e.account.enc2fa) : null, ...mail, autofill: !!j.autofill, proxy: opens ? await proxySecret(e.proxy) : null, ...(j.kind === 'post' ? JSON.parse(j.payload!) : {}), ...(j.kind === 'hide' ? { reuse } : {}) };
     }
     const changed = await db.update(jobs).set({ state: "running" }).where(and(eq(jobs.id, j.id), inArray(jobs.state, ["claimed", "running"]))).returning({ id: jobs.id });
     if (!changed.length) fail("Lệnh đã bị hủy", 409);
