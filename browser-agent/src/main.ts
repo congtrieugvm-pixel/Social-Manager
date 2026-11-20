@@ -14,8 +14,9 @@ import { readPassword } from './password.js';
 import { postVideo } from './posting.js';
 import { hidePosts, waitForLogin, type HideProgress } from './hide.js';
 import { startManager, openManagerWindow, ensureShortcut, type Tile } from './manager.js';
+import { ensureAutostart, disableAutostart, EXIT_NO_RESTART } from './autostart.js';
 
-const VERSION = '1.0.7';
+const VERSION = '1.0.8';
 const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
 async function api<T>(s: Pick<Settings, 'origin'> & Partial<Settings>, route: string, body: unknown): Promise<T> {
   const payload = JSON.stringify(body).replace(/[\u007f-\uffff]/g, c => '\\u' + c.charCodeAt(0).toString(16).padStart(4, '0'));
@@ -104,7 +105,8 @@ async function acquireLock() {
   return guard;
 }
 async function run() {
-  const s = await settings();
+  // Not paired yet: nothing to connect to (the autostart supervisor must not loop on this).
+  const s = await settings().catch(() => { throw new Error('NOT_PAIRED'); });
   const guard = await acquireLock();
   const runId = randomUUID();
   const sessions = new Map<string, Session>();
@@ -209,7 +211,10 @@ async function run() {
       close: async id => { await cancelProfile(id); await close(id); },
       limit: () => ({ max: maxWindows, used: sessions.size, opening }),
     }).catch(() => null);
-    if (manager?.url) ensureShortcut(fileURLToPath(new URL('..', import.meta.url)));
+    const agentDir = fileURLToPath(new URL('..', import.meta.url));
+    if (manager?.url) ensureShortcut(agentDir);
+    // Paired: start by itself at every Windows sign-in from now on.
+    void ensureAutostart(agentDir).catch(() => {});
     while (!stopped) {
       try { await readFile(stopFile); stopped = true; break; } catch { /* absent */ }
       try {
@@ -268,11 +273,13 @@ async function main() {
   else if (process.argv[2] === 'fetch') await fetchBrowser();
   else if (process.argv[2] === 'stop') await writeFile(join(root, 'stop'), 'stop');
   else if (process.argv[2] === 'manager') await openManagerWindow();
+  else if (process.argv[2] === 'autostart' && process.argv[3] === 'off') { await disableAutostart(); console.log('Da tat tu dong chay khi mo may.'); }
   else await run();
 }
 main().catch(e => {
   const codes = ['INVALID_LOGIN', 'LOGIN_RATE_LIMIT', 'AGENT_ALREADY_RUNNING', 'BROWSER_DOWNLOAD_FAILED', 'CONNECT_PENDING'];
   if (process.argv[2] === 'setup-window') console.log(JSON.stringify({ error: codes.includes(e?.message) ? e.message : 'NETWORK' }));
   else console.error('Khong the tiep tuc. Kiem tra ket noi hoac chay Setup.');
-  process.exitCode = 1;
+  // The autostart supervisor restarts on 1 (crash) but not when another copy runs or the PC isn't paired.
+  process.exitCode = ['AGENT_ALREADY_RUNNING', 'NOT_PAIRED'].includes(e?.message) ? EXIT_NO_RESTART : 1;
 });
