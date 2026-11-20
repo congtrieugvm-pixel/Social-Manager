@@ -49,7 +49,7 @@ export function refreshTokens(refreshToken: string, clientId = MAIL_CLIENT_ID) {
 // ── fviainboxes.com: a public temp-mail inbox (no password), the recovery mailbox for
 // these Hotmail accounts. Used to read the Microsoft security code during the first login.
 const FVIA_DOMAINS = ['fviainboxes.com', 'fviadropinbox.com', 'fviamail.work', 'dropinboxes.com'];
-export interface FviaMessage { id?: string; from?: string; subject?: string; body?: string; text?: string; html?: string; date?: string; receivedAt?: string; created_at?: string }
+export interface FviaMessage { id?: string; from?: string; subject?: string; body?: string; text?: string; html?: string; date?: string; receivedAt?: string; created_at?: string; createdAt?: number; seenAt?: number }
 
 /** Split a recovery address into the temp-mail username + domain. */
 export function fviaAddress(recoveryEmail: string) {
@@ -64,4 +64,15 @@ export async function fviaMessages(user: string, domain: string): Promise<FviaMe
   if (!res.ok) throw new Error(`FVIA_FAILED:${res.status}`);
   const data = await res.json().catch(() => ({})) as { result?: FviaMessage[] };
   return Array.isArray(data.result) ? data.result : [];
+}
+
+/** The list endpoint returns only subject/sender; the body (with the code) needs this per-message call.
+ *  The endpoint returns the HTML as a JSON string ("<…"), so parse it rather than reading text. */
+export async function fviaBody(user: string, domain: string, id: string): Promise<string> {
+  const res = await fetch(`https://${domain}/message?${new URLSearchParams({ id, username: user, domain })}`,
+    { headers: { Accept: 'application/json' }, signal: AbortSignal.timeout(15000) }).catch(() => null);
+  if (!res?.ok) return '';
+  const text = (await res.text().catch(() => '')).slice(0, 400000);
+  try { const j = JSON.parse(text) as unknown; return (typeof j === 'string' ? j : (j as Record<string, string>)?.html ?? (j as Record<string, string>)?.content ?? (j as Record<string, string>)?.body ?? '').slice(0, 200000); }
+  catch { return text.slice(0, 200000); }
 }
