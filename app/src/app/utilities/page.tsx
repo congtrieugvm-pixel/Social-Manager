@@ -4,6 +4,7 @@ import { redirect } from "next/navigation";
 import { Check, Download, LockKeyhole, Monitor, Puzzle, RefreshCw } from "lucide-react";
 import { getCurrentUser } from "@/lib/auth";
 import release from "@/generated/extension-release.json";
+import ExtKeyCard from "./ext-key";
 import styles from "./utilities.module.css";
 
 export const metadata: Metadata = { title: "Tiện ích · Social Manager" };
@@ -40,6 +41,7 @@ export default async function UtilitiesPage() {
           <p className={styles.description}>
             Chuyển các bài đăng công khai sang <strong>Chỉ mình tôi</strong>.
             Tự mở Studio, lọc Mọi người và Áp dụng trước khi cuộn xử lý bài. Gặp bài lỗi thì làm bài khác rồi kiểm tra lại cuối lượt.
+            Ngoài ra, khi vào một kênh <strong>YouTube</strong>, tiện ích hiện nút <strong>Lưu kênh</strong> để lưu nhanh vào Bookmark Key.
           </p>
           <ul className={styles.features}>
             <li><Check size={16} aria-hidden="true" />Tự mở Studio → Bài đăng</li>
@@ -78,6 +80,8 @@ export default async function UtilitiesPage() {
             <div><h3>Khi có bản mới</h3><p>Nút tải luôn trỏ tới bản đang được phát hành trên web. Tải lại ZIP, thay các file trong thư mục cũ rồi bấm <b>Reload / Tải lại</b> ở trang tiện ích của trình duyệt.</p><p>Extension cài bằng Load unpacked không tự cập nhật trên máy của bạn.</p></div>
           </div>
         </aside>
+
+        <ExtKeyCard />
       </div>
     </div>
   );

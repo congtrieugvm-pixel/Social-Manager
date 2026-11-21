@@ -6,8 +6,7 @@ import { getOwnerId } from "@/lib/scope";
 import { readBody } from "@/lib/req-body";
 import { AuthError } from "@/lib/auth";
 import { YtError } from "@/lib/youtube";
-import { mergeItems, resolveBookmark } from "@/lib/bookmark";
-import { toSafeChannel } from "@/lib/yt-store";
+import { addBookmarkLink, toSafeChannel } from "@/lib/yt-store";
 
 const MAX_LINKS = 20;
 
@@ -59,37 +58,7 @@ export async function POST(req: Request) {
     const results: Array<{ input: string; status: "added" | "exists" | "error"; channel?: ReturnType<typeof toSafeChannel>; error?: string }> = [];
     for (const input of links) {
       try {
-        const info = await resolveBookmark(input);
-        const [dup] = await db
-          .select()
-          .from(ytChannels)
-          .where(and(eq(ytChannels.ownerUserId, ownerId), eq(ytChannels.channelId, info.key)));
-        if (dup) {
-          results.push({ input, status: "exists", channel: toSafeChannel(dup) });
-          continue;
-        }
-        const now = Math.floor(Date.now() / 1000);
-        const [row] = await db
-          .insert(ytChannels)
-          .values({
-            ownerUserId: ownerId,
-            channelId: info.key,
-            kind: info.kind,
-            url: info.url,
-            feedUrl: info.feedUrl,
-            title: info.title,
-            handle: info.handle,
-            avatar: info.avatar,
-            groupId,
-            note,
-            videos: JSON.stringify(mergeItems(info.items, [])),
-            // Rounded up so nothing already listed counts as new.
-            lastSeenAt: Math.ceil(Date.now() / 1000),
-            checkedAt: now,
-            checkError: info.checkError,
-          })
-          .returning();
-        results.push({ input, status: "added", channel: toSafeChannel(row) });
+        results.push(await addBookmarkLink(ownerId, input, groupId, note));
       } catch (e) {
         results.push({ input, status: "error", error: e instanceof YtError ? e.message : `Lỗi: ${e instanceof Error ? e.message : String(e)}` });
       }

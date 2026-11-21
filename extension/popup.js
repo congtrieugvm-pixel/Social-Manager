@@ -44,5 +44,27 @@
   $("stop").addEventListener("click", () => action(async () => render((await request("STOP")).job)));
   $("open").addEventListener("click", () => action(() => request("OPEN")));
   chrome.storage.onChanged.addListener((changes, area) => { if (area === "session" && changes.job) render(changes.job.newValue); });
+
+  // Web connection for "Lưu kênh YouTube".
+  const DEFAULT_ORIGIN = "https://social-manager.congtrieugvm.workers.dev";
+  function showConnect(origin, hasKey) {
+    $("sm-origin").value = origin || DEFAULT_ORIGIN;
+    $("sm-status").textContent = hasKey ? "Đã lưu API key. Đổi nếu cần." : "Chưa lưu API key.";
+  }
+  $("sm-save").addEventListener("click", async () => {
+    $("sm-status").textContent = "Đang lưu…";
+    try {
+      const origin = ($("sm-origin").value || DEFAULT_ORIGIN).trim();
+      const key = $("sm-key").value.trim();
+      const r = await request("EXT_CONFIG", { set: { origin, key: key || undefined } });
+      // Keep an existing key when the field is left blank.
+      if (!key && !r.hasKey) { $("sm-status").textContent = "Hãy dán API key."; return; }
+      $("sm-key").value = "";
+      showConnect(r.origin, true);
+      $("sm-status").textContent = "Đã lưu kết nối ✓";
+    } catch (error) { $("sm-status").textContent = error.message; }
+  });
+
   void action(async () => { const data = await request("GET"); $("delay").value = data.settings.delayMs / 1000; render(data.job); });
+  void request("EXT_CONFIG").then((r) => showConnect(r.origin, r.hasKey)).catch(() => {});
 })();

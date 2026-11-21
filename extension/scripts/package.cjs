@@ -33,7 +33,7 @@ for (const size of [16, 32, 48, 128]) {
   const ihdr = Buffer.alloc(13); ihdr.writeUInt32BE(size); ihdr.writeUInt32BE(size, 4); ihdr[8] = 8; ihdr[9] = 6;
   fs.writeFileSync(path.join(root, "icons", `${size}.png`), Buffer.concat([Buffer.from([137,80,78,71,13,10,26,10]), chunk("IHDR", ihdr), chunk("IDAT", zlib.deflateSync(raw)), chunk("IEND", Buffer.alloc(0))]));
 }
-const files = ["manifest.json", "shared.js", "engine.js", "adapter.js", "content.js", "background.js", "popup.html", "popup.css", "popup.js", "README.md", ...[16,32,48,128].map((s) => `icons/${s}.png`)];
+const files = ["manifest.json", "shared.js", "engine.js", "adapter.js", "content.js", "youtube.js", "background.js", "popup.html", "popup.css", "popup.js", "README.md", ...[16,32,48,128].map((s) => `icons/${s}.png`)];
 const manifest = JSON.parse(fs.readFileSync(path.join(root, "manifest.json"), "utf8"));
 assert(/^\d+(?:\.\d+){1,3}$/.test(manifest.version), "Invalid extension version");
 const entries = [], central = []; let offset = 0;

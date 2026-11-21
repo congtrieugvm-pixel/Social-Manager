@@ -1,10 +1,11 @@
 {
   "manifest_version": 3,
   "name": "TikTok Studio Private",
-  "version": "1.0.5",
-  "description": "Lọc Mọi người trước, tự cuộn đổi sang Chỉ mình tôi; gặp bài lỗi thì làm bài khác và kiểm tra lại cuối lượt.",
+  "version": "1.0.6",
+  "description": "Ẩn bài TikTok sang Chỉ mình tôi; và lưu nhanh kênh YouTube vào Bookmark Key của Social Manager.",
   "minimum_chrome_version": "120",
   "permissions": ["storage", "alarms"],
+  "host_permissions": ["https://social-manager.congtrieugvm.workers.dev/*"],
   "action": {
     "default_title": "TikTok Studio Private",
     "default_popup": "popup.html",
@@ -15,6 +16,11 @@
   "content_scripts": [{
     "matches": ["https://www.tiktok.com/*"],
     "js": ["shared.js", "engine.js", "adapter.js", "content.js"],
+    "run_at": "document_idle",
+    "all_frames": false
+  }, {
+    "matches": ["https://www.youtube.com/*"],
+    "js": ["youtube.js"],
     "run_at": "document_idle",
     "all_frames": false
   }],

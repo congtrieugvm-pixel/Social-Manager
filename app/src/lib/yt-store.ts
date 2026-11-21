@@ -1,8 +1,10 @@
 // Shared helpers for the Bookmark Key API routes (YouTube, TikTok, RSS, links).
 
+import { and, eq } from "drizzle-orm";
+import { db } from "@/lib/db";
 import { ytChannels } from "@/lib/db/schema";
 import { channelUrl } from "@/lib/youtube";
-import type { BookmarkItem } from "@/lib/bookmark";
+import { mergeItems, resolveBookmark, type BookmarkItem } from "@/lib/bookmark";
 
 type Row = typeof ytChannels.$inferSelect;
 
@@ -55,3 +57,21 @@ export function toSafeChannel(r: Row): SafeChannel {
 }
 
 export const COLOR_RE = /^#[0-9a-fA-F]{6}$/;
+
+/** Resolve one bookmark link and save it for the owner (deduped). Shared by the web API and the
+ *  extension endpoint. Throws on resolve failure; the caller decides how to report it. */
+export async function addBookmarkLink(ownerId: number, input: string, groupId: number | null, note: string | null):
+    Promise<{ input: string; status: "added" | "exists"; channel: SafeChannel }> {
+  const info = await resolveBookmark(input);
+  const [dup] = await db.select().from(ytChannels)
+    .where(and(eq(ytChannels.ownerUserId, ownerId), eq(ytChannels.channelId, info.key)));
+  if (dup) return { input, status: "exists", channel: toSafeChannel(dup) };
+  const now = Math.floor(Date.now() / 1000);
+  const [row] = await db.insert(ytChannels).values({
+    ownerUserId: ownerId, channelId: info.key, kind: info.kind, url: info.url, feedUrl: info.feedUrl,
+    title: info.title, handle: info.handle, avatar: info.avatar, groupId, note,
+    videos: JSON.stringify(mergeItems(info.items, [])),
+    lastSeenAt: Math.ceil(Date.now() / 1000), checkedAt: now, checkError: info.checkError,
+  }).returning();
+  return { input, status: "added", channel: toSafeChannel(row) };
+}

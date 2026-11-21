@@ -23,7 +23,7 @@ test("web release matches ZIP; subsequent source/version updates change download
   const temp = fs.mkdtempSync(path.join(os.tmpdir(), "tsp-release-"));
   try {
     const target = path.join(temp, "extension"); fs.mkdirSync(path.join(target, "scripts"), { recursive: true });
-    const files = ["manifest.json", "shared.js", "engine.js", "adapter.js", "content.js", "background.js", "popup.html", "popup.css", "popup.js", "README.md", "scripts/package.cjs", "scripts/check.cjs"];
+    const files = ["manifest.json", "shared.js", "engine.js", "adapter.js", "content.js", "youtube.js", "background.js", "popup.html", "popup.css", "popup.js", "README.md", "scripts/package.cjs", "scripts/check.cjs"];
     for (const file of files) fs.copyFileSync(path.join(root, file), path.join(target, file));
     const build = () => {
       execFileSync(process.execPath, [path.join(target, "scripts/package.cjs"), "--web"], { stdio: "pipe" });
@@ -33,7 +33,7 @@ test("web release matches ZIP; subsequent source/version updates change download
       assert.equal(sha(bytes), release.sha256); assert.equal(bytes.length, release.size);
       assert.deepEqual(bytes, fs.readFileSync(path.join(publicDir, release.latestUrl)));
       assert.deepEqual(release, JSON.parse(fs.readFileSync(path.join(publicDir, "downloads/extensions/latest.json"))));
-      const contents = readZip(bytes); assert.equal(contents.size, 14);
+      const contents = readZip(bytes); assert.equal(contents.size, 15);
       assert.equal(JSON.parse(contents.get("manifest.json")).version, release.version);
       for (const file of contents.keys()) assert(!/\.env|app\.db|node_modules|tests|AGENTS|scripts/.test(file));
       return release;

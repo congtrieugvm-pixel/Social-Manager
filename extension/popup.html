@@ -37,6 +37,16 @@
       <p id="status" role="status" aria-live="polite">Bấm bắt đầu để tự mở Studio và xử lý bài đăng.</p>
       <details id="log-details"><summary>Nhật ký xử lý <span aria-hidden="true">+</span></summary><ol id="logs"><li>Chưa có lượt xử lý.</li></ol></details>
     </section>
+    <details id="connect" class="connect">
+      <summary>Lưu kênh YouTube · kết nối web <span aria-hidden="true">+</span></summary>
+      <p class="connect-note">Dán địa chỉ web và API key (lấy ở trang <strong>Tiện ích</strong>). Sau đó vào một kênh YouTube và bấm nút <strong>Lưu kênh</strong>.</p>
+      <label for="sm-origin">Địa chỉ web</label>
+      <input id="sm-origin" type="url" inputmode="url" placeholder="https://social-manager…workers.dev" autocomplete="off" spellcheck="false">
+      <label for="sm-key">API key</label>
+      <input id="sm-key" type="password" placeholder="smk_…" autocomplete="off" spellcheck="false">
+      <button id="sm-save" class="link-button" type="button">Lưu kết nối</button>
+      <p id="sm-status" class="session-note" role="status"></p>
+    </details>
   </main>
   <footer><span class="dot"></span> Xử lý trong trình duyệt <span class="separator">/</span> Không cần mật khẩu</footer>
 </body>

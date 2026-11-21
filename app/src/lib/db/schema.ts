@@ -168,6 +168,9 @@ export const appUsers = sqliteTable("app_users", {
   // 'admin' has full access including user mgmt; 'user' is everything else.
   role: text("role").notNull().default("user"),
   isActive: integer("is_active").notNull().default(1),
+  // sha256 hex of the user's browser-extension API key (one per user; null = none). The key
+  // itself is shown once on generation and never stored in plaintext.
+  extKeyHash: text("ext_key_hash"),
   createdAt: integer("created_at", { mode: "timestamp" })
     .notNull()
     .default(sql`(unixepoch())`),
