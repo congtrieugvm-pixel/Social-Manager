@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { patchJson, postJson, safeJson } from "@/lib/req-body";
 import { confirmDialog } from "@/app/_components/notify";
-import { BookmarkPlus, Plus, RotateCw, Sparkles, X } from "lucide-react";
+import { BookmarkPlus, Plus, RotateCw, Sparkles, Users, X } from "lucide-react";
 import { SkeletonCard } from "@/app/_components/skeleton";
 import NichePanel from "./niche-panel";
 
@@ -79,6 +79,7 @@ export default function YoutubePage() {
   const [showAdd, setShowAdd] = useState(false);
   const [showGroups, setShowGroups] = useState(false);
   const [showNiche, setShowNiche] = useState(false);
+  const [similarFor, setSimilarFor] = useState<{ channel: string; nonce: number } | null>(null);
   const [refreshing, setRefreshing] = useState<{ done: number; total: number } | null>(null);
   const refreshingRef = useRef(false);
   const channelsRef = useRef<Channel[] | null>(null);
@@ -222,7 +223,7 @@ export default function YoutubePage() {
             <RotateCw size={14} aria-hidden="true" className={refreshing ? "spin" : undefined} />
             {refreshing ? `Đang kiểm tra ${refreshing.done}/${refreshing.total}…` : "Kiểm tra bài mới"}
           </button>
-          <button className={`btn${showNiche ? " btn-accent" : ""}`} onClick={() => setShowNiche((v) => !v)} aria-expanded={showNiche}>
+          <button className={`btn${showNiche ? " btn-accent" : ""}`} onClick={() => { setShowNiche((v) => !v); setSimilarFor(null); }} aria-expanded={showNiche}>
             <Sparkles size={14} aria-hidden="true" />
             Tìm ngách
           </button>
@@ -251,7 +252,7 @@ export default function YoutubePage() {
         />
       )}
 
-      {showNiche && <NichePanel groups={groups} savedIds={savedYtIds} onSaved={(list) => addChannels(list as Channel[])} />}
+      {showNiche && <div id="niche-panel"><NichePanel groups={groups} savedIds={savedYtIds} onSaved={(list) => addChannels(list as Channel[])} initial={similarFor} /></div>}
 
       {showGroups && (
         <GroupManager
@@ -329,6 +330,7 @@ export default function YoutubePage() {
               onUpdate={updateChannel}
               onRemove={removeChannel}
               onRefresh={() => void refresh([c.id])}
+              onFindSimilar={(ch) => { setSimilarFor({ channel: ch.channelId, nonce: Date.now() }); setShowNiche(true); requestAnimationFrame(() => document.getElementById("niche-panel")?.scrollIntoView({ behavior: "smooth", block: "start" })); }}
             />
           ))}
         </div>
@@ -511,6 +513,7 @@ function ChannelCard(props: {
   onUpdate: (c: Channel, p: { groupId?: number | null; note?: string }) => void;
   onRemove: (c: Channel) => void;
   onRefresh: () => void;
+  onFindSimilar: (c: Channel) => void;
 }) {
   const { c, groups, onSeen, onUpdate } = props;
   const [note, setNote] = useState(c.note ?? "");
@@ -541,6 +544,7 @@ function ChannelCard(props: {
           </div>
         </div>
         <div className="yt-actions">
+          {c.kind === "youtube" && <button className="btn yt-icon" title="Tìm kênh tương tự trên NexLev" aria-label="Tìm kênh tương tự" onClick={() => props.onFindSimilar(c)}><Users size={14} aria-hidden="true" /></button>}
           {tracked(c) && <button className="btn yt-icon" title="Kiểm tra lại" aria-label="Kiểm tra lại" onClick={props.onRefresh}><RotateCw size={14} aria-hidden="true" /></button>}
           <button className="btn yt-icon" title="Xoá" aria-label="Xoá" onClick={() => props.onRemove(c)}><X size={14} aria-hidden="true" /></button>
         </div>

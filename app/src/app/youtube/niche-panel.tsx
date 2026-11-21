@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { postJson, safeJson } from "@/lib/req-body";
 import { Check, ExternalLink, Eye, Loader2, Plus, Search, Sparkles } from "lucide-react";
 import type { NicheChannel, NicheVideo } from "@/lib/nexlev";
@@ -46,7 +46,7 @@ const since = (days: string) => (days ? new Date(Date.now() - Number(days) * 864
 const numOrUndef = (s: string) => (s.trim() && Number.isFinite(Number(s)) ? Number(s) : undefined);
 const digits = (s: string) => s.replace(/[^\d.]/g, "");
 
-export default function NichePanel(props: { groups: Group[]; savedIds: Set<string>; onSaved: (channels: unknown[]) => void }) {
+export default function NichePanel(props: { groups: Group[]; savedIds: Set<string>; onSaved: (channels: unknown[]) => void; initial?: { channel: string; nonce: number } | null }) {
   const [mode, setMode] = useState<Mode>("finder");
   const [query, setQuery] = useState("");
   const [channel, setChannel] = useState("");
@@ -97,6 +97,18 @@ export default function NichePanel(props: { groups: Group[]; savedIds: Set<strin
   const needsChannel = mode === "similar" || mode === "niche";
   const canRun = needsChannel ? channel.trim().length > 0 : mode === "search" ? query.trim().length > 0 : true;
 
+  // "Tìm kênh tương tự" from a saved channel: open in Similar mode and run immediately.
+  useEffect(() => {
+    const ch = props.initial?.channel?.trim();
+    if (!ch) return;
+    setMode("similar");
+    setChannel(ch);
+    setLevel(1);
+    setShortsOnly(false);
+    void run(false, { mode: "similar", channel: ch, level: 1, channelType: "all" });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [props.initial?.nonce]);
+
   function buildBody(): Record<string, unknown> {
     switch (mode) {
       case "finder":
@@ -133,9 +145,9 @@ export default function NichePanel(props: { groups: Group[]; savedIds: Set<strin
     }
   }
 
-  async function run(more = false) {
-    if (busy || (!more && !canRun)) return;
-    const body = more && lastBody ? { ...lastBody } : buildBody();
+  async function run(more = false, override?: Record<string, unknown>) {
+    if (busy || (!override && !more && !canRun)) return;
+    const body = override ?? (more && lastBody ? { ...lastBody } : buildBody());
     const nextPage = more ? pageNo + 1 : 1;
     if (more) {
       if (body.mode === "search") body.token = result?.continuation;
