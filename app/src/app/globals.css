@@ -2175,3 +2175,9 @@ body:has(.bd-pill) .toasts { bottom: 74px; }
   body:has(.bd-pill) .toasts { bottom: calc(124px + env(safe-area-inset-bottom)); }
   body:has(.m-actionbar) .bd-pill { display: none; }
 }
+
+/* Bookmark Key: select channels → export links */
+.yt-select { width: 16px; height: 16px; flex: none; accent-color: var(--accent); cursor: pointer; }
+.yt-card.is-selected { box-shadow: 0 0 0 2px var(--accent); }
+.yt-selbar { position: sticky; top: 8px; z-index: 12; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 10px 12px; margin-bottom: 12px; border: 1px solid var(--accent-strong); background: var(--paper); box-shadow: var(--shadow-1); }
+.yt-selbar strong { color: var(--accent); margin-right: auto; font-size: 13px; }

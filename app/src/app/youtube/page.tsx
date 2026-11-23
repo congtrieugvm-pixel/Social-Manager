@@ -2,8 +2,8 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { patchJson, postJson, safeJson } from "@/lib/req-body";
-import { confirmDialog } from "@/app/_components/notify";
-import { BookmarkPlus, Plus, RotateCw, Sparkles, Users, X } from "lucide-react";
+import { confirmDialog, notify } from "@/app/_components/notify";
+import { BookmarkPlus, Copy, Download, Plus, RotateCw, Sparkles, Users, X } from "lucide-react";
 import { SkeletonCard } from "@/app/_components/skeleton";
 import NichePanel from "./niche-panel";
 
@@ -80,6 +80,7 @@ export default function YoutubePage() {
   const [showGroups, setShowGroups] = useState(false);
   const [showNiche, setShowNiche] = useState(false);
   const [similarFor, setSimilarFor] = useState<{ channel: string; nonce: number } | null>(null);
+  const [selected, setSelected] = useState<Set<number>>(new Set());
   const [refreshing, setRefreshing] = useState<{ done: number; total: number } | null>(null);
   const refreshingRef = useRef(false);
   const channelsRef = useRef<Channel[] | null>(null);
@@ -207,6 +208,30 @@ export default function YoutubePage() {
       .sort((a, b) => b.unread - a.unread || (b.videos[0]?.published ?? "").localeCompare(a.videos[0]?.published ?? ""));
   }, [channels, filter, onlyNew, query]);
 
+  // Selection for "Xuất link": ids that still exist, in the on-screen order first.
+  const picked = useMemo(() => {
+    const all = channels ?? [];
+    const order = [...visible, ...all.filter((c) => !visible.includes(c))];
+    return order.filter((c) => selected.has(c.id));
+  }, [channels, visible, selected]);
+  const toggleSelect = useCallback((id: number) => {
+    setSelected((cur) => { const next = new Set(cur); if (next.has(id)) next.delete(id); else next.add(id); return next; });
+  }, []);
+  const allVisibleSelected = visible.length > 0 && visible.every((c) => selected.has(c.id));
+  const linksText = () => picked.map((c) => c.url).join("\n");
+  const copyLinks = async () => {
+    try { await navigator.clipboard.writeText(linksText()); notify.success(`Đã sao chép ${picked.length} link`); }
+    catch { notify.error("Không sao chép được — trình duyệt chặn clipboard. Dùng Tải .txt."); }
+  };
+  const downloadLinks = () => {
+    const blob = new Blob([linksText() + "\n"], { type: "text/plain;charset=utf-8" });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = `bookmark-links-${new Date().toISOString().slice(0, 10)}.txt`;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+  };
+
   const activeGroup = filter !== null && filter !== UNGROUPED ? groups.find((g) => g.id === filter) : undefined;
 
   return (
@@ -296,8 +321,29 @@ export default function YoutubePage() {
           <label className="yt-check">
             <input type="checkbox" checked={onlyNew} onChange={(e) => setOnlyNew(e.target.checked)} /> Chỉ mục có bài mới
           </label>
+          <label className="yt-check">
+            <input
+              type="checkbox"
+              checked={allVisibleSelected}
+              disabled={visible.length === 0}
+              onChange={(e) => setSelected((cur) => {
+                const next = new Set(cur);
+                for (const c of visible) { if (e.target.checked) next.add(c.id); else next.delete(c.id); }
+                return next;
+              })}
+            /> Chọn tất cả đang hiện
+          </label>
         </div>
       </div>
+
+      {picked.length > 0 && (
+        <div className="card yt-selbar" role="region" aria-label="Kênh đã chọn">
+          <strong>{picked.length} đã chọn</strong>
+          <button className="btn" onClick={() => void copyLinks()}><Copy size={14} aria-hidden="true" />Sao chép link</button>
+          <button className="btn" onClick={downloadLinks}><Download size={14} aria-hidden="true" />Tải .txt</button>
+          <button className="btn btn-quiet" onClick={() => setSelected(new Set())}>Bỏ chọn</button>
+        </div>
+      )}
 
       {activeGroup?.note && (
         <div className="card yt-group-note" style={{ borderLeftColor: activeGroup.color }}>
@@ -330,6 +376,8 @@ export default function YoutubePage() {
               onUpdate={updateChannel}
               onRemove={removeChannel}
               onRefresh={() => void refresh([c.id])}
+              selected={selected.has(c.id)}
+              onSelect={() => toggleSelect(c.id)}
               onFindSimilar={(ch) => { setSimilarFor({ channel: ch.channelId, nonce: Date.now() }); setShowNiche(true); requestAnimationFrame(() => document.getElementById("niche-panel")?.scrollIntoView({ behavior: "smooth", block: "start" })); }}
             />
           ))}
@@ -514,6 +562,8 @@ function ChannelCard(props: {
   onRemove: (c: Channel) => void;
   onRefresh: () => void;
   onFindSimilar: (c: Channel) => void;
+  selected: boolean;
+  onSelect: () => void;
 }) {
   const { c, groups, onSeen, onUpdate } = props;
   const [note, setNote] = useState(c.note ?? "");
@@ -524,8 +574,9 @@ function ChannelCard(props: {
   const noun = ITEM_NOUN[c.kind] ?? "bài";
 
   return (
-    <div className="card yt-card" style={group ? { borderTopColor: group.color } : undefined}>
+    <div className={`card yt-card${props.selected ? " is-selected" : ""}`} style={group ? { borderTopColor: group.color } : undefined}>
       <div className="yt-head">
+        <input type="checkbox" className="yt-select" checked={props.selected} onChange={props.onSelect} aria-label={`Chọn ${c.title}`} />
         <a href={c.url} target="_blank" rel="noreferrer" className="yt-avatar" onClick={() => onSeen(c)}>
           {c.avatar && !iconBroken ? (
             <img src={c.avatar} alt="" loading="lazy" referrerPolicy="no-referrer" onError={() => setIconBroken(true)} />
