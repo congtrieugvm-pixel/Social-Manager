@@ -59,6 +59,13 @@ export async function GET(req: Request) {
   else if (groupParam && Number.isFinite(Number(groupParam))) {
     filters.push(eq(accounts.groupId, Number(groupParam)));
   }
+  // Search across ALL matching accounts (whole group/filter), not just the loaded page.
+  const qRaw = (url.searchParams.get("q") ?? "").trim().replace(/^@/, "").toLowerCase().slice(0, 100);
+  if (qRaw) {
+    // "!" escapes LIKE wildcards typed by the user (% and _), so they match literally.
+    const pat = `%${qRaw.replace(/[!%_]/g, (c) => "!" + c)}%`;
+    filters.push(sql`(lower(${accounts.username}) LIKE ${pat} ESCAPE '!' OR lower(coalesce(${accounts.note}, '')) LIKE ${pat} ESCAPE '!')` as unknown as ReturnType<typeof eq>);
+  }
   if (statusParam === "none") filters.push(isNull(accounts.statusId) as unknown as ReturnType<typeof eq>);
   else if (statusParam && Number.isFinite(Number(statusParam))) {
     filters.push(eq(accounts.statusId, Number(statusParam)));

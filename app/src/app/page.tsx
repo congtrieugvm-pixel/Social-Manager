@@ -325,6 +325,12 @@ export default function Dashboard() {
   const [fetchProgress, setFetchProgress] = useState<{ done: number; total: number; retry?: boolean } | null>(null);
   const [detail, setDetail] = useState<DetailResponse | null>(null);
   const [search, setSearch] = useState("");
+  // Debounced copy sent to the server, so search covers every account in the group, not one page.
+  const [searchQ, setSearchQ] = useState("");
+  useEffect(() => {
+    const t = setTimeout(() => setSearchQ(search.trim()), 300);
+    return () => clearTimeout(t);
+  }, [search]);
   const [pickFrom, setPickFrom] = useState<number>(1);
   const [pickTo, setPickTo] = useState<number>(10);
   const [sortKey, setSortKey] = useState<SortKey>("createdAt");
@@ -393,6 +399,7 @@ export default function Dashboard() {
       params.set("dir", sortDir);
       if (groupFilter === "none") params.set("group", "none");
       else if (groupFilter !== "all") params.set("group", String(groupFilter));
+      if (searchQ) params.set("q", searchQ);
 
       const [accRes, grpRes, stRes, coRes, maRes, emRes] = await Promise.all([
         fetch(`/api/accounts?${params.toString()}`, { cache: "no-store" }),
@@ -421,7 +428,7 @@ export default function Dashboard() {
     } finally {
       setLoading(false);
     }
-  }, [groupFilter, page, sortKey, sortDir]);
+  }, [groupFilter, page, sortKey, sortDir, searchQ]);
 
   useEffect(() => {
     load();
@@ -429,7 +436,7 @@ export default function Dashboard() {
 
   useEffect(() => {
     setPage(1);
-  }, [groupFilter, sortKey, sortDir]);
+  }, [groupFilter, sortKey, sortDir, searchQ]);
 
   function toggleSort(key: SortKey) {
     if (sortKey === key) {
@@ -470,13 +477,8 @@ export default function Dashboard() {
     };
   }, [ctxMenu]);
 
-  const filtered = search.trim()
-    ? rows.filter(
-        (r) =>
-          r.username.toLowerCase().includes(search.toLowerCase()) ||
-          (r.note ?? "").toLowerCase().includes(search.toLowerCase())
-      )
-    : rows;
+  // The server already applied the search (across all pages of the group).
+  const filtered = rows;
 
   const allSelected = filtered.length > 0 && filtered.every((r) => selected.has(r.id));
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
