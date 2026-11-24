@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { avatarSrc } from "@/lib/avatar-cache";
 import { db } from "@/lib/db";
 import { accounts, groups, statuses, countries, machines, employees } from "@/lib/db/schema";
 import { asc, desc, eq, isNull, sql, type SQL, type AnyColumn } from "drizzle-orm";
@@ -76,6 +77,7 @@ export async function GET(req: Request) {
       username: accounts.username,
       note: accounts.note,
       avatarUrl: accounts.avatarUrl,
+      avatarCachedAt: accounts.avatarCachedAt,
       followerCount: accounts.followerCount,
       followingCount: accounts.followingCount,
       videoCount: accounts.videoCount,
@@ -130,7 +132,7 @@ export async function GET(req: Request) {
     id: r.id,
     username: r.username,
     note: r.note,
-    avatarUrl: r.avatarUrl,
+    avatarUrl: avatarSrc(r),
     followerCount: r.followerCount,
     followingCount: r.followingCount,
     videoCount: r.videoCount,

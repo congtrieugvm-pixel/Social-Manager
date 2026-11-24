@@ -3,6 +3,7 @@ import { accounts } from "@/lib/db/schema";
 import { eq } from "drizzle-orm";
 import { fetchProfile } from "@/lib/tiktok";
 import { processAccount, runBulk } from "@/lib/tiktok-bulk";
+import { saveAvatar } from "@/lib/avatar-cache";
 
 export const runtime = "nodejs";
 
@@ -25,6 +26,7 @@ export async function POST(req: Request) {
           updatedAt: new Date(),
         })
         .where(eq(accounts.id, id));
+      if (profile.avatarUrl) await saveAvatar(id, profile.avatarUrl).catch(() => false);
       return { follower: profile.followerCount, following: profile.followingCount, videoCount: profile.videoCount };
     }),
   );

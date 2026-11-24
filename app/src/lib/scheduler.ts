@@ -1,4 +1,5 @@
 import { db } from "@/lib/db";
+import { saveAvatar } from "@/lib/avatar-cache";
 import { accounts } from "@/lib/db/schema";
 import { eq } from "drizzle-orm";
 import { fetchProfile, fetchRecentVideos } from "@/lib/tiktok";
@@ -42,6 +43,7 @@ async function syncOne(id: number, username: string) {
         updatedAt: new Date(),
       })
       .where(eq(accounts.id, id));
+    if (profile.avatarUrl) await saveAvatar(id, profile.avatarUrl).catch(() => false);
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     await db

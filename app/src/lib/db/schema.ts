@@ -104,6 +104,10 @@ export const accounts = sqliteTable("accounts", {
   note: text("note"),
 
   avatarUrl: text("avatar_url"),
+  // Cached avatar image as a data URL (TikTok CDN links expire after a few days), and when it
+  // was cached (epoch s). A negative value = last refresh attempt failed at -value (backoff).
+  avatarData: text("avatar_data"),
+  avatarCachedAt: integer("avatar_cached_at"),
   followerCount: integer("follower_count"),
   followingCount: integer("following_count"),
   videoCount: integer("video_count"),

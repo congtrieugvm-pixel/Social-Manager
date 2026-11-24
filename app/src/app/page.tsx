@@ -1688,19 +1688,7 @@ export default function Dashboard() {
                           cursor: "pointer",
                         }}
                       >
-                        {r.avatarUrl ? (
-                          // eslint-disable-next-line @next/next/no-img-element
-                          <img
-                            src={r.avatarUrl}
-                            alt={r.username}
-                            referrerPolicy="no-referrer"
-                            className="avatar"
-                          />
-                        ) : (
-                          <span className="avatar-fallback">
-                            {r.username[0]?.toUpperCase() || "?"}
-                          </span>
-                        )}
+                        <AccountAvatar src={r.avatarUrl} name={r.username} />
                       </button>
                       <a
                         href={`https://www.tiktok.com/@${r.username}`}
@@ -2093,12 +2081,7 @@ export default function Dashboard() {
                       if (selected.size > 0) e.preventDefault(); // selecting: tap = toggle only
                     }}
                   >
-                    {r.avatarUrl ? (
-                      // eslint-disable-next-line @next/next/no-img-element
-                      <img src={r.avatarUrl} alt="" referrerPolicy="no-referrer" className="avatar m-avatar" />
-                    ) : (
-                      <span className="avatar-fallback m-avatar">{r.username[0]?.toUpperCase() || "?"}</span>
-                    )}
+                    <AccountAvatar src={r.avatarUrl} name={r.username} mobile />
                     <span className="m-text">
                       <span className="m-title">@{r.username}</span>
                       <span className="m-meta">
@@ -3878,4 +3861,15 @@ function IdleDaysMenu({
       )}
     </div>
   );
+}
+
+/** Account avatar: our cached copy, lazily loaded; falls back to the initial when missing or broken
+ *  (never the browser's broken-image + alt text). */
+function AccountAvatar({ src, name, mobile }: { src: string | null; name: string; mobile?: boolean }) {
+  const [broken, setBroken] = useState(false);
+  useEffect(() => setBroken(false), [src]);
+  const cls = mobile ? " m-avatar" : "";
+  if (!src || broken) return <span className={`avatar-fallback${cls}`}>{name[0]?.toUpperCase() || "?"}</span>;
+  // eslint-disable-next-line @next/next/no-img-element
+  return <img src={src} alt="" loading="lazy" decoding="async" referrerPolicy="no-referrer" className={`avatar${cls}`} onError={() => setBroken(true)} />;
 }
