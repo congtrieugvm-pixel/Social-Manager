@@ -13,10 +13,11 @@ import { Operation } from './operation.js';
 import { readPassword } from './password.js';
 import { postVideo } from './posting.js';
 import { hidePosts, waitForLogin, type HideProgress } from './hide.js';
+import { browseFeed, type FeedProgress } from './feed.js';
 import { startManager, openManagerWindow, ensureShortcut, type Tile } from './manager.js';
 import { ensureAutostart, disableAutostart, EXIT_NO_RESTART } from './autostart.js';
 
-const VERSION = '1.0.11';
+const VERSION = '1.0.12';
 const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
 async function api<T>(s: Pick<Settings, 'origin'> & Partial<Settings>, route: string, body: unknown): Promise<T> {
   const payload = JSON.stringify(body).replace(/[\u007f-\uffff]/g, c => '\\u' + c.charCodeAt(0).toString(16).padStart(4, '0'));
@@ -188,6 +189,17 @@ async function run() {
         const result = await hidePosts(active, job, task, progress);
         reports.set(`${job.id}:hide`, { jobId: job.id, hide: result, done: true,
           ...(result.status === 'completed' ? {} : { error: result.status === 'stopped' ? 'INTERRUPTED' : 'HIDE_FAILED' }) });
+      }
+      else if (job.kind === 'feed') {
+        // "Lướt feed": reuse an open window or open the profile, then browse For You like a human.
+        let session = sessions.get(job.profileId!);
+        if (!session) { if (job.reuse) throw new Error('FEED_MANUAL'); session = await openWindow(job, task); }
+        const active = session;
+        await task.own(() => active.close());
+        const progress = (feed: FeedProgress) => reports.set(`${job.id}:feed`, { jobId: job.id, feed });
+        const result = await browseFeed(active, job, task, progress);
+        reports.set(`${job.id}:feed`, { jobId: job.id, feed: result, done: true,
+          ...(result.status === 'completed' ? {} : { error: result.status === 'stopped' ? 'INTERRUPTED' : 'FEED_FAILED' }) });
       }
       else if (job.kind !== 'open') throw new Error('UNSUPPORTED');
       else {

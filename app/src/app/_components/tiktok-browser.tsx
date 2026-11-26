@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
-import { EyeOff, Loader2, Monitor, Play, Square } from "lucide-react";
+import { Clapperboard, EyeOff, Loader2, Monitor, Play, Square } from "lucide-react";
 import { postJson, safeJson } from "@/lib/req-body";
 import { confirmDialog, notify } from "./notify";
 
@@ -10,7 +10,7 @@ import { confirmDialog, notify } from "./notify";
 // window on a connected Windows machine, close it, or "Ẩn bài" (switch every
 // public post to Only me). Setup — proxies, machines, history — stays on /browser.
 
-type Kind = "open" | "close" | "hide";
+type Kind = "open" | "close" | "hide" | "feed";
 interface Device { id: string; name: string; version: string; lastSeenAt: number }
 interface Profile { accountId: number; deviceId: string; status: string; updatedAt: number }
 interface Job { id: string; kind: string; accountId: number | null; state: string; error: string | null; result: string | null; createdAt: number }
@@ -30,7 +30,7 @@ const ERROR_TEXT: Record<string, string> = {
   CLOSED: "Cửa sổ bị đóng trước khi xong", INTERRUPTED: "Đã dừng giữa chừng", CONFIG_CHANGED: "Cấu hình đổi — gửi lại lệnh",
   PROFILE_BUSY: "Hồ sơ đang bận hoặc còn khóa", PROXY_FAILED: "Proxy lỗi trên máy Windows", BROWSER_FAILED: "Không mở được trình duyệt",
 };
-const KIND_TEXT: Record<Kind, string> = { open: "mở trình duyệt", close: "đóng trình duyệt", hide: "ẩn bài" };
+const KIND_TEXT: Record<Kind, string> = { open: "mở trình duyệt", close: "đóng trình duyệt", hide: "ẩn bài", feed: "lướt feed" };
 
 const versionAtLeast = (v: string, min: [number, number, number]) => {
   if (!/^\d+\.\d+\.\d+$/.test(v)) return false;
@@ -42,6 +42,11 @@ function parseHide(job?: Job): HideResult | null {
   if (!job?.result) return null;
   try { return JSON.parse(job.result) as HideResult; } catch { return null; }
 }
+interface FeedResult { watched: number; liked: number; message: string; status: string | null }
+function parseFeed(job?: Job): FeedResult | null {
+  if (!job?.result) return null;
+  try { return JSON.parse(job.result) as FeedResult; } catch { return null; }
+}
 
 export interface AccountBrowserView {
   tone: "good" | "warn" | "danger" | "neutral";
@@ -50,6 +55,7 @@ export interface AccountBrowserView {
   busy: boolean;
   hasWindow: boolean;
   hiding: boolean;
+  feeding?: boolean;
   /** Jobs the machine has not picked up yet; "Đóng" cancels them instead of closing a window. */
   pendingJobIds: string[];
 }
@@ -110,12 +116,19 @@ export function useTikTokBrowser(usernames: (id: number) => string | undefined) 
       const profile = profiles.get(id);
       const hide = latest.get(`${id}:hide`);
       const open = latest.get(`${id}:open`);
+      const feed = latest.get(`${id}:feed`);
+      const feedActive = !!feed && ACTIVE.includes(feed.state);
+      const fr = parseFeed(feed);
       const hideActive = !!hide && ACTIVE.includes(hide.state);
       const hasWindow = !!profile && OPEN_STATUSES.includes(profile.status);
       const r = parseHide(hide);
       const pendingJobIds = state.jobs.filter((j) => j.accountId === id && ["queued", "claimed"].includes(j.state) && j.kind !== "close").map((j) => j.id);
       let view: AccountBrowserView | null = null;
-      if (hideActive) {
+      if (feedActive) {
+        view = { tone: "warn", busy: true, hasWindow, hiding: false, feeding: true, pendingJobIds,
+          label: feed!.state === "running" ? (fr ? `Đang lướt feed · ${fr.watched} xem, ${fr.liked} tim` : "Đang lướt feed") : "Chờ máy lướt feed",
+          detail: fr?.message || "Máy Windows rảnh có thể mất 15 giây để nhận lệnh" };
+      } else if (hideActive) {
         view = { tone: "warn", busy: true, hasWindow, hiding: true, pendingJobIds,
           label: hide!.state === "running" ? (r ? `Đang ẩn bài · ${r.changed} đã ẩn` : "Đang ẩn bài") : "Chờ máy ẩn bài",
           detail: r?.message || "Máy Windows rảnh có thể mất 15 giây để nhận lệnh" };
@@ -138,7 +151,7 @@ export function useTikTokBrowser(usernames: (id: number) => string | undefined) 
   }, [state]);
 
   /** Queue a job for each account (20 per request, as the server allows). */
-  const run = useCallback(async (kind: Kind, ids: number[]) => {
+  const run = useCallback(async (kind: Kind, ids: number[], extra: Record<string, unknown> = {}) => {
     if (!ids.length || sending) return;
     if (!device) { notify.warn("Chưa có máy Windows online. Mở chương trình trên máy Windows rồi thử lại."); return; }
     let targets = ids;
@@ -168,13 +181,24 @@ export function useTikTokBrowser(usernames: (id: number) => string | undefined) 
       });
       if (!ok) return;
     }
+    if (kind === "feed") {
+      if (!versionAtLeast(device.version, [1, 0, 12])) { notify.warn("Cập nhật chương trình Windows lên 1.0.12 để dùng Lướt feed."); return; }
+      const who = targets.length === 1 ? `@${usernames(targets[0]) ?? targets[0]}` : `${targets.length} tài khoản`;
+      const minutes = Math.round((Number(extra.durationMs) || 5 * 60 * 1000) / 60000);
+      const ok = await confirmDialog({
+        title: "Lướt feed như người thật",
+        message: `Máy ${device.name} sẽ mở For You của ${who} và tự lướt ~${minutes} phút: xem video theo nhịp người thật, thỉnh thoảng thả tim, con trỏ chuột di chuyển trên trình duyệt. Bấm “Đóng” để dừng.`,
+        confirmLabel: "Bắt đầu lướt",
+      });
+      if (!ok) return;
+    }
     setSending(kind);
     const failed: string[] = [];
     let sent = 0;
     try {
       for (let i = 0; i < targets.length; i += 20) {
         const chunk = targets.slice(i, i + 20);
-        const res = await postJson("/api/browser/jobs", { kind, ids: chunk, deviceId: device.id, autofill: true });
+        const res = await postJson("/api/browser/jobs", { kind, ids: chunk, deviceId: device.id, autofill: true, ...extra });
         const data = await safeJson<{ results: { id: number; ok: boolean; error?: string }[] }>(res);
         if (data.error) { failed.push(data.error); continue; }
         for (const r of data.results) r.ok ? sent++ : failed.push(`@${usernames(r.id) ?? r.id}: ${r.error}`);
@@ -194,6 +218,7 @@ export type TikTokBrowser = ReturnType<typeof useTikTokBrowser>;
 /** Selection-bar group: machine picker + Mở / Ẩn bài / Đóng. */
 export function BrowserBulkActions({ browser, ids }: { browser: TikTokBrowser; ids: number[] }) {
   const { state, online, device, deviceId, setDeviceId, run, sending } = browser;
+  const [feedMin, setFeedMin] = useState(5);
   const noMachine = !!state && !online.length;
   const reason = !state ? "Đang tải trạng thái máy Windows…" : noMachine ? "Chưa có máy Windows online" : !device ? "Chọn máy Windows" : "";
   const busy = (k: Kind) => sending === k;
@@ -222,6 +247,14 @@ export function BrowserBulkActions({ browser, ids }: { browser: TikTokBrowser; i
       <button className="btn" disabled={!!reason || !!sending} title={reason || "Chuyển toàn bộ bài công khai sang Chỉ mình tôi"} onClick={() => void run("hide", ids)}>
         {busy("hide") ? <Loader2 size={15} className="spin" aria-hidden="true" /> : <EyeOff size={15} aria-hidden="true" />}Ẩn bài
       </button>
+      <span className="tb-feed">
+        <button className="btn" disabled={!!reason || !!sending} title={reason || "Mở For You và tự lướt như người thật (xem + thỉnh thoảng like, con trỏ chuột di chuyển)"} onClick={() => void run("feed", ids, { durationMs: feedMin * 60000 })}>
+          {busy("feed") ? <Loader2 size={15} className="spin" aria-hidden="true" /> : <Clapperboard size={15} aria-hidden="true" />}Lướt feed
+        </button>
+        <input type="number" min={1} max={60} value={feedMin} aria-label="Số phút lướt feed" title="Số phút lướt feed" disabled={!!sending}
+          onChange={(e) => setFeedMin(Math.min(60, Math.max(1, Number(e.target.value) || 5)))} style={{ width: 52 }} className="input" />
+        <span className="tb-feed-unit">phút</span>
+      </span>
       <button className="btn btn-quiet" disabled={!!reason || !!sending} title={reason || "Đóng cửa sổ (dừng ẩn bài nếu đang chạy)"} onClick={() => void run("close", ids)}>
         {busy("close") ? <Loader2 size={15} className="spin" aria-hidden="true" /> : <Square size={14} aria-hidden="true" />}Đóng
       </button>
@@ -257,7 +290,11 @@ export function BrowserMenuItems({ browser, id, onDone }: { browser: TikTokBrows
       <div className="tb-menu-head">Trình duyệt TikTok{device ? ` · ${device.name}` : ""}</div>
       {item("open", view?.hasWindow ? "Trình duyệt đang mở" : "Mở trình duyệt", <Play size={14} aria-hidden="true" />, !!view?.hasWindow)}
       {item("hide", view?.hiding ? "Đang ẩn bài…" : "Ẩn bài (Chỉ mình tôi)", <EyeOff size={14} aria-hidden="true" />, !!view?.hiding)}
-      {item("close", "Đóng trình duyệt", <Square size={13} aria-hidden="true" />, !view?.hasWindow && !view?.hiding)}
+      <button type="button" role="menuitem" className="menu-item tb-menu-item" disabled={disabled || !!view?.feeding} title={hint}
+        onClick={() => { onDone(); void run("feed", [id], { durationMs: 5 * 60000 }); }}>
+        <Clapperboard size={14} aria-hidden="true" />{view?.feeding ? "Đang lướt feed…" : "Lướt feed (5 phút)"}
+      </button>
+      {item("close", "Đóng trình duyệt", <Square size={13} aria-hidden="true" />, !view?.hasWindow && !view?.hiding && !view?.feeding)}
     </div>
   );
 }

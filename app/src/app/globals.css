@@ -2181,3 +2181,8 @@ body:has(.bd-pill) .toasts { bottom: 74px; }
 .yt-card.is-selected { box-shadow: 0 0 0 2px var(--accent); }
 .yt-selbar { position: sticky; top: 8px; z-index: 12; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 10px 12px; margin-bottom: 12px; border: 1px solid var(--accent-strong); background: var(--paper); box-shadow: var(--shadow-1); }
 .yt-selbar strong { color: var(--accent); margin-right: auto; font-size: 13px; }
+
+/* Lướt feed control in the TikTok browser action bar */
+.tb-feed { display: inline-flex; align-items: center; gap: 4px; }
+.tb-feed input { width: 52px; text-align: center; padding: 4px 6px; }
+.tb-feed-unit { color: var(--muted); font-size: 12px; }
