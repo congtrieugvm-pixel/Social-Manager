@@ -33,6 +33,7 @@ async function handle(req: Request, ctx: { params: Promise<{ path: string[] }> }
     if (route === "proxies/save") return reply(await service.saveProxy(owner, b));
     if (route === "proxies/delete") return reply(await service.deleteProxy(owner, service.id(b.id)));
     if (route === "assign") return reply(await service.assign(owner, b));
+    if (route === "account-proxy") return reply(await service.setAccountProxy(owner, b));
     if (route === 'posting/save') return reply(await service.savePosting(owner, b));
     if (route === "pairings") return reply(await service.createPairing(owner));
     if (route === "devices/settings") return reply(await service.deviceSettings(owner, b));

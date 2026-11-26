@@ -101,7 +101,40 @@ export async function browserState(owner: number) {
       .where(and(eq(jobs.ownerUserId, owner), gt(jobs.createdAt, now() - 86400), inArray(jobs.kind, ['open', 'close', 'hide'])))
       .orderBy(desc(jobs.createdAt)).limit(300),
   ]);
-  return { now: now(), owner, devices: ds, profiles: fs, jobs: js };
+  const ps = await db.select({ id: proxies.id, name: proxies.name, enabled: proxies.enabled }).from(proxies).where(eq(proxies.ownerUserId, owner)).orderBy(asc(proxies.name));
+  return { now: now(), owner, devices: ds, profiles: fs, jobs: js, proxies: ps };
+}
+
+/** Set the browser proxy for one account from the TikTok accounts tab: pick an existing proxy,
+ *  go direct/inherit, or paste a new proxy (host:port[:user:pass]) that is created then assigned. */
+export async function setAccountProxy(owner: number, b: Record<string, unknown>) {
+  const accountId = id(b.accountId);
+  await accountFor(owner, accountId);
+  const mode = str(b.mode);
+  if (!["inherit", "custom", "direct"].includes(mode)) fail("Chế độ proxy không hợp lệ");
+  let proxyId: number | null = null;
+  if (mode === "custom") {
+    if (b.newProxy && typeof b.newProxy === "object") {
+      const np = b.newProxy as Record<string, unknown>;
+      const server = normalizeServer(np.server);
+      const username = typeof np.username === "string" ? np.username : "";
+      const password = typeof np.password === "string" ? np.password : "";
+      if ((username.length > 1024 || password.length > 1024)) fail("Thông tin xác thực proxy không hợp lệ");
+      if (server.startsWith("socks5:") && (username || password)) fail("SOCKS5 có xác thực chưa được hỗ trợ; dùng HTTP/HTTPS hoặc SOCKS5 không xác thực.");
+      const name = (typeof np.name === "string" && np.name.trim() ? np.name.trim() : server.replace(/^\w+:\/\//, "")).slice(0, 80);
+      const [created] = await db.insert(proxies).values({
+        ownerUserId: owner, name, server, enabled: 1, revision: 1,
+        encUsername: username ? await encrypt(username) : null, encPassword: password ? await encrypt(password) : null,
+      }).returning({ id: proxies.id });
+      proxyId = created.id;
+    } else {
+      proxyId = id(b.proxyId);
+      await proxyFor(owner, proxyId);
+    }
+  }
+  await db.update(accounts).set({ browserProxyMode: mode, browserProxyId: mode === "custom" ? proxyId : null })
+    .where(and(eq(accounts.ownerUserId, owner), eq(accounts.id, accountId)));
+  return { ok: true, proxyId };
 }
 export async function savePosting(owner: number, b: Record<string, unknown>) {
   const targets = ids(b.ids);

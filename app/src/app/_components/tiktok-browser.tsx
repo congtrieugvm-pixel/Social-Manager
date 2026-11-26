@@ -14,7 +14,8 @@ type Kind = "open" | "close" | "hide";
 interface Device { id: string; name: string; version: string; lastSeenAt: number }
 interface Profile { accountId: number; deviceId: string; status: string; updatedAt: number }
 interface Job { id: string; kind: string; accountId: number | null; state: string; error: string | null; result: string | null; createdAt: number }
-interface State { now: number; owner: number; devices: Device[]; profiles: Profile[]; jobs: Job[] }
+interface Proxy { id: number; name: string; enabled: number }
+interface State { now: number; owner: number; devices: Device[]; profiles: Profile[]; jobs: Job[]; proxies?: Proxy[] }
 interface HideResult { changed: number; skipped: number; message: string; status: string | null }
 
 const ACTIVE = ["queued", "claimed", "running"];

@@ -46,6 +46,7 @@ import { DensityToggle } from "./_components/density-toggle";
 import { Sheet } from "./_components/sheet";
 import { HotmailConnect } from "./_components/hotmail-connect";
 import { BrowserBulkActions, BrowserMenuItems, BrowserRowStatus, useTikTokBrowser } from "./_components/tiktok-browser";
+import { AccountProxy } from "./_components/account-proxy";
 
 interface Video {
   id: string;
@@ -149,6 +150,8 @@ interface DetailResponse {
   lastVideos: Video[] | null;
   hasMsToken?: boolean;
   msEmail?: string | null;
+  browserProxyMode?: string | null;
+  browserProxyId?: number | null;
   groupId: number | null;
   groupName: string | null;
   statusId: number | null;
@@ -249,6 +252,8 @@ interface CtxMenuState {
     mailClientId: string | null;
     hasMsToken: boolean;
     msEmail: string | null;
+    browserProxyMode: string | null;
+    browserProxyId: number | null;
     groupId: number | null;
     groupName: string | null;
   } | null;
@@ -992,6 +997,8 @@ export default function Dashboard() {
                 mailClientId: data.mailClientId,
                 hasMsToken: !!data.hasMsToken,
                 msEmail: data.msEmail ?? null,
+                browserProxyMode: data.browserProxyMode ?? "inherit",
+                browserProxyId: data.browserProxyId ?? null,
                 groupId: data.groupId ?? null,
                 groupName: data.groupName ?? null,
               },
@@ -3278,6 +3285,19 @@ export default function Dashboard() {
                     const accountId = ctxMenu.id;
                     setCtxMenu(prev => prev && prev.id === accountId && prev.detail
                       ? { ...prev, detail: { ...prev.detail, hasMsToken: connected, msEmail: mailbox } }
+                      : prev);
+                  }}
+                />
+                <AccountProxy
+                  key={`proxy-${ctxMenu.id}`}
+                  accountId={ctxMenu.id}
+                  mode={d.browserProxyMode ?? "inherit"}
+                  proxyId={d.browserProxyId}
+                  proxies={browser.state?.proxies ?? []}
+                  onChange={(mode, proxyId) => {
+                    const accountId = ctxMenu.id;
+                    setCtxMenu(prev => prev && prev.id === accountId && prev.detail
+                      ? { ...prev, detail: { ...prev.detail, browserProxyMode: mode, browserProxyId: proxyId } }
                       : prev);
                   }}
                 />
