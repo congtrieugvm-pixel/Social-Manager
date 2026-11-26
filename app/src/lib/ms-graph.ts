@@ -148,6 +148,36 @@ export async function fetchRecentMessages(accessToken: string, since: string): P
   return folders.flat();
 }
 
+// ── Imported-token path ("Token Mail" + "Client ID" from import, e.g. the Thunderbird public
+// client). No Azure app / "Get Token" needed: redeem the stored refresh token for a Graph
+// access token and read mail the same way. The refresh token rotates, so store the new one.
+const TOKEN_ENDPOINT = "https://login.microsoftonline.com/consumers/oauth2/v2.0/token";
+const GRAPH_MAIL_SCOPE = "https://graph.microsoft.com/Mail.Read offline_access";
+const DEFAULT_MAIL_CLIENT_ID = "9e5f94bc-e8a4-4e73-b8be-63364c29d753"; // Thunderbird public client
+
+/** A Graph access token from an account's imported mail refresh token, or null if it has none. */
+export async function mailTokenGraphAccess(accountId: number, ownerId: number): Promise<string | null> {
+  const [row] = await db.select({ token: accounts.encMailToken, clientId: accounts.mailClientId })
+    .from(accounts).where(and(eq(accounts.id, accountId), eq(accounts.ownerUserId, ownerId)));
+  const refreshToken = await decrypt(row?.token);
+  if (!refreshToken) return null;
+  const clientId = row?.clientId?.trim() || DEFAULT_MAIL_CLIENT_ID;
+  const res = await fetch(TOKEN_ENDPOINT, {
+    method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({ client_id: clientId, grant_type: "refresh_token", refresh_token: refreshToken, scope: GRAPH_MAIL_SCOPE }),
+    signal: AbortSignal.timeout(15000),
+  }).catch(() => null);
+  const data = (await res?.json().catch(() => ({}))) as { access_token?: string; refresh_token?: string; error?: string };
+  if (!res?.ok || !data.access_token) {
+    throw new MicrosoftError(`Token Mail không dùng được (${data.error ?? res?.status ?? "lỗi"}). Kiểm tra Token Mail / Client ID.`, data.error ?? "mail_token_invalid", 401);
+  }
+  if (data.refresh_token && data.refresh_token !== refreshToken) {
+    await db.update(accounts).set({ encMailToken: await encrypt(data.refresh_token), updatedAt: new Date() })
+      .where(and(eq(accounts.id, accountId), eq(accounts.ownerUserId, ownerId)));
+  }
+  return data.access_token;
+}
+
 export async function fetchMeEmail(accessToken: string): Promise<string> {
   const data = await microsoftJson<{ mail?: string; userPrincipalName?: string }>(
     "https://graph.microsoft.com/v1.0/me?$select=mail,userPrincipalName", { headers: { Authorization: `Bearer ${accessToken}` } });

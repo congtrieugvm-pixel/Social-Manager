@@ -4,10 +4,12 @@ import { useEffect, useRef, useState } from "react";
 import { pollHotmailCode, type HotmailCode } from "@/lib/hotmail-client";
 import { confirmDialog, notify } from "./notify";
 
-export function HotmailConnect({ accountId, email, hasToken, msEmail, onConnectionChange }: {
+export function HotmailConnect({ accountId, email, hasToken, hasMailToken = false, msEmail, onConnectionChange }: {
   accountId: number;
   email: string | null;
   hasToken: boolean;
+  /** Account has an imported "Token Mail" → Get Code works without the Azure "Get Token" flow. */
+  hasMailToken?: boolean;
   msEmail: string | null;
   onConnectionChange: (connected: boolean, email: string | null) => void;
 }) {
@@ -138,12 +140,12 @@ export function HotmailConnect({ accountId, email, hasToken, msEmail, onConnecti
   return <section aria-label="Hotmail OAuth2" style={{ padding: "10px 6px", borderTop: "1px solid var(--line)", fontSize: 12 }}>
     <div style={{ display: "flex", justifyContent: "space-between", gap: 8, marginBottom: 8 }}>
       <strong>Hotmail OAuth2</strong>
-      <span style={{ color: connected ? "var(--accent)" : "var(--muted)" }}>{connected ? "Đã kết nối" : "Chưa kết nối"}</span>
+      <span style={{ color: connected ? "var(--accent)" : hasMailToken ? "var(--accent)" : "var(--muted)" }}>{connected ? "Đã kết nối" : hasMailToken ? "Dùng Token Mail" : "Chưa kết nối"}</span>
     </div>
     <div style={{ color: "var(--muted)", overflowWrap: "anywhere", marginBottom: 8 }}>{mailbox || email || "Chưa có email"}</div>
     <div style={{ display: "flex", gap: 8 }}>
       <button className="btn" disabled={busy || !email} onClick={connect}>{phase === "auth" ? "Chờ đăng nhập…" : connected ? "Get Token lại" : "Get Token"}</button>
-      <button className="btn" disabled={busy || !connected} onClick={getCode}>{phase === "polling" ? "Đang chờ mã…" : lastCode.current ? "Get Code mới" : "Get Code"}</button>
+      <button className="btn" disabled={busy || !(connected || hasMailToken)} onClick={getCode}>{phase === "polling" ? "Đang chờ mã…" : lastCode.current ? "Get Code mới" : "Get Code"}</button>
       {phase === "polling" && <button className="btn" onClick={() => { request.current?.abort(); setMessage("Đã dừng chờ mã."); }}>Dừng</button>}
     </div>
     <div aria-live="polite" style={{ lineHeight: 1.6 }}>

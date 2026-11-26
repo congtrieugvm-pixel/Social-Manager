@@ -3272,6 +3272,7 @@ export default function Dashboard() {
                   accountId={ctxMenu.id}
                   email={d.email}
                   hasToken={d.hasMsToken}
+                  hasMailToken={!!d.mailToken}
                   msEmail={d.msEmail}
                   onConnectionChange={(connected, mailbox) => {
                     const accountId = ctxMenu.id;

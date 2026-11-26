@@ -2,7 +2,7 @@
 import { db } from "@/lib/db";
 import { accounts } from "@/lib/db/schema";
 import { and, eq } from "drizzle-orm";
-import { clearAccountTokens, fetchRecentMessages, getValidAccessToken, isAzureConfigured, loadAccountTokens } from "@/lib/ms-graph";
+import { clearAccountTokens, fetchRecentMessages, getValidAccessToken, isAzureConfigured, loadAccountTokens, mailTokenGraphAccess } from "@/lib/ms-graph";
 import { MicrosoftError, requiresMicrosoftAuth } from "@/lib/ms-http";
 import { OTP_MAX_AGE_MS, pickLatestOtp } from "@/lib/otp-extract";
 import { getOwnerId } from "@/lib/scope";
@@ -50,7 +50,6 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
   try {
     const { id, ownerId } = await ownedAccount((await ctx.params).id);
     accountId = id;
-    if (!isAzureConfigured()) return json({ error: "Quản trị viên cần cấu hình ứng dụng Microsoft trước khi lấy mã. Xem mục Hotmail OAuth2 trong README." }, 503);
     const body = await readBody<{ afterMessageId?: unknown; afterReceivedAt?: unknown }>(req);
     const afterMessageId = typeof body?.afterMessageId === "string" ? body.afterMessageId.slice(0, 2048) : undefined;
     const afterReceivedAt = typeof body?.afterReceivedAt === "string" ? Date.parse(body.afterReceivedAt) : undefined;
@@ -58,19 +57,24 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
       return json({ error: "Mốc thời gian mã trước không hợp lệ." }, 400);
     }
     const since = new Date(Math.max(Date.now() - OTP_MAX_AGE_MS, afterReceivedAt ?? 0)).toISOString();
-    let accessToken = await getValidAccessToken(id, ownerId);
+    // Prefer the imported mail token (no Azure "Get Token" needed); fall back to the Azure connection.
+    const imported = await mailTokenGraphAccess(id, ownerId);
+    if (!imported && !isAzureConfigured()) return json({ error: "Tài khoản chưa có Token Mail, và quản trị viên chưa cấu hình ứng dụng Microsoft. Nhập Token Mail hoặc bấm Get Token." }, 503);
+    let accessToken = imported ?? await getValidAccessToken(id, ownerId);
     let messages;
     try { messages = await fetchRecentMessages(accessToken, since); }
     catch (error) {
       if (!(error instanceof MicrosoftError) || error.status !== 401) throw error;
       // A rejected access token does not imply a revoked refresh token.
-      accessToken = await getValidAccessToken(id, ownerId, accessToken);
+      accessToken = imported ? (await mailTokenGraphAccess(id, ownerId))! : await getValidAccessToken(id, ownerId, accessToken);
       messages = await fetchRecentMessages(accessToken, since);
     }
-    // Do not return a code after disconnect, transfer, or a mailbox change.
-    const currentTokens = await loadAccountTokens(id, ownerId);
-    if (currentTokens?.accessToken !== accessToken) {
-      throw new MicrosoftError("Kết nối vừa thay đổi. Hãy thử lấy mã lại.", "CONNECTION_CHANGED", 409);
+    // For the Azure path only: don't return a code after disconnect/transfer/mailbox change.
+    if (!imported) {
+      const currentTokens = await loadAccountTokens(id, ownerId);
+      if (currentTokens?.accessToken !== accessToken) {
+        throw new MicrosoftError("Kết nối vừa thay đổi. Hãy thử lấy mã lại.", "CONNECTION_CHANGED", 409);
+      }
     }
     const match = pickLatestOtp(messages, { afterMessageId, afterReceivedAt });
     if (!match) return json({ pending: true, retryAfterSeconds: 3 }, 202);
