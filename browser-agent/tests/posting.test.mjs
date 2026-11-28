@@ -21,7 +21,15 @@ test('a session that the page confirms survives TikTok redirect without filling 
 test('an expired session cookie no longer skips the saved-credentials login', async () => {
   const urls = [];
   await navigateAccount(navPage(false, urls), true, 'fixture', 'password', true);
-  assert.deepEqual(urls, ['https://www.tiktok.com/?lang=en', 'https://www.tiktok.com/login/phone-or-email/email?lang=en']);
+  // Opens home to check the session, then the login form — retried while a redirect keeps the page elsewhere.
+  const login = 'https://www.tiktok.com/login/phone-or-email/email?lang=en';
+  assert.deepEqual(urls, ['https://www.tiktok.com/?lang=en', login, login, login]);
+});
+test('without a saved session the login form is opened directly (no home-page redirect in between)', async () => {
+  const urls = [];
+  await navigateAccount(navPage(false, urls), false, 'fixture', 'password', true);
+  assert.equal(urls[0], 'https://www.tiktok.com/login/phone-or-email/email?lang=en');
+  assert.ok(urls.every(u => u.includes('/login/')), 'never visits the home page first');
 });
 test('posting takes one file, skips reserved files per account and records confirmation', async () => {
   const folder = await mkdtemp(join(tmpdir(), 'sm-post-fixture-'));

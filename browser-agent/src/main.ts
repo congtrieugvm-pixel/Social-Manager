@@ -17,7 +17,7 @@ import { browseFeed, type FeedProgress } from './feed.js';
 import { startManager, openManagerWindow, ensureShortcut, type Tile } from './manager.js';
 import { ensureAutostart, disableAutostart, EXIT_NO_RESTART } from './autostart.js';
 
-const VERSION = '1.0.15';
+const VERSION = '1.0.16';
 const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
 async function api<T>(s: Pick<Settings, 'origin'> & Partial<Settings>, route: string, body: unknown): Promise<T> {
   const payload = JSON.stringify(body).replace(/[\u007f-\uffff]/g, c => '\\u' + c.charCodeAt(0).toString(16).padStart(4, '0'));
@@ -243,6 +243,8 @@ async function run() {
           const status = await session.inspect(); reports.set(session.job.id, { jobId: session.job.id, profileId: id, status }); windowStatus.set(id, status);
           // A mailbox OAuth token captured during this login is reported once, for the server to store.
           if (session.mailCapture && !mailReported.has(id)) { mailReported.add(id); reports.set(`${session.job.id}:mail`, { jobId: session.job.id, mail: session.mailCapture }); }
+          // The real @handle found after logging in (saved one was stale) — reported once.
+          if (session.handle && !mailReported.has(`${id}:handle`)) { mailReported.add(`${id}:handle`); reports.set(`${session.job.id}:handle`, { jobId: session.job.id, handle: session.handle }); }
           if (status === 'closed') sessions.delete(id);
         }
         const sent = [...reports.values()].slice(0, 25); // the server reads at most 25 per sync

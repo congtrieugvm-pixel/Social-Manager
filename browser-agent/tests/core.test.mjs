@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { identityStatus, fillOnce } from '../dist/login.js';
+import { identityStatus, fillOnce, fillWithFallback } from '../dist/login.js';
 import { validateOrigin, siteKey, dpapi } from '../dist/storage.js';
 import { Operation } from '../dist/operation.js';
 import { base32, totp } from '../dist/totp.js';
@@ -34,7 +34,7 @@ test('login evidence distinguishes verification, unknown and wrong user', () => 
 });
 // A login page fixture: Log in enables `enableAfter` checks after filling; clicking
 // either leaves /login (accepted) or shows `errorText` in the form.
-function loginPage({ enableAfter = 0, errorText = null, needsTyping = false, askCode = false } = {}) {
+function loginPage({ enableAfter = 0, errorText = null, needsTyping = false, askCode = false, errorFirstOnly = false } = {}) {
   const state = { clicks: 0, fills: [], typed: [], url: 'https://www.tiktok.com/login/phone-or-email/email', checks: 0, codeShown: false, code: null };
   const codeBox = {
     isVisible: async () => state.codeShown, click: async () => {}, press: async () => {},
@@ -46,13 +46,27 @@ function loginPage({ enableAfter = 0, errorText = null, needsTyping = false, ask
     fill: async value => state.fills.push([selector, value]),
     press: async () => {}, inputValue: async () => '',
     pressSequentially: async value => state.typed.push([selector, value]),
-    click: async () => { if (!selector.includes('login-button')) return; state.clicks++; if (askCode) state.codeShown = true; else if (!errorText) state.url = 'https://www.tiktok.com/foryou'; },
-    getByText: () => ({ first: () => ({ innerText: async () => { if (errorText && state.clicks) return errorText; throw new Error('none'); } }) }),
+    click: async () => { if (!selector.includes('login-button')) return; state.clicks++; if (askCode) state.codeShown = true; else if (!errorText || (errorFirstOnly && state.clicks > 1)) state.url = 'https://www.tiktok.com/foryou'; },
+    getByText: () => ({ first: () => ({ innerText: async () => { if (errorText && state.clicks && !state.url.includes('/foryou')) return errorText; throw new Error('none'); } }) }),
     first: () => ({ isVisible: async () => false }),
   });
   const hidden = { first: () => ({ isVisible: async () => false, isEnabled: async () => false }) };
   return { state, page: { url: () => state.url, locator: field, getByText: () => hidden, getByRole: () => hidden } };
 }
+test('a stale @handle ("Account doesn\'t exist") retries ONCE with the saved email', async () => {
+  const stale = loginPage({ errorText: "Account doesn't exist", errorFirstOnly: true });
+  assert.deepEqual(await fillWithFallback(stale.page, 'oldhandle', 'me@hotmail.com', 'secret'), { result: 'submitted', via: 'email' });
+  assert.equal(stale.state.clicks, 2);
+  assert.deepEqual(stale.state.fills.filter(([s]) => s.includes('username')).map(([, v]) => v), ['oldhandle', 'me@hotmail.com']);
+  // No email saved → no second try.
+  const noEmail = loginPage({ errorText: "Account doesn't exist", errorFirstOnly: true });
+  assert.equal((await fillWithFallback(noEmail.page, 'oldhandle', null, 'secret')).result, 'rejected');
+  assert.equal(noEmail.state.clicks, 1);
+  // A wrong password is not retried with the email.
+  const wrong = loginPage({ errorText: 'Incorrect account or password', errorFirstOnly: true });
+  assert.equal((await fillWithFallback(wrong.page, 'alice', 'me@hotmail.com', 'secret')).result, 'rejected');
+  assert.equal(wrong.state.clicks, 1);
+});
 test('TOTP matches RFC 6238 and accepts authenticator-style secrets', () => {
   const key = base32('GEZD GNBV GY3T QOJQ GEZD GNBV GY3T QOJQ');
   assert.equal(totp(key, 59000), '287082');

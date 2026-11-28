@@ -411,6 +411,19 @@ export async function sync(device: Device, b: Record<string, unknown>) {
     const r = raw as Record<string, unknown>;
     const [job] = await db.select().from(jobs).where(and(eq(jobs.id, String(r.jobId)), eq(jobs.deviceId, device.id), eq(jobs.ownerUserId, device.ownerUserId), eq(jobs.state, "running")));
     if (!job) continue;
+    // The real @handle seen after the agent logged in with this account's own credentials (the
+    // saved username was a stale handle TikTok no longer knows) → correct the account's username,
+    // unless another account of this owner already uses it.
+    if (job.accountId && typeof r.handle === 'string') {
+      const handle = r.handle.trim().replace(/^@/, '');
+      if (/^[A-Za-z0-9._]{2,24}$/.test(handle)) {
+        const [taken] = await db.select({ id: accounts.id }).from(accounts)
+          .where(and(eq(accounts.ownerUserId, device.ownerUserId), sql`lower(${accounts.username}) = ${handle.toLowerCase()}`, sql`${accounts.id} <> ${job.accountId}`)).limit(1);
+        if (!taken) await db.update(accounts).set({ username: handle, updatedAt: new Date() })
+          .where(and(eq(accounts.id, job.accountId), eq(accounts.ownerUserId, device.ownerUserId))).catch(() => {});
+      }
+      continue;
+    }
     // Secrets captured during login (mailbox OAuth token, enabled-2FA key) → store on the account, encrypted.
     if (job.accountId && (isRecord(r.mail) || typeof r.twofaSecret === 'string')) {
       const patch: Record<string, unknown> = {};

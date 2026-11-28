@@ -4,7 +4,7 @@ import { mkdir, readFile, writeFile, unlink } from 'node:fs/promises';
 import { join } from 'node:path';
 import { isIP } from 'node:net';
 import { root, siteKey, saveJson } from './storage.js';
-import { navigateAccount, observe, type LoginOutcome } from './login.js';
+import { navigateAccount, observe, signedInHandle, type LoginOutcome } from './login.js';
 import { ensureMailAccess, pollTikTokCode } from './maillogin.js';
 import { MAIL_CLIENT_ID } from './mailauth.js';
 import type { Operation } from './operation.js';
@@ -16,8 +16,8 @@ export interface MailLogin { email?: string; mailPassword?: string | null; recov
 export interface Job extends MailLogin { id: string; kind: string; ownerId: number; expiresAt: number; accountId?: number; profileId?: string; username?: string; password?: string | null; twofa?: string | null; autofill?: boolean; folder?: string; caption?: string; proxy?: { server: string; username?: string; password?: string } | null; reuse?: boolean; durationMs?: number; likeRate?: number; scheduleAt?: number; scheduleAts?: Array<number | null>; deleteAfter?: boolean }
 /** A mailbox OAuth token captured during this login, to be stored on the account. */
 export interface MailCapture { refreshToken: string; clientId: string }
-export interface Report { jobId: string; profileId?: string; status?: string; done?: boolean; ip?: string; latency?: number; error?: string; mail?: MailCapture; twofaSecret?: string; hide?: { changed: number; skipped: number; scanned: number; message: string; status?: string; errorCode?: string }; feed?: { watched: number; liked: number; message: string; status?: string; errorCode?: string }; post?: { posted: number; total: number; error?: string } }
-export interface Session { context: BrowserContext; job: Job; inspect: () => Promise<string>; close: () => Promise<void>; login?: LoginOutcome; mailCapture?: MailCapture }
+export interface Report { jobId: string; profileId?: string; status?: string; done?: boolean; ip?: string; latency?: number; error?: string; mail?: MailCapture; twofaSecret?: string; hide?: { changed: number; skipped: number; scanned: number; message: string; status?: string; errorCode?: string }; feed?: { watched: number; liked: number; message: string; status?: string; errorCode?: string }; post?: { posted: number; total: number; error?: string }; handle?: string }
+export interface Session { context: BrowserContext; job: Job; inspect: () => Promise<string>; close: () => Promise<void>; login?: LoginOutcome; mailCapture?: MailCapture; handle?: string }
 export async function check(context: BrowserContext) {
   const page = await context.newPage();
   const start = Date.now();
@@ -85,12 +85,20 @@ export async function openSession(origin: string, job: Job, operation: Operation
           return pollTikTokCode(account.email, access.accessToken, since, () => operation.check());
         })
       : undefined;
-    const login = await navigateAccount(page, hasSession, job.username!, job.password ?? null, !!job.autofill, () => operation.check(), job.twofa ?? null, getMailCode);
+    const login = await navigateAccount(page, hasSession, job.username!, job.password ?? null, !!job.autofill, () => operation.check(), job.twofa ?? null, getMailCode, job.email ?? null);
     operation.check();
     if (closed) throw new Error('INTERRUPTED');
+    // We just signed in with THIS account's own credentials. If TikTok shows a different @handle
+    // than the one saved (stale handle; the login went through the email), the saved one is wrong:
+    // adopt the real handle so the identity checks pass, and report it so the web updates it.
+    let handle: string | undefined;
+    if (login.result === 'submitted') {
+      const real = await signedInHandle(page, 20000).catch(() => null);
+      if (real && real.toLowerCase() !== job.username!.replace(/^@/, '').toLowerCase()) { handle = real; job.username = real; }
+    }
     job.password = null; job.twofa = null; job.mailPassword = null; job.mailRefreshToken = null;
     const activeContext = context;
-    return { context: activeContext, job, login, mailCapture: captured.mail, inspect: async () => closed ? 'closed' : observe(activeContext.pages().find(p => p.url().startsWith('https://www.tiktok.com/')) ?? page, job.username!).catch(() => 'unverified'),
+    return { context: activeContext, job, login, mailCapture: captured.mail, handle, inspect: async () => closed ? 'closed' : observe(activeContext.pages().find(p => p.url().startsWith('https://www.tiktok.com/')) ?? page, job.username!).catch(() => 'unverified'),
       close: async () => { await activeContext.close(); await unlink(lock).catch(() => {}); } };
   } catch (e) {
     job.password = null; job.twofa = null; job.mailPassword = null; job.mailRefreshToken = null;

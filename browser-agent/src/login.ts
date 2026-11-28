@@ -27,7 +27,7 @@ export async function observe(page: Page, expected: string): Promise<string> {
  *   no_password — no saved password, or autofill turned off
  *   wrong_account — the profile is signed in as someone else; left untouched
  */
-export interface LoginOutcome { result: 'logged_in' | 'submitted' | 'pending' | 'challenge' | 'rejected' | 'no_form' | 'no_password' | 'wrong_account'; error?: string }
+export interface LoginOutcome { result: 'logged_in' | 'submitted' | 'pending' | 'challenge' | 'rejected' | 'no_form' | 'no_password' | 'wrong_account'; error?: string; via?: 'email' }
 
 /** Ask TikTok for its English UI whatever the IP's country (the automation reads English text).
  *  Pairs with the browser-wide en-US locale set when the window is launched. */
@@ -177,6 +177,31 @@ export async function fillOnce(page: Page, username: string, password: string | 
   return { result: 'pending' };
 }
 
+/** TikTok's answer when the typed username is not an account (old/changed @handle). */
+const MISSING_ACCOUNT = /doesn['’]t exist|not registered|không tồn tại|no existe/i;
+
+/** Log in with the saved username; if TikTok says that account doesn't exist (bought accounts
+ *  often have a stale @handle saved) and an email is saved, retry ONCE with the email — the
+ *  email/username box accepts both. The second try is the only extra submission. */
+export async function fillWithFallback(page: Page, username: string, email: string | null, password: string | null, check = () => {}, twofa: string | null = null, getMailCode?: MailCodeResolver): Promise<LoginOutcome> {
+  const first = await fillOnce(page, username, password, check, twofa, getMailCode);
+  if (first.result !== 'rejected' || !email || email.trim().toLowerCase() === username.trim().toLowerCase() || !MISSING_ACCOUNT.test(first.error ?? '')) return first;
+  check();
+  return { ...(await fillOnce(page, email.trim(), password, check, twofa, getMailCode)), via: 'email' };
+}
+
+/** The @handle TikTok shows as signed in (nav profile link), or null if none within `ms`. */
+export async function signedInHandle(page: Page, ms: number): Promise<string | null> {
+  const end = Date.now() + ms;
+  do {
+    const href = await page.locator('[data-e2e="profile-icon"] a[href^="/@"], a[data-e2e="profile-icon"][href^="/@"], a[data-e2e="nav-profile"][href^="/@"]').first().getAttribute('href', { timeout: 1500 }).catch(() => null);
+    const handle = href?.match(/^\/@([^/?#]+)/)?.[1];
+    if (handle) return decodeURIComponent(handle);
+    await sleep(1000);
+  } while (Date.now() < end);
+  return null;
+}
+
 /** Poll the page for proof of the signed-in account (the nav can render a few seconds late). */
 async function signedInAs(page: Page, username: string, ms: number) {
   const end = Date.now() + ms;
@@ -185,23 +210,41 @@ async function signedInAs(page: Page, username: string, ms: number) {
   return status;
 }
 
-export async function navigateAccount(page: Page, hasSession: boolean, username: string, password: string | null, autofill: boolean, check = () => {}, twofa: string | null = null, getMailCode?: MailCodeResolver): Promise<LoginOutcome> {
-  await page.goto(HOME_URL, { timeout: 45000, waitUntil: 'domcontentloaded' }).catch(() => {});
-  check();
-  // A session cookie alone isn't proof: expired/revoked sessions keep their cookies.
+/** Let a page finish its own client-side redirects (TikTok's home page sends logged-out
+ *  visitors on to /explore a moment after it loads). */
+async function settle(page: Page) {
+  try { await page.waitForLoadState('load', { timeout: 10000 }); } catch { /* slow proxy, or not supported */ }
+  await sleep(1500);
+}
+
+export async function navigateAccount(page: Page, hasSession: boolean, username: string, password: string | null, autofill: boolean, check = () => {}, twofa: string | null = null, getMailCode?: MailCodeResolver, email: string | null = null): Promise<LoginOutcome> {
+  // A session cookie alone isn't proof: expired/revoked sessions keep their cookies, so open
+  // TikTok and look for the signed-in account. Without a session there is nothing to check:
+  // go straight to the login form (visiting home first let its redirect to /explore abort the
+  // login navigation, which left the window on /explore with no form).
   if (hasSession) {
+    await page.goto(HOME_URL, { timeout: 45000, waitUntil: 'domcontentloaded' }).catch(() => {});
+    check();
     const status = await signedInAs(page, username, 8000);
     check();
     if (status === 'logged_in') return { result: 'logged_in' };
     if (status === 'wrong_account') return { result: 'wrong_account' };
     if (status === 'needs_verification') return { result: 'challenge' };
+    if (autofill) await settle(page);
   }
   if (!autofill) return { result: 'no_password' };
-  await page.goto(LOGIN_URL, { timeout: 45000, waitUntil: 'domcontentloaded' }).catch(() => {});
-  check();
-  // TikTok sends an already signed-in profile away from /login.
-  if (!onLoginPage(page)) return { result: (await signedInAs(page, username, 5000)) === 'logged_in' ? 'logged_in' : 'no_form' };
-  return fillOnce(page, username, password, check, twofa, getMailCode).catch((e: unknown) => {
+  // Retry: a redirect still in flight can abort the navigation to the login page.
+  for (let attempt = 0; attempt < 3 && !onLoginPage(page); attempt++) {
+    await page.goto(LOGIN_URL, { timeout: 45000, waitUntil: 'domcontentloaded' }).catch(() => {});
+    check();
+    await sleep(1500);
+    if (onLoginPage(page)) break;
+    // TikTok sends an already signed-in profile away from /login.
+    if ((await signedInAs(page, username, 3000)) === 'logged_in') return { result: 'logged_in' };
+    await settle(page);
+  }
+  if (!onLoginPage(page)) return { result: 'no_form', error: 'TikTok không mở trang đăng nhập (bị chuyển sang trang khác). IP proxy có thể đang bị TikTok giới hạn đăng nhập — đợi một lúc rồi thử lại.' };
+  return fillWithFallback(page, username, email, password, check, twofa, getMailCode).catch((e: unknown) => {
     if (e instanceof Error && e.message === 'INTERRUPTED') throw e;
     return { result: 'no_form' as const, error: 'Lỗi khi điền form đăng nhập' };
   });
