@@ -61,7 +61,13 @@ export async function openSession(origin: string, job: Job, operation: Operation
     // login automation reads English text. An explicit locale overrides only the language.
     context = await Camoufox({ persistent_context: true, user_data_dir: join(dir, 'data'), browser: BROWSER_BUILD,
       fingerprint_preset: identity.preset, headless: false, proxy: job.proxy ?? undefined, geoip: job.proxy ? true : undefined,
-      locale: TIKTOK_LOCALE });
+      locale: TIKTOK_LOCALE,
+      // Camoufox otherwise covers canvas readback with RANDOM data (the identity's GPU isn't this
+      // PC's): TikTok Studio builds video covers and the "Edit cover" frames by reading a canvas,
+      // so they came out as coloured stripes. Without the cover the pixels are right, and Firefox's
+      // own canvas randomization still makes the canvas hash differ every session (verified), so
+      // accounts on this PC are not linked by it.
+      canvas_noise: false });
     const ownedContext = context;
     ownedContext.on('close', () => { closed = true; void unlink(lock).catch(() => {}); });
     await operation.own(() => ownedContext.close());

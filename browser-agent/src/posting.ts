@@ -41,24 +41,29 @@ export async function postVideo(origin: string, session: Session, job: Job, oper
   const item = await reserveVideo(origin, job);
   const page = await session.context.newPage();
   let submitted = false;
+  let step = 'open upload page';
   try {
     await page.goto(inEnglish('https://www.tiktok.com/tiktokstudio/upload'), { waitUntil: 'domcontentloaded', timeout: 45000 });
     operation.check();
     // TikTok Studio has no site profile-icon to read, so identity was proven at session open
     // (session.inspect on the main tab). Here, only guard against a logged-out redirect.
     if (new URL(page.url()).pathname.startsWith('/login')) throw new Error('POST_MANUAL');
+    step = 'choose video file';
     const input = page.locator('input[type="file"]').first();
     await input.waitFor({ state: 'attached', timeout: 30000 });
     await input.setInputFiles(item.video);
+    step = 'caption';
     const caption = page.locator('[contenteditable="true"]').first();
     await caption.waitFor({ timeout: 90000 });
     await caption.fill(job.caption || basename(item.video, extname(item.video)));
     await dismissOverlays(page);
+    step = 'schedule';
     // Scheduled post: switch to Schedule and set the date/time BEFORE submitting. If the schedule
     // controls can't be set with confidence, fail safe (never post now instead of scheduling).
     const scheduling = typeof job.scheduleAt === 'number' && job.scheduleAt > 0;
     if (scheduling && !(await setSchedule(page, job.scheduleAt!, operation))) throw new Error('POST_SCHEDULE_MANUAL');
     // The submit button keeps data-e2e="post_video_button" whether its label reads Post or Schedule.
+    step = 'wait for upload';
     const button = page.locator('[data-e2e="post_video_button"]').first();
     await button.waitFor({ timeout: 90000 });
     // Wait for TikTok to finish processing the selected file.
@@ -68,10 +73,20 @@ export async function postVideo(origin: string, session: Session, job: Job, oper
     operation.check();
     // Re-verify identity on the main-site tab (Studio can't show it) and that TikTok finished processing.
     if (new URL(page.url()).pathname.startsWith('/login') || await session.inspect() !== 'logged_in' || !await button.isEnabled()) throw new Error('POST_MANUAL');
+    await dismissOverlays(page);
     // Persist before clicking. A crash/unknown result must never post the same file again automatically.
+    step = 'click Post';
     await saveJson(item.receipt, { jobId: job.id, state: 'submitting', file: basename(item.video) });
     operation.check(); submitted = true;
-    await button.click({ timeout: 10000 });
+    // A click that times out was never delivered (something covered the button): close what covers
+    // it and try once more; if it is still covered, nothing was submitted.
+    try { await button.click({ timeout: 10000 }); }
+    catch {
+      await dismissOverlays(page);
+      try { await button.click({ timeout: 10000 }); }
+      catch (e) { submitted = false; throw e; }
+    }
+    step = 'wait for TikTok confirmation';
     // Success = either TikTok's confirmation text, or it leaves the upload form for the content
     // manager (post-now and scheduled both redirect there; a live post shows the new item at top).
     const confirmed = page.getByText(/has been posted|Video posted|đã được đăng|Đã đăng video|has been scheduled|đã được lên lịch|scheduled for/i).first().waitFor({ timeout: 60000 });
@@ -83,7 +98,9 @@ export async function postVideo(origin: string, session: Session, job: Job, oper
     await saveJson(item.receipt, { jobId: job.id, state: deleted ? 'posted-deleted' : 'posted', file: basename(item.video) });
   } catch (e) {
     const manual = !submitted;
-    await saveJson(item.receipt, { jobId: job.id, state: submitted ? 'unknown' : 'needs_review', file: basename(item.video) });
+    await saveJson(item.receipt, { jobId: job.id, state: submitted ? 'unknown' : 'needs_review', file: basename(item.video), step });
+    // Keep what the page showed, for diagnosis: %LOCALAPPDATA%\SocialManagerBrowser\posting\debug.
+    await saveDebug(page, job, step, e).catch(() => {});
     if (e instanceof Error && e.message === 'POST_SCHEDULE_MANUAL') throw e;
     throw new Error(manual ? 'POST_MANUAL' : 'POST_UNKNOWN');
   }
@@ -91,6 +108,17 @@ export async function postVideo(origin: string, session: Session, job: Job, oper
 }
 
 const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
+
+/** A screenshot + what was being done when a post failed (the 30 newest are kept). */
+async function saveDebug(page: Page, job: Job, step: string, error: unknown) {
+  const dir = join(root, 'posting', 'debug');
+  await mkdir(dir, { recursive: true });
+  const name = `${new Date().toISOString().replace(/[:.]/g, '-')}-${job.accountId}`;
+  await page.screenshot({ path: join(dir, `${name}.png`), timeout: 10000 }).catch(() => {});
+  await writeFile(join(dir, `${name}.json`), JSON.stringify({ jobId: job.id, accountId: job.accountId, step, url: page.url(), error: error instanceof Error ? error.message.slice(0, 500) : String(error) }, null, 2));
+  const files = (await readdir(dir)).filter(f => f.endsWith('.png')).sort();
+  for (const old of files.slice(0, Math.max(0, files.length - 30))) { await unlink(join(dir, old)).catch(() => {}); await unlink(join(dir, old.replace(/\.png$/, '.json'))).catch(() => {}); }
+}
 const pad2 = (n: number) => String(n).padStart(2, '0');
 
 /** Dismiss TikTok Studio's first-run onboarding tooltips/modals (react-joyride, copyright
@@ -102,9 +130,21 @@ async function dismissOverlays(page: Page): Promise<void> {
       const b = page.getByRole('button', { name }).first();
       if (await b.isVisible().catch(() => false)) { await b.click({ timeout: 1500 }).catch(() => {}); acted = true; await sleep(300); }
     }
+    // "Turn on automatic content checks?" pops up after the upload and covers the Post button.
+    // Decline it (the account's settings stay as they are) — only in THAT dialog, never a random Cancel.
+    try {
+      const checks = page.locator('[role="dialog"], .TUXModal').filter({ hasText: CONTENT_CHECKS_DIALOG }).first();
+      if (await checks.isVisible().catch(() => false)) {
+        const cancel = checks.getByRole('button', { name: /^(Cancel|Hủy|Huỷ|Not now)$/i }).first();
+        if (await cancel.isVisible().catch(() => false)) await cancel.click({ timeout: 2000 }).catch(() => {});
+        else await page.keyboard.press('Escape').catch(() => {});
+        acted = true; await sleep(500);
+      }
+    } catch { /* best effort: a missing dialog must never fail the post */ }
     if (!acted) break;
   }
 }
+const CONTENT_CHECKS_DIALOG = /automatic content checks|kiểm tra nội dung tự động/i;
 
 /** Switch the upload form to Schedule and set the date + time via TikTok Studio's custom
  *  pickers (the inputs are readonly, so we drive the calendar and time list, not fill()).
