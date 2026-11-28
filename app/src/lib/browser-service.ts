@@ -339,25 +339,33 @@ export async function queue(owner: number, b: Record<string, unknown>) {
         if (existing) fail('Tài khoản đang có lệnh đăng bài', 409);
         payload = JSON.stringify({ folder: settings.folder, caption: settings.caption });
         if (kind === 'post') {
-          // Post the next unused video in the folder. Post now, or schedule (a specific time, or a
-          // random minute inside a daily window), and optionally delete the file after it succeeds.
+          // Post the next unused video(s) in the folder: `perAccount` of them per account. Post now,
+          // or schedule (a specific time, or random minutes inside a daily window), and optionally
+          // delete each file after it succeeds. scheduleAts holds one time per post (null = now).
           const deleteAfter = b.deleteAfter === true;
+          const count = Math.min(10, Math.max(1, Math.floor(Number(b.perAccount) || 1)));
           const mode = typeof b.scheduleMode === 'string' ? b.scheduleMode : 'now';
-          let scheduleAt: number | null = null;
+          const accountOffset = result.length * 60; // stagger accounts 1 phút
+          const scheduleAts: Array<number | null> = [];
           if (mode === 'at') {
             const at = Math.floor(Number(b.scheduleAt));
             if (!Number.isFinite(at) || at < now() + 300) fail('Giờ lên lịch phải sau hiện tại ít nhất 5 phút', 400);
-            scheduleAt = at + result.length * 60; // stagger accounts 1 phút
+            for (let i = 0; i < count; i++) scheduleAts.push(at + accountOffset + i * 600); // mỗi bài cách nhau 10 phút
           } else if (mode === 'window') {
             const dayEpoch = Math.floor(Number(b.dayEpoch)), s = Math.floor(Number(b.startMin)), e2 = Math.floor(Number(b.endMin));
             if (!Number.isFinite(dayEpoch) || !(s >= 0 && e2 <= 1440 && s < e2)) fail('Khung giờ không hợp lệ', 400);
-            let when = dayEpoch + (s + Math.floor(Math.random() * (e2 - s))) * 60;
-            if (when < now() + 300) when = now() + 600;
-            scheduleAt = when;
-          }
-          if (scheduleAt && scheduleAt > now() + 10 * 86400) fail('TikTok chỉ cho lên lịch trước tối đa ~10 ngày', 400);
-          if ((scheduleAt || deleteAfter) && !atLeast(device.version, [1, 0, 13])) fail('Cập nhật chương trình Windows lên 1.0.13 để lên lịch / xóa file', 409);
-          payload = JSON.stringify({ folder: settings.folder, caption: settings.caption, scheduleAt, deleteAfter });
+            const slot = (e2 - s) / count; // spread the posts evenly across the window, with jitter
+            for (let i = 0; i < count; i++) {
+              let when = dayEpoch + Math.round((s + i * slot + Math.random() * slot) * 60);
+              if (when < now() + 300) when = now() + 600 + i * 600;
+              scheduleAts.push(when);
+            }
+          } else for (let i = 0; i < count; i++) scheduleAts.push(null); // đăng ngay, lần lượt
+          if (Math.max(...scheduleAts.map(t => t ?? 0)) > now() + 10 * 86400) fail('TikTok chỉ cho lên lịch trước tối đa ~10 ngày', 400);
+          const scheduled = scheduleAts.some(t => t !== null);
+          if ((scheduled || deleteAfter) && !atLeast(device.version, [1, 0, 13])) fail('Cập nhật chương trình Windows lên 1.0.13 để lên lịch / xóa file', 409);
+          if (count > 1 && !atLeast(device.version, [1, 0, 14])) fail('Cập nhật chương trình Windows lên 1.0.14 để đăng nhiều bài mỗi tài khoản', 409);
+          payload = JSON.stringify({ folder: settings.folder, caption: settings.caption, scheduleAt: scheduleAts[0], scheduleAts, deleteAfter });
         }
       }
       await db.insert(jobs).values({ id: jobId, ownerUserId: owner, deviceId, kind, accountId: config ? target : null, proxyId: p?.id ?? null,

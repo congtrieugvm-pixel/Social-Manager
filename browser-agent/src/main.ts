@@ -17,7 +17,7 @@ import { browseFeed, type FeedProgress } from './feed.js';
 import { startManager, openManagerWindow, ensureShortcut, type Tile } from './manager.js';
 import { ensureAutostart, disableAutostart, EXIT_NO_RESTART } from './autostart.js';
 
-const VERSION = '1.0.13';
+const VERSION = '1.0.14';
 const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
 async function api<T>(s: Pick<Settings, 'origin'> & Partial<Settings>, route: string, body: unknown): Promise<T> {
   const payload = JSON.stringify(body).replace(/[\u007f-\uffff]/g, c => '\\u' + c.charCodeAt(0).toString(16).padStart(4, '0'));
@@ -171,8 +171,16 @@ async function run() {
         const session = sessions.get(job.profileId!);
         if (!session) throw new Error('POST_MANUAL');
         await task.own(() => session.close());
-        await postVideo(s.origin, session, job, task);
-        reports.set(job.id, { jobId: job.id, done: true });
+        // Post N videos in this one open session (each reserves the next unused file); scheduleAts
+        // holds one time per post (null = post now). Old payloads carry a single scheduleAt.
+        const times = Array.isArray(job.scheduleAts) && job.scheduleAts.length ? job.scheduleAts : [job.scheduleAt ?? null];
+        let posted = 0; let lastError: unknown;
+        for (const when of times) {
+          try { await postVideo(s.origin, session, { ...job, scheduleAt: when ?? undefined }, task); posted++; }
+          catch (e) { lastError = e; break; } // stop on the first failure (e.g. folder ran out)
+        }
+        if (posted === 0) throw lastError instanceof Error ? lastError : new Error('POST_MANUAL');
+        reports.set(job.id, { jobId: job.id, done: true, post: { posted, total: times.length, ...(lastError instanceof Error ? { error: lastError.message } : {}) } });
       }
       else if (job.kind === 'check_proxy') reports.set(job.id, { jobId: job.id, done: true, ...await checkProxy(job, task) });
       else if (job.kind === 'hide') {

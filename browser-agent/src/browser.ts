@@ -11,10 +11,10 @@ import type { Operation } from './operation.js';
 
 export const BROWSER_BUILD = 'official/158.0.1-beta.41';
 export interface MailLogin { email?: string; mailPassword?: string | null; recoveryEmail?: string | null; mailRefreshToken?: string | null; mailClientId?: string | null }
-export interface Job extends MailLogin { id: string; kind: string; ownerId: number; expiresAt: number; accountId?: number; profileId?: string; username?: string; password?: string | null; twofa?: string | null; autofill?: boolean; folder?: string; caption?: string; proxy?: { server: string; username?: string; password?: string } | null; reuse?: boolean; durationMs?: number; likeRate?: number; scheduleAt?: number; deleteAfter?: boolean }
+export interface Job extends MailLogin { id: string; kind: string; ownerId: number; expiresAt: number; accountId?: number; profileId?: string; username?: string; password?: string | null; twofa?: string | null; autofill?: boolean; folder?: string; caption?: string; proxy?: { server: string; username?: string; password?: string } | null; reuse?: boolean; durationMs?: number; likeRate?: number; scheduleAt?: number; scheduleAts?: Array<number | null>; deleteAfter?: boolean }
 /** A mailbox OAuth token captured during this login, to be stored on the account. */
 export interface MailCapture { refreshToken: string; clientId: string }
-export interface Report { jobId: string; profileId?: string; status?: string; done?: boolean; ip?: string; latency?: number; error?: string; mail?: MailCapture; twofaSecret?: string; hide?: { changed: number; skipped: number; scanned: number; message: string; status?: string; errorCode?: string }; feed?: { watched: number; liked: number; message: string; status?: string; errorCode?: string } }
+export interface Report { jobId: string; profileId?: string; status?: string; done?: boolean; ip?: string; latency?: number; error?: string; mail?: MailCapture; twofaSecret?: string; hide?: { changed: number; skipped: number; scanned: number; message: string; status?: string; errorCode?: string }; feed?: { watched: number; liked: number; message: string; status?: string; errorCode?: string }; post?: { posted: number; total: number; error?: string } }
 export interface Session { context: BrowserContext; job: Job; inspect: () => Promise<string>; close: () => Promise<void>; login?: LoginOutcome; mailCapture?: MailCapture }
 export async function check(context: BrowserContext) {
   const page = await context.newPage();

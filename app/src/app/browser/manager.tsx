@@ -52,6 +52,7 @@ export default function BrowserManager() {
   const [postFolder, setPostFolder] = useState('');
   const [postCaption, setPostCaption] = useState('');
   const [postMode, setPostMode] = useState<'now' | 'at' | 'window'>('now');
+  const [perAccount, setPerAccount] = useState(1);
   const [postAt, setPostAt] = useState('');
   const [postDate, setPostDate] = useState('');
   const [postStart, setPostStart] = useState('09:00');
@@ -173,7 +174,7 @@ export default function BrowserManager() {
   const canPost = !busy && !loadingPostGroup && selected.length > 0 && readyCount === selected.length;
   async function publish() {
     if (!canPost) return;
-    const body: Record<string, unknown> = { kind: 'post', ids: selected, deviceId, deleteAfter };
+    const body: Record<string, unknown> = { kind: 'post', ids: selected, deviceId, deleteAfter, perAccount };
     let when = 'ngay bây giờ';
     if (postMode === 'at') {
       if (!postAt) { setError('Chọn ngày giờ đăng.'); return; }
@@ -189,7 +190,7 @@ export default function BrowserManager() {
     }
     const confirmed = await confirmDialog({
       title: 'Đăng video lên TikTok',
-      message: `Đăng 1 video tiếp theo cho ${selected.length} tài khoản trên ${selectedDevice?.name}, thời gian: ${when}.${deleteAfter ? ' File sẽ bị XÓA sau khi đăng thành công.' : ''}`,
+      message: `Đăng ${perAccount} video tiếp theo cho mỗi tài khoản (${selected.length} tài khoản) trên ${selectedDevice?.name}, thời gian: ${when}.${deleteAfter ? ' File sẽ bị XÓA sau khi đăng thành công.' : ''}`,
       confirmLabel: postMode === 'now' ? 'Đăng ngay' : 'Lên lịch',
     });
     if (confirmed) await act('jobs', body);
@@ -304,8 +305,9 @@ export default function BrowserManager() {
           <div className={styles.publishBox}>
             <Send size={24} /><h3>Lượt đăng tiếp theo</h3>
             <div><strong>{selected.length}</strong><span>tài khoản đã chọn</span></div>
-            <p>Mỗi tài khoản đăng một video chưa dùng (theo tên file). Đăng ngay hoặc hẹn giờ bằng lịch TikTok; có thể xóa file sau khi đăng.</p>
+            <p>Mỗi tài khoản đăng lần lượt số video chưa dùng (theo tên file) bạn chọn. Đăng ngay hoặc hẹn giờ bằng lịch TikTok; có thể xóa file sau khi đăng.</p>
             <div className={styles.row} style={{ gap: 6, flexWrap: 'wrap', justifyContent: 'center' }}>
+              <label className={styles.inlineLabel}>Số bài / tài khoản<input type="number" min={1} max={10} value={perAccount} onChange={e => setPerAccount(Math.min(10, Math.max(1, Math.floor(Number(e.target.value) || 1))))} style={{ width: 70 }} /></label>
               <label className={styles.inlineLabel}>Thời gian<select value={postMode} onChange={e => setPostMode(e.target.value as 'now' | 'at' | 'window')}><option value="now">Đăng ngay</option><option value="at">Giờ cụ thể</option><option value="window">Ngẫu nhiên trong khung</option></select></label>
             </div>
             {postMode === 'at' && <label className={styles.inlineLabel}>Ngày giờ<input type="datetime-local" value={postAt} onChange={e => setPostAt(e.target.value)} /></label>}
@@ -315,7 +317,7 @@ export default function BrowserManager() {
               <label className={styles.inlineLabel}>Đến<input type="time" value={postEnd} onChange={e => setPostEnd(e.target.value)} /></label>
             </div>}
             <label className={styles.inlineLabel} style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}><input type="checkbox" checked={deleteAfter} onChange={e => setDeleteAfter(e.target.checked)} />Xóa file sau khi đăng thành công</label>
-            <button className="btn btn-primary" disabled={!canPost} onClick={() => void publish()}><Send size={16} />{postMode === 'now' ? 'Đăng video tiếp theo' : 'Lên lịch đăng'}</button>
+            <button className="btn btn-primary" disabled={!canPost} onClick={() => void publish()}><Send size={16} />{postMode === 'now' ? (perAccount > 1 ? `Đăng ${perAccount} video / tài khoản` : 'Đăng video tiếp theo') : `Lên lịch đăng${perAccount > 1 ? ` ${perAccount}/TK` : ''}`}</button>
             {!canPost && <small>{!selected.length ? 'Chọn tài khoản trong mục Tài khoản hoặc chọn nhóm.' : 'Xem trạng thái từng tài khoản bên dưới để hoàn tất chuẩn bị.'}</small>}
             <button className="btn btn-quiet" disabled={!selected.length || !selectedDevice || busy || loadingPostGroup} onClick={() => void act('jobs', { kind: 'open', ids: selected, deviceId, autofill })}><Play size={15} />Mở phiên đã chọn</button>
           </div>
