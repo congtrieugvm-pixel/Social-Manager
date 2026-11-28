@@ -17,7 +17,7 @@ import { browseFeed, type FeedProgress } from './feed.js';
 import { startManager, openManagerWindow, ensureShortcut, type Tile } from './manager.js';
 import { ensureAutostart, disableAutostart, EXIT_NO_RESTART } from './autostart.js';
 
-const VERSION = '1.0.16';
+const VERSION = '1.0.17';
 const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
 async function api<T>(s: Pick<Settings, 'origin'> & Partial<Settings>, route: string, body: unknown): Promise<T> {
   const payload = JSON.stringify(body).replace(/[\u007f-\uffff]/g, c => '\\u' + c.charCodeAt(0).toString(16).padStart(4, '0'));
@@ -129,7 +129,7 @@ async function run() {
   await writeFile(join(root, 'running.pid'), String(process.pid));
   async function close(id: string) {
     const session = sessions.get(id); if (!session) return;
-    try { await session.close(); sessions.delete(id); reports.set(session.job.id, { jobId: session.job.id, profileId: id, status: 'closed' }); }
+    try { await session.close(); sessions.delete(id); for (const k of [id, `${id}:handle`, `${id}:login`]) mailReported.delete(k); reports.set(session.job.id, { jobId: session.job.id, profileId: id, status: 'closed' }); }
     catch { console.error('PROFILE_BUSY: Khong dong duoc cua so; ho so van bi khoa.'); }
   }
   const cancelProfile = async (id: string) => { for (const r of running.values()) if (r.profileId === id) await r.operation.cancel().catch(() => {}); };
@@ -168,15 +168,20 @@ async function run() {
       await remember(job.id);
       if (job.expiresAt * 1000 < Date.now() || Date.now() - lastLease > 90000) throw new Error('INTERRUPTED');
       if (job.kind === 'post') {
-        const session = sessions.get(job.profileId!);
-        if (!session) throw new Error('POST_MANUAL');
-        await task.own(() => session.close());
+        // Reuse the account's open window, or open its profile like an `open` job: the saved login
+        // is used, or it logs in. No need to open the browser before posting.
+        let session = sessions.get(job.profileId!);
+        if (!session) { if (job.reuse) throw new Error('POST_MANUAL'); session = await openWindow(job, task); }
+        const active = session;
+        await task.own(() => active.close());
+        try { await waitForLogin(active, task, () => {}); }
+        catch (e) { throw e instanceof Error && e.message === 'HIDE_MANUAL' ? new Error('POST_MANUAL') : e; }
         // Post N videos in this one open session (each reserves the next unused file); scheduleAts
         // holds one time per post (null = post now). Old payloads carry a single scheduleAt.
         const times = Array.isArray(job.scheduleAts) && job.scheduleAts.length ? job.scheduleAts : [job.scheduleAt ?? null];
         let posted = 0; let lastError: unknown;
         for (const when of times) {
-          try { await postVideo(s.origin, session, { ...job, scheduleAt: when ?? undefined }, task); posted++; }
+          try { await postVideo(s.origin, active, { ...job, scheduleAt: when ?? undefined }, task); posted++; }
           catch (e) { lastError = e; break; } // stop on the first failure (e.g. folder ran out)
         }
         if (posted === 0) throw lastError instanceof Error ? lastError : new Error('POST_MANUAL');
@@ -245,7 +250,10 @@ async function run() {
           if (session.mailCapture && !mailReported.has(id)) { mailReported.add(id); reports.set(`${session.job.id}:mail`, { jobId: session.job.id, mail: session.mailCapture }); }
           // The real @handle found after logging in (saved one was stale) — reported once.
           if (session.handle && !mailReported.has(`${id}:handle`)) { mailReported.add(`${id}:handle`); reports.set(`${session.job.id}:handle`, { jobId: session.job.id, handle: session.handle }); }
-          if (status === 'closed') sessions.delete(id);
+          // How the login went when this window opened (the web shows a green icon for a saved login).
+          if (session.login && !mailReported.has(`${id}:login`)) { mailReported.add(`${id}:login`); reports.set(`${session.job.id}:login`, { jobId: session.job.id, login: session.login.result }); }
+          // A later window for this profile is a new session: let it report again.
+          if (status === 'closed') { sessions.delete(id); for (const k of [id, `${id}:handle`, `${id}:login`]) mailReported.delete(k); }
         }
         const sent = [...reports.values()].slice(0, 25); // the server reads at most 25 per sync
         const knownJobs: string[] = [...sessions.values()].map(session => session.job.id).concat([...reports.keys()], [...running.keys()]);

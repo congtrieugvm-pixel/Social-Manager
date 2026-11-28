@@ -255,26 +255,77 @@ const req = token => new Request('https://test.invalid', { headers: { Authorizat
     sync = await s.sync(device, { runId: 'par', capacity: 3, knownJobs: [...known, sync.jobs[0].id] });
     assert.equal(sync.jobs.length, 1);
   });
-  await test('posting config scoped to account/device and commands require verified session', async () => {
+  await test('posting scenario: one shared folder, post opens the profile itself, saved login stamped', async () => {
+    sqlite.exec("INSERT INTO accounts(id,owner_user_id,username,enc_password) VALUES (30,1,'s1',NULL),(31,1,'s2',NULL),(32,1,'s3',NULL)");
     const pair = await s.createPairing(1);
-    const enrolled = await s.enroll({ code: pair.code, name: 'posting fixture', version: '1.0.3' });
-    const device = await s.authenticateDevice(req(enrolled.token));
-    await s.savePosting(1, { ids: [3], deviceId: device.id, folder: 'D:\\Videos', caption: 'Test' });
-    await assert.rejects(s.savePosting(1, { ids: [2], deviceId: device.id, folder: 'D:\\Videos' }));
-    const denied = await s.queue(1, { deviceId: device.id, kind: 'post', ids: [3] });
-    assert.equal(denied.results[0].ok, false);
-    await s.queue(1, { deviceId: device.id, kind: 'open', ids: [3] });
-    const sync = await s.sync(device, { runId: 'posting-run', capacity: 3 });
-    const opened = await s.claim(device, sync.job.id);
-    await s.sync(device, { runId: 'posting-run', capacity: 0, knownJobs: [opened.id], reports: [{ jobId: opened.id, profileId: opened.profileId, status: 'logged_in' }] });
-    const results = await Promise.all([s.queue(1, { deviceId: device.id, kind: 'post', ids: [3] }), s.queue(1, { deviceId: device.id, kind: 'post', ids: [3] })]);
-    assert.equal(results.filter(result => result.results[0].ok).length, 1);
-    const delivery = await s.sync(device, { runId: 'posting-run', capacity: 0, knownJobs: [opened.id] });
-    const post = await s.claim(device, delivery.job.id);
-    assert.equal(post.kind, 'post'); assert.equal(post.folder, 'D:\\Videos'); assert.equal(post.password, null);
-    await s.sync(device, { runId: 'posting-run', capacity: 0, knownJobs: [opened.id], reports: [{ jobId: post.id, done: true }] });
-    assert.equal(row('browser_jobs').find(j => j.id === post.id).state, 'done');
-    assert.equal(row('browser_profiles').find(p => p.account_id === 3).status, 'logged_in');
+    const enrolled = await s.enroll({ code: pair.code, name: 'posting fixture', version: '1.0.16' });
+    let device = await s.authenticateDevice(req(enrolled.token));
+    await s.sync(device, { runId: 'post-run', version: '1.0.16', capacity: 0 });
+    device = await s.authenticateDevice(req(enrolled.token));
+
+    // Scenarios: validated, and private to their owner.
+    await assert.rejects(s.saveScenario(1, { name: 'x', folder: 'Videos', timeMode: 'now', perAccount: 1 }), e => e.status === 400, 'Windows path required');
+    await assert.rejects(s.saveScenario(1, { name: 'x', folder: 'D:\\V', timeMode: 'window', perAccount: 1, startMin: 600, endMin: 600 }), e => e.status === 400);
+    await assert.rejects(s.saveScenario(1, { name: 'x', folder: 'D:\\V', timeMode: 'now', perAccount: 11 }), e => e.status === 400);
+    const now = (await s.saveScenario(1, { name: 'Đăng ngay', folder: 'D:\\Shared', caption: 'Hi', timeMode: 'now', perAccount: 2, deleteAfter: true })).id;
+    const timed = (await s.saveScenario(1, { name: 'Tối', folder: 'D:\\Shared', timeMode: 'time', perAccount: 2, atMin: 20 * 60 })).id;
+    assert.deepEqual((await s.listScenarios(1)).scenarios.map(x => x.name).sort(), ['Tối', 'Đăng ngay'].sort());
+    assert.equal((await s.listScenarios(2)).scenarios.length, 0);
+    await assert.rejects(s.saveScenario(2, { id: now, name: 'steal', folder: 'D:\\X', timeMode: 'now', perAccount: 1 }), e => e.status === 404);
+
+    // An agent without self-opening posts is told to update.
+    await assert.rejects(s.queue(1, { deviceId: device.id, kind: 'post', ids: [30], scenarioId: now }), e => e.status === 409 && /1\.0\.17/.test(e.message));
+    await s.sync(device, { runId: 'post-run', version: '1.0.17', capacity: 0 });
+    device = await s.authenticateDevice(req(enrolled.token));
+    await assert.rejects(s.queue(2, { deviceId: device.id, kind: 'post', ids: [30], scenarioId: now }), e => e.status === 404 || e.status === 409);
+
+    // No window open, no folder assigned per account: just accounts + scenario.
+    const queued = await s.queue(1, { deviceId: device.id, kind: 'post', ids: [30, 31], scenarioId: now });
+    assert.equal(queued.results.every(r => r.ok), true);
+    assert.equal((await s.queue(1, { deviceId: device.id, kind: 'post', ids: [30], scenarioId: now })).results[0].ok, false, 'one active post per account');
+    let sync = await s.sync(device, { runId: 'post-run', capacity: 0, slots: 4 });
+    assert.equal(sync.jobs.length, 0, 'a post that must open a window waits for a free one');
+    sync = await s.sync(device, { runId: 'post-run', capacity: 2, slots: 4 });
+    assert.deepEqual(sync.jobs.map(j => j.kind), ['post', 'post']);
+    const [a, b] = [await s.claim(device, sync.jobs[0].id), await s.claim(device, sync.jobs[1].id)];
+    assert.equal(a.reuse, false); assert.ok(a.profileId);
+    assert.equal(a.folder, 'D:\\Shared'); assert.equal(a.shared, true); assert.equal(a.deleteAfter, true);
+    assert.deepEqual(a.scheduleAts, [null, null], 'post now: two videos per account');
+    const known = [a.id, b.id];
+    // Signing in stamps the saved login; a failed login clears it.
+    await s.sync(device, { runId: 'post-run', capacity: 0, knownJobs: known, reports: [
+      { jobId: a.id, profileId: a.profileId, status: 'logged_in' },
+      { jobId: b.id, profileId: b.profileId, status: 'unverified' }, { jobId: b.id, login: 'rejected' },
+    ] });
+    const prof = id => row('browser_profiles').find(p => p.account_id === id);
+    assert.ok(prof(30).logged_in_at > 0); assert.equal(prof(31).logged_in_at, null);
+    const state = await s.browserState(1);
+    assert.ok(state.profiles.find(p => p.accountId === 30).loggedInAt > 0, 'the accounts tab sees the saved login');
+    // Done: result kept, its own window released, saved login kept.
+    sync = await s.sync(device, { runId: 'post-run', capacity: 0, knownJobs: known, reports: [{ jobId: a.id, done: true, post: { posted: 2, total: 2, caption: 'x' } }] });
+    const doneJob = row('browser_jobs').find(j => j.id === a.id);
+    assert.equal(doneJob.state, 'done'); assert.deepEqual(JSON.parse(doneJob.result), { posted: 2, total: 2 });
+    assert.equal(prof(30).status, 'closed'); assert.ok(prof(30).logged_in_at > 0);
+    assert.equal(sync.allowed.includes(a.profileId), false);
+
+    // A fixed time of day: the next one, accounts 1 min apart, posts 10 min apart.
+    const midnight = new Date(); midnight.setHours(0, 0, 0, 0);
+    await s.queue(1, { deviceId: device.id, kind: 'post', ids: [32], scenarioId: timed, dayEpoch: Math.floor(midnight.getTime() / 1000) });
+    sync = await s.sync(device, { runId: 'post-run', capacity: 1, slots: 4, knownJobs: known });
+    const t = await s.claim(device, sync.jobs.find(j => j.kind === 'post').id);
+    assert.equal(t.scheduleAts.length, 2); assert.equal(t.scheduleAts[1] - t.scheduleAts[0], 600);
+    assert.ok(t.scheduleAts[0] > Date.now() / 1000 + 290);
+    assert.equal(new Date(t.scheduleAts[0] * 1000).getHours(), 20);
+
+    // A window already open: the post reuses it and gets no credentials.
+    await s.queue(1, { deviceId: device.id, kind: 'open', ids: [30] });
+    sync = await s.sync(device, { runId: 'post-run', capacity: 3, slots: 4, knownJobs: [...known, t.id] });
+    const opened = await s.claim(device, sync.jobs.find(j => j.kind === 'open').id);
+    await s.sync(device, { runId: 'post-run', capacity: 3, knownJobs: [...known, t.id, opened.id], reports: [{ jobId: opened.id, profileId: opened.profileId, status: 'logged_in' }] });
+    await s.queue(1, { deviceId: device.id, kind: 'post', ids: [30], scenarioId: now });
+    sync = await s.sync(device, { runId: 'post-run', capacity: 0, slots: 4, knownJobs: [...known, t.id, opened.id] });
+    const reused = await s.claim(device, sync.jobs.find(j => j.kind === 'post').id);
+    assert.equal(reused.reuse, true); assert.equal(reused.password, null); assert.equal(reused.proxy, null);
   });
   console.log(`${passed} browser integration scenarios passed (isolated in-memory SQLite).`);
   sqlite.close();

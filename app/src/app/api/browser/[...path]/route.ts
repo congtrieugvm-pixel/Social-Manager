@@ -29,12 +29,15 @@ async function handle(req: Request, ctx: { params: Promise<{ path: string[] }> }
       return reply(await service.dashboard(owner, u.searchParams.get("q") ?? "", selected));
     }
     if (route === "state" && req.method === "GET") return reply(await service.browserState(owner));
+    if (route === "scenarios" && req.method === "GET") return reply(await service.listScenarios(owner));
     if (req.method !== "POST") service.fail("Phương thức không hỗ trợ", 405);
     if (route === "proxies/save") return reply(await service.saveProxy(owner, b));
     if (route === "proxies/delete") return reply(await service.deleteProxy(owner, service.id(b.id)));
     if (route === "assign") return reply(await service.assign(owner, b));
     if (route === "account-proxy") return reply(await service.setAccountProxy(owner, b));
     if (route === 'posting/save') return reply(await service.savePosting(owner, b));
+    if (route === 'scenarios/save') return reply(await service.saveScenario(owner, b));
+    if (route === 'scenarios/delete') return reply(await service.deleteScenario(owner, service.id(b.id)));
     if (route === "pairings") return reply(await service.createPairing(owner));
     if (route === "devices/settings") return reply(await service.deviceSettings(owner, b));
     if (route === "devices/revoke") return reply(await service.revokeDevice(owner, service.str(b.id, 40)));

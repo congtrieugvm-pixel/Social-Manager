@@ -1795,6 +1795,28 @@ details.menu[open] > summary { background: var(--bg-2); }
 .tb-status .tb-dot.on { box-shadow: none; }
 .tb-browser { display: inline-flex; align-items: center; justify-content: center; width: 22px; height: 22px; flex: 0 0 auto; border-radius: 6px; border: 1px solid var(--line); background: var(--bg-1); color: var(--dim); cursor: default; vertical-align: middle; }
 .tb-browser.good { color: var(--good); border-color: color-mix(in srgb, var(--good) 40%, transparent); background: color-mix(in srgb, var(--good) 10%, transparent); }
+/* "Đăng bài" dialog: saved posting scenarios */
+.modal.ps-modal { max-width: 560px; display: flex; flex-direction: column; gap: 14px; }
+.ps-list { display: flex; flex-direction: column; gap: 8px; max-height: 42vh; overflow-y: auto; }
+.ps-item { display: flex; align-items: center; gap: 4px; padding: 10px 8px 10px 12px; border: 1px solid var(--line); border-radius: 10px; background: var(--bg-1); transition: border-color 0.15s, background-color 0.15s; }
+.ps-item.on { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 8%, var(--bg-1)); }
+.ps-pick { display: flex; align-items: flex-start; gap: 10px; flex: 1; min-width: 0; cursor: pointer; }
+.ps-pick input { margin-top: 3px; accent-color: var(--accent); }
+.ps-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.ps-text b { color: var(--ink); font-size: 14px; }
+.ps-text small { color: var(--ink-soft); font-size: 12px; }
+.ps-folder { font-family: var(--font-mono); color: var(--muted) !important; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ps-new { align-self: flex-start; }
+.ps-summary { margin: 0; padding: 10px 12px; border-radius: 10px; background: var(--bg-2); color: var(--ink-soft); font-size: 13px; line-height: 1.5; }
+.ps-form { display: flex; flex-direction: column; gap: 12px; }
+.ps-form textarea.input { resize: vertical; min-height: 64px; font-family: inherit; }
+.ps-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.ps-grid .ps-help { grid-column: 1 / -1; }
+.ps-help { font-weight: 400; color: var(--muted); font-size: 12px; line-height: 1.45; }
+.ps-bad { color: var(--danger); }
+.ps-check { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--ink-soft); cursor: pointer; }
+.ps-check input { accent-color: var(--accent); }
+@media (max-width: 560px) { .ps-grid { grid-template-columns: 1fr; } }
 .tb-browser.warn { color: var(--warn); border-color: color-mix(in srgb, var(--warn) 40%, transparent); background: color-mix(in srgb, var(--warn) 10%, transparent); }
 .tb-status.warn .tb-dot.on { background: var(--warn); }
 .tb-status.danger .tb-dot.on { background: var(--danger); }

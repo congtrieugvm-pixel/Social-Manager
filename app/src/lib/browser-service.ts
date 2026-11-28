@@ -3,7 +3,7 @@ import { db } from "./db";
 import { accounts, groups, appUsers, browserProxies as proxies, browserDevices as devices, browserPairings as pairings, browserProfiles as profiles, browserJobs as jobs, browserProxyChecks as checks } from "./db/schema";
 import { encrypt, decrypt } from "./crypto";
 import { AuthError, findUserByUsername, verifyPassword } from "./auth";
-import { browserLoginAttempts, browserPosting } from './db/browser-schema';
+import { browserLoginAttempts, browserPosting, postScenarios } from './db/browser-schema';
 import { previewFiles } from './browser-preview';
 
 export const now = () => Math.floor(Date.now() / 1000);
@@ -17,7 +17,7 @@ export const token = () => Array.from(crypto.getRandomValues(new Uint8Array(32))
 const pending = ["queued", "claimed"];
 const active = [...pending, "running"];
 const statuses = ["starting", "open", "needs_verification", "unverified", "logged_in", "wrong_account", "closed", "error", "interrupted"];
-const errorCodes = ["PROXY_FAILED", "BROWSER_FAILED", "PROFILE_BUSY", "LOGIN_MANUAL", "NETWORK", "INTERRUPTED", "CONFIG_CHANGED", "CLOSED", 'FOLDER_EMPTY', 'FOLDER_INVALID', 'POST_UNKNOWN', 'POST_MANUAL', 'FILE_CHANGED', 'HIDE_MANUAL', 'HIDE_FAILED'];
+const errorCodes = ["PROXY_FAILED", "BROWSER_FAILED", "PROFILE_BUSY", "LOGIN_MANUAL", "NETWORK", "INTERRUPTED", "CONFIG_CHANGED", "CLOSED", 'FOLDER_EMPTY', 'FOLDER_INVALID', 'POST_UNKNOWN', 'POST_MANUAL', 'POST_SCHEDULE_MANUAL', 'FILE_CHANGED', 'HIDE_MANUAL', 'HIDE_FAILED', 'FEED_MANUAL', 'FEED_FAILED'];
 const atLeast = (version: string, [a, b, c]: [number, number, number]) => {
   if (!/^\d+\.\d+\.\d+$/.test(version)) return false;
   const [x, y, z] = version.split('.').map(Number);
@@ -145,7 +145,7 @@ export async function browserState(owner: number) {
   const [ds, fs, js] = await Promise.all([
     db.select({ id: devices.id, name: devices.name, version: devices.version, lastSeenAt: devices.lastSeenAt, maxWindows: devices.maxWindows }).from(devices).where(and(eq(devices.ownerUserId, owner), eq(devices.revoked, 0))),
     // Usernames ride along for the floating thread panel (joined, not an IN list: D1 caps bound parameters).
-    db.select({ accountId: profiles.accountId, deviceId: profiles.deviceId, status: profiles.status, updatedAt: profiles.updatedAt, username: accounts.username }).from(profiles)
+    db.select({ accountId: profiles.accountId, deviceId: profiles.deviceId, status: profiles.status, updatedAt: profiles.updatedAt, loggedInAt: profiles.loggedInAt, username: accounts.username }).from(profiles)
       .leftJoin(accounts, and(eq(accounts.id, profiles.accountId), eq(accounts.ownerUserId, owner))).where(eq(profiles.ownerUserId, owner)),
     db.select({ id: jobs.id, kind: jobs.kind, accountId: jobs.accountId, state: jobs.state, error: jobs.error, result: jobs.result, createdAt: jobs.createdAt, deviceId: jobs.deviceId, username: accounts.username })
       .from(jobs).leftJoin(accounts, and(eq(accounts.id, jobs.accountId), eq(accounts.ownerUserId, owner)))
@@ -186,6 +186,41 @@ export async function setAccountProxy(owner: number, b: Record<string, unknown>)
   await db.update(accounts).set({ browserProxyMode: mode, browserProxyId: mode === "custom" ? proxyId : null })
     .where(and(eq(accounts.ownerUserId, owner), eq(accounts.id, accountId)));
   return { ok: true, proxyId };
+}
+/** Saved posting scenarios ("kịch bản đăng"). */
+const SCENARIO_MODES = ["now", "time", "window"] as const;
+const intIn = (v: unknown, min: number, max: number, msg: string) => { const n = Number(v); if (!Number.isInteger(n) || n < min || n > max) fail(msg); return n; };
+export async function listScenarios(owner: number) {
+  return { scenarios: await db.select().from(postScenarios).where(eq(postScenarios.ownerUserId, owner)).orderBy(asc(postScenarios.name)) };
+}
+export async function saveScenario(owner: number, b: Record<string, unknown>) {
+  const name = str(b.name, 60);
+  const folder = str(b.folder, 500);
+  if (!/^[A-Za-z]:\\/.test(folder) || folder.includes('..')) fail('Nhập đường dẫn thư mục Windows, ví dụ D:\\Videos');
+  const caption = typeof b.caption === 'string' ? b.caption : '';
+  if (caption.length > 2200) fail('Nội dung tối đa 2200 ký tự');
+  const timeMode = SCENARIO_MODES.find(m => m === b.timeMode) ?? fail('Chọn thời gian đăng');
+  const values = {
+    ownerUserId: owner, name, folder, caption, updatedAt: now(),
+    perAccount: intIn(b.perAccount, 1, 10, 'Số bài mỗi tài khoản từ 1 đến 10'),
+    timeMode,
+    atMin: timeMode === 'time' ? intIn(b.atMin, 0, 1439, 'Giờ đăng không hợp lệ') : null,
+    startMin: timeMode === 'window' ? intIn(b.startMin, 0, 1439, 'Khung giờ không hợp lệ') : null,
+    endMin: timeMode === 'window' ? intIn(b.endMin, 1, 1440, 'Khung giờ không hợp lệ') : null,
+    deleteAfter: b.deleteAfter === true ? 1 : 0,
+  };
+  if (values.timeMode === 'window' && !(values.startMin! < values.endMin!)) fail('Giờ bắt đầu phải trước giờ kết thúc');
+  if (b.id) {
+    const updated = await db.update(postScenarios).set(values).where(and(eq(postScenarios.id, id(b.id)), eq(postScenarios.ownerUserId, owner))).returning({ id: postScenarios.id });
+    if (!updated.length) fail('Không tìm thấy kịch bản', 404);
+    return { ok: true, id: updated[0].id };
+  }
+  const [created] = await db.insert(postScenarios).values(values).returning({ id: postScenarios.id });
+  return { ok: true, id: created.id };
+}
+export async function deleteScenario(owner: number, scenarioId: number) {
+  await db.delete(postScenarios).where(and(eq(postScenarios.id, scenarioId), eq(postScenarios.ownerUserId, owner)));
+  return { ok: true };
 }
 export async function savePosting(owner: number, b: Record<string, unknown>) {
   const targets = ids(b.ids);
@@ -316,6 +351,12 @@ export async function queue(owner: number, b: Record<string, unknown>) {
   if (kind === 'feed' && !atLeast(device.version, [1, 0, 12])) fail('Cập nhật chương trình Windows lên 1.0.12 để dùng Lướt feed', 409);
   const version = device.version.split('.').map(Number);
   if (['post', 'preview'].includes(kind) && (!/^\d+\.\d+\.\d+$/.test(device.version) || version[0] < 1 || (version[0] === 1 && version[1] === 0 && version[2] < 4))) fail('Cập nhật chương trình Windows lên 1.0.4 để xem trước và đăng bài', 409);
+  // Posting opens each account's own browser profile by itself (saved login, or it logs in).
+  if (kind === 'post' && !atLeast(device.version, [1, 0, 17])) fail('Cập nhật chương trình Windows lên 1.0.17 để đăng bài tự mở trình duyệt', 409);
+  // A saved scenario: one shared folder split across the selected accounts (each video once).
+  const scenario = kind === 'post' && b.scenarioId != null
+    ? (await db.select().from(postScenarios).where(and(eq(postScenarios.id, id(b.scenarioId)), eq(postScenarios.ownerUserId, owner))))[0] ?? fail('Không tìm thấy kịch bản', 404)
+    : null;
   const targets = kind === "check_proxy" ? [id(b.proxyId)] : ids(b.ids);
   const outstanding = await db.select({ id: jobs.id }).from(jobs).where(and(eq(jobs.deviceId, deviceId), inArray(jobs.state, pending)));
   if (outstanding.length + targets.length > 40) fail("Hàng đợi đầy. Hãy đợi hoặc hủy lệnh cũ.", 409);
@@ -332,7 +373,7 @@ export async function queue(owner: number, b: Record<string, unknown>) {
     groupIds.length ? db.select({ id: groups.id, proxyId: groups.browserProxyId }).from(groups).where(and(eq(groups.ownerUserId, owner), inArray(groups.id, groupIds))) : Promise.resolve([]),
     accountIds.length ? db.select().from(profiles).where(inArray(profiles.accountId, accountIds)) : Promise.resolve([]),
     accountIds.length ? db.select({ accountId: jobs.accountId, kind: jobs.kind, ownerUserId: jobs.ownerUserId }).from(jobs).where(and(inArray(jobs.accountId, accountIds), inArray(jobs.state, active))) : Promise.resolve([]),
-    (kind === 'post' || kind === 'preview') && accountIds.length ? db.select().from(browserPosting).where(and(eq(browserPosting.ownerUserId, owner), eq(browserPosting.deviceId, deviceId), inArray(browserPosting.accountId, accountIds))) : Promise.resolve([]),
+    (kind === 'post' || kind === 'preview') && !scenario && accountIds.length ? db.select().from(browserPosting).where(and(eq(browserPosting.ownerUserId, owner), eq(browserPosting.deviceId, deviceId), inArray(browserPosting.accountId, accountIds))) : Promise.resolve([]),
   ]);
   const groupProxy = new Map(groupRows.map(g => [g.id, g.proxyId]));
   const proxyIds = [...new Set([
@@ -365,25 +406,41 @@ export async function queue(owner: number, b: Record<string, unknown>) {
         payload = JSON.stringify({ durationMs, likeRate });
       }
       if (kind === 'post' || kind === 'preview') {
-        if (kind === 'post' && (!profile || profile.deviceId !== deviceId || profile.status !== 'logged_in')) fail('Mở trình duyệt và xác minh đúng tài khoản trước khi đăng', 409);
-        const settings = postingByAccount.get(target) ?? fail('Chưa gán thư mục trên máy này', 409);
-        if (busy(target, kind, false)) fail('Tài khoản đang có lệnh đăng bài', 409);
+        // No need to open the window first: the post job reuses an open window or opens the profile.
+        const settings = scenario ? { folder: scenario.folder, caption: scenario.caption } : postingByAccount.get(target) ?? fail('Chưa gán thư mục trên máy này', 409);
+        if (busy(target, kind, false) || inserts.some(j => j.accountId === target)) fail('Tài khoản đang có lệnh đăng bài', 409);
         payload = JSON.stringify({ folder: settings.folder, caption: settings.caption });
         if (kind === 'post') {
           // Post the next unused video(s) in the folder: `perAccount` of them per account. Post now,
           // or schedule (a specific time, or random minutes inside a daily window), and optionally
           // delete each file after it succeeds. scheduleAts holds one time per post (null = now).
-          const deleteAfter = b.deleteAfter === true;
-          const count = Math.min(10, Math.max(1, Math.floor(Number(b.perAccount) || 1)));
-          const mode = typeof b.scheduleMode === 'string' ? b.scheduleMode : 'now';
+          const deleteAfter = scenario ? scenario.deleteAfter === 1 : b.deleteAfter === true;
+          const count = Math.min(10, Math.max(1, Math.floor(Number(scenario ? scenario.perAccount : b.perAccount) || 1)));
+          const mode = scenario ? scenario.timeMode : typeof b.scheduleMode === 'string' ? b.scheduleMode : 'now';
           const accountOffset = result.length * 60; // stagger accounts 1 phút
           const scheduleAts: Array<number | null> = [];
-          if (mode === 'at') {
+          const dayEpoch = Math.floor(Number(b.dayEpoch)); // the browser's local midnight today
+          if (scenario && mode === 'time') {
+            // A fixed time of day: the next one at least 5 minutes away (today, else tomorrow).
+            if (!Number.isFinite(dayEpoch)) fail('Thiếu ngày đăng', 400);
+            let at = dayEpoch + (scenario.atMin ?? 0) * 60;
+            if (at < now() + 300) at += 86400;
+            for (let i = 0; i < count; i++) scheduleAts.push(at + accountOffset + i * 600); // mỗi bài cách nhau 10 phút
+          } else if (scenario && mode === 'window') {
+            // Random minutes inside the daily window, spread evenly: what is left of today's window,
+            // or tomorrow's if today's is (nearly) over.
+            if (!Number.isFinite(dayEpoch)) fail('Thiếu ngày đăng', 400);
+            const s = scenario.startMin ?? 0, e2 = scenario.endMin ?? 1440;
+            let day = dayEpoch, from = Math.max(s, Math.ceil((now() + 600 - day) / 60));
+            if (from >= e2 - 5) { day += 86400; from = s; }
+            const slot = (e2 - from) / count;
+            for (let i = 0; i < count; i++) scheduleAts.push(day + Math.round((from + i * slot + Math.random() * slot) * 60));
+          } else if (mode === 'at') {
             const at = Math.floor(Number(b.scheduleAt));
             if (!Number.isFinite(at) || at < now() + 300) fail('Giờ lên lịch phải sau hiện tại ít nhất 5 phút', 400);
             for (let i = 0; i < count; i++) scheduleAts.push(at + accountOffset + i * 600); // mỗi bài cách nhau 10 phút
           } else if (mode === 'window') {
-            const dayEpoch = Math.floor(Number(b.dayEpoch)), s = Math.floor(Number(b.startMin)), e2 = Math.floor(Number(b.endMin));
+            const s = Math.floor(Number(b.startMin)), e2 = Math.floor(Number(b.endMin));
             if (!Number.isFinite(dayEpoch) || !(s >= 0 && e2 <= 1440 && s < e2)) fail('Khung giờ không hợp lệ', 400);
             const slot = (e2 - s) / count; // spread the posts evenly across the window, with jitter
             for (let i = 0; i < count; i++) {
@@ -396,11 +453,12 @@ export async function queue(owner: number, b: Record<string, unknown>) {
           const scheduled = scheduleAts.some(t => t !== null);
           if ((scheduled || deleteAfter) && !atLeast(device.version, [1, 0, 13])) fail('Cập nhật chương trình Windows lên 1.0.13 để lên lịch / xóa file', 409);
           if (count > 1 && !atLeast(device.version, [1, 0, 14])) fail('Cập nhật chương trình Windows lên 1.0.14 để đăng nhiều bài mỗi tài khoản', 409);
-          payload = JSON.stringify({ folder: settings.folder, caption: settings.caption, scheduleAt: scheduleAts[0], scheduleAts, deleteAfter });
+          // shared: the scenario's folder is one pool for every account (agent keeps one ledger per folder).
+          payload = JSON.stringify({ folder: settings.folder, caption: settings.caption, scheduleAt: scheduleAts[0], scheduleAts, deleteAfter, shared: !!scenario });
         }
       }
       inserts.push({ id: jobId, ownerUserId: owner, deviceId, kind, accountId: config ? target : null, proxyId: p?.id ?? null,
-        payload, configKey: config?.key ?? String(p?.revision), autofill: b.autofill === false ? 0 : 1, createdAt: now(), expiresAt: now() + (['open', 'hide', 'feed'].includes(kind) ? 3600 : 600) }); // open/hide/feed may wait for a free window
+        payload, configKey: config?.key ?? String(p?.revision), autofill: b.autofill === false ? 0 : 1, createdAt: now(), expiresAt: now() + (['open', 'hide', 'feed', 'post'].includes(kind) ? 3600 : 600) }); // these may wait for a free window
       result.push({ id: target, ok: true });
     } catch (e) { result.push({ id: target, ok: false, error: e instanceof AuthError ? e.message : "Đã có lệnh/phiên đang chạy cho tài khoản này" }); }
   }
@@ -446,15 +504,19 @@ export async function sync(device: Device, b: Record<string, unknown>) {
   const jobRows = reportIds.length ? await db.select().from(jobs).where(and(inArray(jobs.id, reportIds), eq(jobs.deviceId, device.id), eq(jobs.ownerUserId, device.ownerUserId), eq(jobs.state, "running"))) : [];
   const jobById = new Map(jobRows.map(j => [j.id, j]));
   const profileAccountIds = [...new Set(jobRows.map(j => j.accountId).filter((v): v is number => v !== null))];
-  const profileRows = profileAccountIds.length ? await db.select({ accountId: profiles.accountId, id: profiles.id, jobId: profiles.jobId, status: profiles.status }).from(profiles)
+  const profileRows = profileAccountIds.length ? await db.select({ accountId: profiles.accountId, id: profiles.id, jobId: profiles.jobId, status: profiles.status, loggedInAt: profiles.loggedInAt }).from(profiles)
     .where(and(inArray(profiles.accountId, profileAccountIds), eq(profiles.ownerUserId, device.ownerUserId))) : [];
   const profileByAccount = new Map(profileRows.map(p => [p.accountId, p]));
-  /** A status report that would not change the stored profile needs no write. */
+  /** A status report that would not change the stored profile needs no write (a signed-in
+   *  profile without its saved-login stamp still gets one). */
   const unchanged = (job: typeof jobRows[number], status: string, profileId: unknown) => {
     const p = profileByAccount.get(job.accountId!);
-    return !!p && p.status === status && p.jobId === job.id && p.id === String(profileId);
+    return !!p && p.status === status && p.jobId === job.id && p.id === String(profileId) && (status !== 'logged_in' || !!p.loggedInAt);
   };
-  const remember = (job: typeof jobRows[number], status: string) => { const p = profileByAccount.get(job.accountId!); if (p && p.jobId === job.id) p.status = status; };
+  const remember = (job: typeof jobRows[number], status: string) => { const p = profileByAccount.get(job.accountId!); if (p && p.jobId === job.id) { p.status = status; if (status === 'logged_in') p.loggedInAt = now(); } };
+  /** Profile update for a reported window status: signing in stamps the saved login (green icon);
+   *  the profile showing another account means this profile's saved login is not this account's. */
+  const statusPatch = (status: string) => ({ status, updatedAt: now(), ...(status === 'logged_in' ? { loggedInAt: now() } : status === 'wrong_account' ? { loggedInAt: null } : {}) });
   const finished = new Set<string>(); // jobs ended earlier in this batch: later reports for them are ignored (as before)
   for (const r of reports) {
     const job = jobById.get(String(r.jobId));
@@ -469,6 +531,15 @@ export async function sync(device: Device, b: Record<string, unknown>) {
           .where(and(eq(accounts.ownerUserId, device.ownerUserId), sql`lower(${accounts.username}) = ${handle.toLowerCase()}`, sql`${accounts.id} <> ${job.accountId}`)).limit(1);
         if (!taken) await db.update(accounts).set({ username: handle, updatedAt: new Date() })
           .where(and(eq(accounts.id, job.accountId), eq(accounts.ownerUserId, device.ownerUserId))).catch(() => {});
+      }
+      continue;
+    }
+    // How the login went when the agent opened this profile. Anything but signed-in means the
+    // profile has no usable saved login (an expired session it could not renew) → no green icon.
+    if (job.accountId && typeof r.login === 'string') {
+      if (!['logged_in', 'submitted'].includes(r.login)) {
+        await db.update(profiles).set({ loggedInAt: null }).where(and(eq(profiles.accountId, job.accountId), eq(profiles.jobId, job.id), eq(profiles.ownerUserId, device.ownerUserId)));
+        const p = profileByAccount.get(job.accountId); if (p && p.jobId === job.id) p.loggedInAt = null;
       }
       continue;
     }
@@ -498,7 +569,7 @@ export async function sync(device: Device, b: Record<string, unknown>) {
       }
     } else if (job.kind === 'feed') {
       const status = typeof r.status === "string" && statuses.includes(r.status) ? r.status : null;
-      if (status && !unchanged(job, status, r.profileId)) { await db.update(profiles).set({ status, updatedAt: now() }).where(and(eq(profiles.accountId, job.accountId!), eq(profiles.jobId, job.id), eq(profiles.ownerUserId, device.ownerUserId), eq(profiles.id, String(r.profileId)))); remember(job, status); }
+      if (status && !unchanged(job, status, r.profileId)) { await db.update(profiles).set(statusPatch(status)).where(and(eq(profiles.accountId, job.accountId!), eq(profiles.jobId, job.id), eq(profiles.ownerUserId, device.ownerUserId), eq(profiles.id, String(r.profileId)))); remember(job, status); }
       const progress = feedProgress(r.feed);
       if (progress) await db.update(jobs).set({ result: JSON.stringify(progress) }).where(eq(jobs.id, job.id));
       if (r.done === true) {
@@ -510,7 +581,7 @@ export async function sync(device: Device, b: Record<string, unknown>) {
     } else if (job.kind === 'hide') {
       // Window status (only when this job opened the profile) …
       const status = typeof r.status === "string" && statuses.includes(r.status) ? r.status : null;
-      if (status && !unchanged(job, status, r.profileId)) { await db.update(profiles).set({ status, updatedAt: now() }).where(and(eq(profiles.accountId, job.accountId!), eq(profiles.jobId, job.id), eq(profiles.ownerUserId, device.ownerUserId), eq(profiles.id, String(r.profileId)))); remember(job, status); }
+      if (status && !unchanged(job, status, r.profileId)) { await db.update(profiles).set(statusPatch(status)).where(and(eq(profiles.accountId, job.accountId!), eq(profiles.jobId, job.id), eq(profiles.ownerUserId, device.ownerUserId), eq(profiles.id, String(r.profileId)))); remember(job, status); }
       // … Studio progress …
       const progress = hideProgress(r.hide);
       if (progress) await db.update(jobs).set({ result: JSON.stringify(progress) }).where(eq(jobs.id, job.id));
@@ -522,14 +593,26 @@ export async function sync(device: Device, b: Record<string, unknown>) {
         finished.add(job.id);
       }
       else if (status && ["closed", "error", "interrupted"].includes(status)) { await db.update(jobs).set({ state: "error", error: status === "closed" ? "CLOSED" : code(r.error) }).where(eq(jobs.id, job.id)); finished.add(job.id); }
-    } else if (job.kind === "close" || job.kind === 'post') {
+    } else if (job.kind === 'post') {
+      // Like "Ẩn bài": the window status (only when this job opened the profile) and the outcome,
+      // with how many videos were posted. A window this job opened closes when the job ends.
+      const status = typeof r.status === "string" && statuses.includes(r.status) ? r.status : null;
+      if (status && !unchanged(job, status, r.profileId)) { await db.update(profiles).set(statusPatch(status)).where(and(eq(profiles.accountId, job.accountId!), eq(profiles.jobId, job.id), eq(profiles.ownerUserId, device.ownerUserId), eq(profiles.id, String(r.profileId)))); remember(job, status); }
+      const post = isRecord(r.post) ? { posted: Math.max(0, Math.min(10, Math.floor(Number(r.post.posted) || 0))), total: Math.max(0, Math.min(10, Math.floor(Number(r.post.total) || 0))), ...(typeof r.post.error === 'string' ? { error: code(r.post.error) } : {}) } : null;
+      if (r.done === true) {
+        await db.update(jobs).set({ state: r.error ? "error" : "done", error: r.error ? code(r.error) : null, ...(post ? { result: JSON.stringify(post) } : {}) }).where(eq(jobs.id, job.id));
+        await db.update(profiles).set({ status: "closed", updatedAt: now() }).where(and(eq(profiles.accountId, job.accountId!), eq(profiles.jobId, job.id), eq(profiles.ownerUserId, device.ownerUserId)));
+        finished.add(job.id);
+      }
+      else if (status && ["closed", "error", "interrupted"].includes(status)) { await db.update(jobs).set({ state: "error", error: status === "closed" ? "CLOSED" : code(r.error) }).where(eq(jobs.id, job.id)); finished.add(job.id); }
+    } else if (job.kind === "close") {
       if (r.done === true) { await db.update(jobs).set({ state: r.error ? "error" : "done", error: r.error ? code(r.error) : null }).where(eq(jobs.id, job.id)); finished.add(job.id); }
     } else {
       const status = typeof r.status === "string" && statuses.includes(r.status) ? r.status : null;
       if (!status) continue;
       // A revoked/relocated generation cannot update the new profile. Same status → nothing to write.
       if (!unchanged(job, status, r.profileId)) {
-        await db.update(profiles).set({ status, updatedAt: now() }).where(and(eq(profiles.accountId, job.accountId!), eq(profiles.jobId, job.id), eq(profiles.ownerUserId, device.ownerUserId), eq(profiles.id, String(r.profileId))));
+        await db.update(profiles).set(statusPatch(status)).where(and(eq(profiles.accountId, job.accountId!), eq(profiles.jobId, job.id), eq(profiles.ownerUserId, device.ownerUserId), eq(profiles.id, String(r.profileId))));
         remember(job, status);
       }
       if (["closed", "error", "interrupted"].includes(status)) { await db.update(jobs).set({ state: status === "closed" ? "done" : "error", error: status === "closed" ? null : code(r.error) }).where(eq(jobs.id, job.id)); finished.add(job.id); }
@@ -549,8 +632,8 @@ export async function sync(device: Device, b: Record<string, unknown>) {
     if (known.includes(j.id)) continue;
     if (j.kind === 'close') { picked.push(j); continue; } // closing never waits for a free slot
     if (slots <= 0) continue;
-    // Opening a window (open, or "Ẩn bài" without an open window) needs a free window.
-    const opens = j.kind === 'open' || ((j.kind === 'hide' || j.kind === 'feed') && !openProfiles.has(j.accountId!));
+    // Opening a window (open, or Ẩn bài / Lướt feed / Đăng bài without an open window) needs a free window.
+    const opens = j.kind === 'open' || ((j.kind === 'hide' || j.kind === 'feed' || j.kind === 'post') && !openProfiles.has(j.accountId!));
     if (opens && capacity <= 0) continue;
     if (picked.some(p => p.accountId !== null && p.accountId === j.accountId)) continue; // one job per account per round
     picked.push(j); slots--; if (opens) capacity--;
@@ -592,33 +675,34 @@ export async function claim(device: Device, jobId: string) {
     } else {
       const e = await effective(device.ownerUserId, j.accountId!);
       let [p] = await db.select().from(profiles).where(eq(profiles.accountId, j.accountId!));
-      // "Ẩn bài" reuses a window already open on this device (its open job still running);
-      // otherwise it opens the profile itself, exactly like an `open` job.
+      // Ẩn bài / Lướt feed / Đăng bài reuse a window already open on this device (its open job still
+      // running); otherwise they open the profile themselves, exactly like an `open` job.
+      const selfOpening = j.kind === 'hide' || j.kind === 'feed' || j.kind === 'post';
       let reuse = false;
-      if ((j.kind === 'hide' || j.kind === 'feed') && p && p.ownerUserId === device.ownerUserId && p.deviceId === device.id && p.status !== 'revoked' && p.jobId) {
+      if (selfOpening && p && p.ownerUserId === device.ownerUserId && p.deviceId === device.id && p.status !== 'revoked' && p.jobId) {
         const [current] = await db.select({ id: jobs.id }).from(jobs).where(and(eq(jobs.id, p.jobId), eq(jobs.state, 'running'), eq(jobs.deviceId, device.id)));
         reuse = !!current;
       }
-      const opens = j.kind === "open" || ((j.kind === 'hide' || j.kind === 'feed') && !reuse);
+      const opens = j.kind === "open" || (selfOpening && !reuse);
       if (opens && (e.key !== j.configKey || e.proxy?.enabled === 0)) fail("Cấu hình đã đổi; hãy mở lại", 409);
       if (opens) {
         if (p && p.ownerUserId === device.ownerUserId && p.status !== "revoked" && p.deviceId !== device.id) fail("Hồ sơ nằm trên máy khác", 409);
         if (!p || p.ownerUserId !== device.ownerUserId || p.status === "revoked") {
-          const fresh = { accountId: j.accountId!, ownerUserId: device.ownerUserId, deviceId: device.id, id: uuid(), status: "closed", updatedAt: now() };
+          // A brand-new profile has no saved TikTok login.
+          const fresh = { accountId: j.accountId!, ownerUserId: device.ownerUserId, deviceId: device.id, id: uuid(), status: "closed", updatedAt: now(), loggedInAt: null };
           await db.insert(profiles).values(fresh).onConflictDoUpdate({ target: profiles.accountId, set: fresh });
           [p] = await db.select().from(profiles).where(eq(profiles.accountId, j.accountId!));
         }
         await db.update(profiles).set({ jobId: j.id, status: "starting", proxyLabel: e.label, configKey: e.key, updatedAt: now() }).where(and(eq(profiles.accountId, j.accountId!), eq(profiles.ownerUserId, device.ownerUserId)));
       }
       if (!p || p.ownerUserId !== device.ownerUserId || p.deviceId !== device.id) fail("Không tìm thấy hồ sơ trên máy này", 409);
-      if (j.kind === 'post' && p.status !== 'logged_in') fail('Phiên chưa xác minh đúng tài khoản', 409);
       // Mail credentials go out only when opening a window with autofill — for reading the
       // emailed TikTok code when the account has no 2FA.
       const mail = opens && j.autofill ? {
         email: await decrypt(e.account.encEmail), mailPassword: await decrypt(e.account.encEmailPassword),
         recoveryEmail: await decrypt(e.account.encRecoveryEmail), mailRefreshToken: await decrypt(e.account.encMailToken), mailClientId: e.account.mailClientId,
       } : {};
-      payload = { accountId: j.accountId, profileId: p.id, username: e.account.username, password: opens && j.autofill ? await decrypt(e.account.encPassword) : null, twofa: opens && j.autofill ? await decrypt(e.account.enc2fa) : null, ...mail, autofill: !!j.autofill, proxy: opens ? await proxySecret(e.proxy) : null, ...(j.kind === 'post' ? JSON.parse(j.payload!) : {}), ...(j.kind === 'feed' && j.payload ? JSON.parse(j.payload) : {}), ...((j.kind === 'hide' || j.kind === 'feed') ? { reuse } : {}) };
+      payload = { accountId: j.accountId, profileId: p.id, username: e.account.username, password: opens && j.autofill ? await decrypt(e.account.encPassword) : null, twofa: opens && j.autofill ? await decrypt(e.account.enc2fa) : null, ...mail, autofill: !!j.autofill, proxy: opens ? await proxySecret(e.proxy) : null, ...(j.kind === 'post' ? JSON.parse(j.payload!) : {}), ...(j.kind === 'feed' && j.payload ? JSON.parse(j.payload) : {}), ...(selfOpening ? { reuse } : {}) };
     }
     const changed = await db.update(jobs).set({ state: "running" }).where(and(eq(jobs.id, j.id), inArray(jobs.state, ["claimed", "running"]))).returning({ id: jobs.id });
     if (!changed.length) fail("Lệnh đã bị hủy", 409);

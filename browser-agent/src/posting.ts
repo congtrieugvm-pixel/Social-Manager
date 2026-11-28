@@ -9,7 +9,12 @@ import { inEnglish } from './login.js';
 
 export async function reserveVideo(origin: string, job: Job) {
   if (!job.folder || !isAbsolute(job.folder)) throw new Error('FOLDER_INVALID');
-  const ledger = join(root, 'posting', siteKey(origin, job.ownerId), String(job.accountId));
+  // A scenario's folder is one pool shared by every account: one ledger per FOLDER, so each video
+  // goes to exactly one account (the 'wx' create below is atomic, even with windows in parallel).
+  // Otherwise each account keeps its own ledger for its own folder.
+  const ledger = job.shared
+    ? join(root, 'posting', siteKey(origin, job.ownerId), 'shared', createHash('sha256').update(job.folder.toLowerCase()).digest('hex').slice(0, 24))
+    : join(root, 'posting', siteKey(origin, job.ownerId), String(job.accountId));
   await mkdir(ledger, { recursive: true });
   let entries;
   try { entries = await readdir(job.folder, { withFileTypes: true }); }

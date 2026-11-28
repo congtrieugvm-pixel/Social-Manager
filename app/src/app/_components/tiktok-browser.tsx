@@ -2,17 +2,19 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
-import { Clapperboard, EyeOff, Globe, Loader2, Monitor, Play, Square } from "lucide-react";
+import { Clapperboard, EyeOff, Globe, Loader2, Monitor, Play, Send, Square } from "lucide-react";
 import { postJson, safeJson } from "@/lib/req-body";
 import { confirmDialog, notify } from "./notify";
+import { PostDialog } from "./post-dialog";
 
 // Browser actions for the TikTok accounts table: open the account's Camoufox
 // window on a connected Windows machine, close it, or "Ẩn bài" (switch every
 // public post to Only me). Setup — proxies, machines, history — stays on /browser.
 
-type Kind = "open" | "close" | "hide" | "feed";
+type Kind = "open" | "close" | "hide" | "feed" | "post";
 interface Device { id: string; name: string; version: string; lastSeenAt: number }
-interface Profile { accountId: number; deviceId: string; status: string; updatedAt: number }
+/** loggedInAt: when this profile last signed in to TikTok (null = no saved login). */
+interface Profile { accountId: number; deviceId: string; status: string; updatedAt: number; loggedInAt?: number | null }
 interface Job { id: string; kind: string; accountId: number | null; state: string; error: string | null; result: string | null; createdAt: number }
 interface Proxy { id: number; name: string; enabled: number }
 interface State { now: number; owner: number; devices: Device[]; profiles: Profile[]; jobs: Job[]; proxies?: Proxy[] }
@@ -29,8 +31,17 @@ const ERROR_TEXT: Record<string, string> = {
   HIDE_FAILED: "Chưa ẩn hết bài — chạy lại, bài đã riêng tư sẽ được bỏ qua",
   CLOSED: "Cửa sổ bị đóng trước khi xong", INTERRUPTED: "Đã dừng giữa chừng", CONFIG_CHANGED: "Cấu hình đổi — gửi lại lệnh",
   PROFILE_BUSY: "Hồ sơ đang bận hoặc còn khóa", PROXY_FAILED: "Proxy lỗi trên máy Windows", BROWSER_FAILED: "Không mở được trình duyệt",
+  POST_MANUAL: "Chưa đăng nhập được hoặc không vào được trang đăng bài — mở trình duyệt kiểm tra rồi đăng lại",
+  POST_UNKNOWN: "Đã bấm Đăng nhưng chưa thấy TikTok xác nhận — kiểm tra trang cá nhân trước khi đăng lại",
+  POST_SCHEDULE_MANUAL: "Không đặt được giờ lên lịch — đã dừng để không đăng sai giờ",
+  FOLDER_EMPTY: "Thư mục đã hết video chưa đăng", FOLDER_INVALID: "Không tìm thấy thư mục trên máy Windows",
 };
-const KIND_TEXT: Record<Kind, string> = { open: "mở trình duyệt", close: "đóng trình duyệt", hide: "ẩn bài", feed: "lướt feed" };
+const KIND_TEXT: Record<Kind, string> = { open: "mở trình duyệt", close: "đóng trình duyệt", hide: "ẩn bài", feed: "lướt feed", post: "đăng bài" };
+interface PostResult { posted: number; total: number; error?: string }
+function parsePost(job?: Job): PostResult | null {
+  if (!job?.result) return null;
+  try { return JSON.parse(job.result) as PostResult; } catch { return null; }
+}
 
 const versionAtLeast = (v: string, min: [number, number, number]) => {
   if (!/^\d+\.\d+\.\d+$/.test(v)) return false;
@@ -118,6 +129,9 @@ export function useTikTokBrowser(usernames: (id: number) => string | undefined) 
       const open = latest.get(`${id}:open`);
       const feed = latest.get(`${id}:feed`);
       const feedActive = !!feed && ACTIVE.includes(feed.state);
+      const post = latest.get(`${id}:post`);
+      const postActive = !!post && ACTIVE.includes(post.state);
+      const pr = parsePost(post);
       const fr = parseFeed(feed);
       const hideActive = !!hide && ACTIVE.includes(hide.state);
       const hasWindow = !!profile && OPEN_STATUSES.includes(profile.status);
@@ -132,6 +146,10 @@ export function useTikTokBrowser(usernames: (id: number) => string | undefined) 
         view = { tone: "warn", busy: true, hasWindow, hiding: true, pendingJobIds,
           label: hide!.state === "running" ? (r ? `Đang ẩn bài · ${r.changed} đã ẩn` : "Đang ẩn bài") : "Chờ máy ẩn bài",
           detail: r?.message || "Máy Windows rảnh có thể mất 15 giây để nhận lệnh" };
+      } else if (postActive) {
+        view = { tone: "warn", busy: true, hasWindow, hiding: false, pendingJobIds,
+          label: post!.state === "running" ? "Đang đăng bài" : "Chờ máy đăng bài",
+          detail: post!.state === "running" ? "Máy Windows đang mở trình duyệt và đăng video" : "Máy rảnh có thể mất 15 giây để nhận lệnh" };
       } else if (open && ["queued", "claimed"].includes(open.state)) {
         view = { tone: "warn", busy: true, hasWindow, hiding: false, pendingJobIds, label: "Chờ máy mở trình duyệt" };
       } else if (hasWindow) {
@@ -144,6 +162,13 @@ export function useTikTokBrowser(usernames: (id: number) => string | undefined) 
           : { tone: "danger", busy: false, hasWindow, hiding: false, pendingJobIds, label: "Ẩn bài chưa xong", detail: (hide.error && ERROR_TEXT[hide.error]) || r.message };
       } else if (hide && hide.state === "error") {
         view = { tone: "danger", busy: false, hasWindow, hiding: false, pendingJobIds, label: "Ẩn bài lỗi", detail: (hide.error && ERROR_TEXT[hide.error]) || undefined };
+      } else if (post && post.state === "done") {
+        const full = !pr || pr.posted >= pr.total;
+        view = { tone: full ? "good" : "warn", busy: false, hasWindow, hiding: false, pendingJobIds,
+          label: pr ? `Đã đăng ${pr.posted}/${pr.total} bài` : "Đã đăng bài",
+          detail: !full && pr?.error ? `Dừng sớm: ${ERROR_TEXT[pr.error] ?? pr.error}` : undefined };
+      } else if (post && post.state === "error") {
+        view = { tone: "danger", busy: false, hasWindow, hiding: false, pendingJobIds, label: "Đăng bài lỗi", detail: (post.error && ERROR_TEXT[post.error]) || undefined };
       }
       if (view) map.set(id, view);
     }
@@ -192,6 +217,7 @@ export function useTikTokBrowser(usernames: (id: number) => string | undefined) 
       });
       if (!ok) return;
     }
+    if (kind === "post" && !versionAtLeast(device.version, [1, 0, 17])) { notify.warn("Cập nhật chương trình Windows lên 1.0.17 để đăng bài tự mở trình duyệt."); return; }
     setSending(kind);
     const failed: string[] = [];
     let sent = 0;
@@ -210,7 +236,9 @@ export function useTikTokBrowser(usernames: (id: number) => string | undefined) 
     } finally {
       setSending(null);
     }
-    if (sent) notify.success(`Đã gửi lệnh ${KIND_TEXT[kind]} cho ${sent} tài khoản${kind === "close" ? "" : ". Máy rảnh có thể mất 15 giây để nhận"}.`);
+    if (sent) notify.success(kind === "post"
+      ? `Đã gửi lệnh đăng bài cho ${sent} tài khoản. Máy sẽ tự mở trình duyệt (dùng đăng nhập đã lưu), đăng rồi đóng lại.`
+      : `Đã gửi lệnh ${KIND_TEXT[kind]} cho ${sent} tài khoản${kind === "close" ? "" : ". Máy rảnh có thể mất 15 giây để nhận"}.`);
     if (failed.length) notify.error(failed.slice(0, 3).join(" · ") + (failed.length > 3 ? ` · và ${failed.length - 3} lỗi khác` : ""));
     await refresh().catch(() => {});
   }, [device, sending, usernames, views, refresh]);
@@ -222,10 +250,11 @@ export function useTikTokBrowser(usernames: (id: number) => string | undefined) 
 }
 export type TikTokBrowser = ReturnType<typeof useTikTokBrowser>;
 
-/** Selection-bar group: machine picker + Mở / Ẩn bài / Đóng. */
+/** Selection-bar group: machine picker + Mở / Đăng bài / Ẩn bài / Lướt feed / Đóng. */
 export function BrowserBulkActions({ browser, ids }: { browser: TikTokBrowser; ids: number[] }) {
   const { state, online, device, deviceId, setDeviceId, run, sending } = browser;
   const [feedMin, setFeedMin] = useState(5);
+  const [posting, setPosting] = useState(false);
   const noMachine = !!state && !online.length;
   const reason = !state ? "Đang tải trạng thái máy Windows…" : noMachine ? "Chưa có máy Windows online" : !device ? "Chọn máy Windows" : "";
   const busy = (k: Kind) => sending === k;
@@ -251,6 +280,16 @@ export function BrowserBulkActions({ browser, ids }: { browser: TikTokBrowser; i
       <button className="btn" disabled={!!reason || !!sending} title={reason || "Mở cửa sổ TikTok của các tài khoản đã chọn"} onClick={() => void run("open", ids)}>
         {busy("open") ? <Loader2 size={15} className="spin" aria-hidden="true" /> : <Play size={15} aria-hidden="true" />}Mở trình duyệt
       </button>
+      <button className="btn btn-primary" disabled={!!reason || !!sending} title={reason || "Chọn kịch bản rồi đăng cho các tài khoản đã chọn — máy tự mở trình duyệt, không cần mở trước"} onClick={() => setPosting(true)}>
+        {busy("post") ? <Loader2 size={15} className="spin" aria-hidden="true" /> : <Send size={15} aria-hidden="true" />}Đăng bài
+      </button>
+      {posting && device && (
+        <PostDialog count={ids.length} deviceName={device.name} onClose={() => setPosting(false)}
+          onPost={async (scenarioId) => {
+            const midnight = new Date(); midnight.setHours(0, 0, 0, 0); // times are this browser's local day
+            await run("post", ids, { scenarioId, dayEpoch: Math.floor(midnight.getTime() / 1000) });
+          }} />
+      )}
       <button className="btn" disabled={!!reason || !!sending} title={reason || "Chuyển toàn bộ bài công khai sang Chỉ mình tôi"} onClick={() => void run("hide", ids)}>
         {busy("hide") ? <Loader2 size={15} className="spin" aria-hidden="true" /> : <EyeOff size={15} aria-hidden="true" />}Ẩn bài
       </button>
@@ -269,16 +308,22 @@ export function BrowserBulkActions({ browser, ids }: { browser: TikTokBrowser; i
   );
 }
 
-/** Browser icon next to the username for accounts that already have a browser profile on a
- *  Windows machine. Green while its window is open and signed in; amber while open but not yet
- *  verified; grey when the profile is saved but the window is closed. Hidden if never opened. */
+/** Browser icon next to the username for accounts that have a browser profile on a Windows
+ *  machine. Green: its TikTok login is saved in that browser (opening it won't need a login),
+ *  whether the window is open or closed. Amber: window open but not signed in yet. Grey: a
+ *  profile exists but has no saved login. Hidden if the account never had a browser. */
 export function BrowserBadge({ profile }: { profile?: Profile }) {
   if (!profile || profile.status === "revoked") return null;
   const open = OPEN_STATUSES.includes(profile.status);
-  const tone = !open ? "" : profile.status === "logged_in" ? " good" : " warn";
-  const label = open
-    ? `Có trình duyệt · đang mở (${STATUS_LABEL[profile.status] ?? profile.status})`
-    : "Có trình duyệt · hồ sơ đã lưu, cửa sổ đang đóng";
+  const signingIn = open && profile.status !== "logged_in";
+  const saved = !signingIn && (profile.status === "logged_in" || !!profile.loggedInAt);
+  const tone = signingIn ? " warn" : saved ? " good" : "";
+  const since = profile.loggedInAt ? new Date(profile.loggedInAt * 1000).toLocaleString("vi-VN", { dateStyle: "short", timeStyle: "short" }) : "";
+  const label = signingIn
+    ? `Trình duyệt đang mở · ${STATUS_LABEL[profile.status] ?? profile.status}`
+    : saved
+      ? `Đã lưu đăng nhập trong trình duyệt${open ? " · đang mở" : " — mở lên không cần đăng nhập lại"}${since ? ` (từ ${since})` : ""}`
+      : "Có trình duyệt nhưng chưa lưu đăng nhập — lần mở tới sẽ tự đăng nhập";
   return (
     <span className={`tb-browser${tone}`} title={label} aria-label={label} role="img">
       <Globe size={13} aria-hidden="true" />

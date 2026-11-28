@@ -31,6 +31,18 @@ test('without a saved session the login form is opened directly (no home-page re
   assert.equal(urls[0], 'https://www.tiktok.com/login/phone-or-email/email?lang=en');
   assert.ok(urls.every(u => u.includes('/login/')), 'never visits the home page first');
 });
+test('a shared scenario folder gives each video to exactly one account, even in parallel', async () => {
+  const folder = await mkdtemp(join(tmpdir(), 'sm-shared-fixture-'));
+  for (const n of ['01', '02', '03']) await writeFile(join(folder, `${n}.mp4`), 'fixture');
+  const base = { kind: 'post', ownerId: Date.now(), folder, shared: true };
+  // Three accounts reserve at the same moment: three different files, then the pool is empty.
+  const picks = await Promise.all([1, 2, 3].map(accountId => reserveVideo('https://fixture.invalid', { ...base, id: `j${accountId}`, accountId })));
+  assert.deepEqual(picks.map(p => p.video).sort(), ['01', '02', '03'].map(n => join(folder, `${n}.mp4`)));
+  await assert.rejects(reserveVideo('https://fixture.invalid', { ...base, id: 'j4', accountId: 4 }), /FOLDER_EMPTY/);
+  // Without `shared`, each account still has its own ledger for the same folder.
+  const own = await reserveVideo('https://fixture.invalid', { ...base, shared: false, id: 'j5', accountId: 5 });
+  assert.equal(own.video, join(folder, '01.mp4'));
+});
 test('posting takes one file, skips reserved files per account and records confirmation', async () => {
   const folder = await mkdtemp(join(tmpdir(), 'sm-post-fixture-'));
   await writeFile(join(folder, '01.mp4'), 'fixture');

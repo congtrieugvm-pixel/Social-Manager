@@ -23,6 +23,15 @@ export const browserProfiles = sqliteTable("browser_profiles", {
   id: text("id").notNull(), deviceId: text("device_id").notNull(), jobId: text("job_id"),
   status: text("status").notNull().default("closed"), updatedAt: integer("updated_at").notNull(),
   proxyLabel: text("proxy_label").notNull().default("Trực tiếp"), configKey: text("config_key"),
+  /** When this profile last signed in to TikTok; null = no saved login. */
+  loggedInAt: integer("logged_in_at"),
+});
+export const postScenarios = sqliteTable("post_scenarios", {
+  id: integer("id").primaryKey({ autoIncrement: true }), ownerUserId: integer("owner_user_id").notNull(),
+  name: text("name").notNull(), folder: text("folder").notNull(), caption: text("caption").notNull().default(""),
+  perAccount: integer("per_account").notNull().default(1),
+  timeMode: text("time_mode").notNull().default("now"), atMin: integer("at_min"), startMin: integer("start_min"), endMin: integer("end_min"),
+  deleteAfter: integer("delete_after").notNull().default(0), updatedAt: integer("updated_at").notNull(),
 });
 export const browserJobs = sqliteTable("browser_jobs", {
   result: text('result'),
