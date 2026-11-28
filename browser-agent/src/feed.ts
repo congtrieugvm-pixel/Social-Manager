@@ -89,12 +89,20 @@ async function likeCurrent(page: Page): Promise<boolean> {
   return true;
 }
 
-/** Scroll to the next video the way a person does. */
+/** Go to the next video the way a person does: TikTok's web feed uses a "next" arrow button. */
 async function nextVideo(page: Page) {
-  const v = viewport(page);
-  await moveCursor(page, rand(v.width * 0.45, v.width * 0.55), rand(v.height * 0.5, v.height * 0.6));
-  await page.mouse.wheel(0, rand(300, 600)).catch(() => {});
-  await page.keyboard.press('ArrowDown').catch(() => {});
+  const next = page.locator('[data-e2e="feed-navigation-next"]').first();
+  const box = await next.isVisible().catch(() => false) ? await next.boundingBox().catch(() => null) : null;
+  if (box) {
+    await moveCursor(page, box.x + box.width / 2, box.y + box.height / 2);
+    await clickFx(page);
+    await next.click({ timeout: 4000 }).catch(() => {});
+  } else {
+    const v = viewport(page);
+    await moveCursor(page, rand(v.width * 0.45, v.width * 0.55), rand(v.height * 0.5, v.height * 0.6));
+    await page.mouse.wheel(0, rand(300, 600)).catch(() => {});
+    await page.keyboard.press('ArrowDown').catch(() => {});
+  }
   await sleep(rand(500, 1100));
 }
 
