@@ -5,7 +5,6 @@ import { createHash } from 'node:crypto';
 import type { Session, Job } from './browser.js';
 import type { Operation } from './operation.js';
 import { root, siteKey, saveJson } from './storage.js';
-import { observe } from './login.js';
 
 export async function reserveVideo(origin: string, job: Job) {
   if (!job.folder || !isAbsolute(job.folder)) throw new Error('FOLDER_INVALID');
@@ -39,7 +38,9 @@ export async function postVideo(origin: string, session: Session, job: Job, oper
   try {
     await page.goto('https://www.tiktok.com/tiktokstudio/upload', { waitUntil: 'domcontentloaded', timeout: 45000 });
     operation.check();
-    if (await observe(page, job.username!) !== 'logged_in') throw new Error('POST_MANUAL');
+    // TikTok Studio has no site profile-icon to read, so identity was proven at session open
+    // (session.inspect on the main tab). Here, only guard against a logged-out redirect.
+    if (new URL(page.url()).pathname.startsWith('/login')) throw new Error('POST_MANUAL');
     const input = page.locator('input[type="file"]').first();
     await input.waitFor({ state: 'attached', timeout: 30000 });
     await input.setInputFiles(item.video);
@@ -59,12 +60,17 @@ export async function postVideo(origin: string, session: Session, job: Job, oper
       operation.check(); await new Promise(resolve => setTimeout(resolve, 1000));
     }
     operation.check();
-    if (await observe(page, job.username!) !== 'logged_in' || !await button.isEnabled()) throw new Error('POST_MANUAL');
+    // Re-verify identity on the main-site tab (Studio can't show it) and that TikTok finished processing.
+    if (new URL(page.url()).pathname.startsWith('/login') || await session.inspect() !== 'logged_in' || !await button.isEnabled()) throw new Error('POST_MANUAL');
     // Persist before clicking. A crash/unknown result must never post the same file again automatically.
     await saveJson(item.receipt, { jobId: job.id, state: 'submitting', file: basename(item.video) });
     operation.check(); submitted = true;
     await button.click({ timeout: 10000 });
-    await page.getByText(/has been posted|Video posted|đã được đăng|Đã đăng video|has been scheduled|đã được lên lịch|scheduled for/i).first().waitFor({ timeout: 60000 });
+    // Success = either TikTok's confirmation text, or it leaves the upload form for the content
+    // manager (post-now and scheduled both redirect there; a live post shows the new item at top).
+    const confirmed = page.getByText(/has been posted|Video posted|đã được đăng|Đã đăng video|has been scheduled|đã được lên lịch|scheduled for/i).first().waitFor({ timeout: 60000 });
+    const left = page.waitForURL(u => { try { const p = new URL(u).pathname; return p.includes('/tiktokstudio') && !p.includes('/upload'); } catch { return false; } }, { timeout: 60000 });
+    await Promise.any([confirmed, left]);
     // Only now, with TikTok's confirmation, may we remove the source file.
     let deleted = false;
     if (job.deleteAfter) { try { await unlink(item.video); deleted = true; } catch { /* keep if delete fails */ } }
