@@ -46,11 +46,13 @@ export async function postVideo(origin: string, session: Session, job: Job, oper
     const caption = page.locator('[contenteditable="true"]').first();
     await caption.waitFor({ timeout: 90000 });
     await caption.fill(job.caption || basename(item.video, extname(item.video)));
+    await dismissOverlays(page);
     // Scheduled post: switch to Schedule and set the date/time BEFORE submitting. If the schedule
     // controls can't be set with confidence, fail safe (never post now instead of scheduling).
     const scheduling = typeof job.scheduleAt === 'number' && job.scheduleAt > 0;
     if (scheduling && !(await setSchedule(page, job.scheduleAt!, operation))) throw new Error('POST_SCHEDULE_MANUAL');
-    const button = page.getByRole('button', { name: scheduling ? /^(Schedule|Lên lịch|Đăng)$/ : /^(Post|Đăng)$/ }).first();
+    // The submit button keeps data-e2e="post_video_button" whether its label reads Post or Schedule.
+    const button = page.locator('[data-e2e="post_video_button"]').first();
     await button.waitFor({ timeout: 90000 });
     // Wait for TikTok to finish processing the selected file.
     for (let i = 0; i < 120 && !await button.isEnabled(); i++) {
@@ -76,25 +78,80 @@ export async function postVideo(origin: string, session: Session, job: Job, oper
   // Leave the upload/result tab open so the user can inspect confirmation or finish a challenge.
 }
 
-/** Switch the upload form to Schedule and set the date/time. Returns false (fail safe) if it
- *  cannot set it, so the caller never posts immediately when a schedule was requested. */
-async function setSchedule(page: Page, whenEpoch: number, operation: Operation): Promise<boolean> {
+const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
+const pad2 = (n: number) => String(n).padStart(2, '0');
+
+/** Dismiss TikTok Studio's first-run onboarding tooltips/modals (react-joyride, copyright
+ *  check, "new editing features") which otherwise intercept pointer events on the post form. */
+async function dismissOverlays(page: Page): Promise<void> {
+  for (let i = 0; i < 3; i++) {
+    let acted = false;
+    for (const name of [/^Got it$/i, /^Skip$/i, /^Not now$/i, /^Maybe later$/i, /^Close$/i]) {
+      const b = page.getByRole('button', { name }).first();
+      if (await b.isVisible().catch(() => false)) { await b.click({ timeout: 1500 }).catch(() => {}); acted = true; await sleep(300); }
+    }
+    if (!acted) break;
+  }
+}
+
+/** Switch the upload form to Schedule and set the date + time via TikTok Studio's custom
+ *  pickers (the inputs are readonly, so we drive the calendar and time list, not fill()).
+ *  Returns false (fail safe) if it cannot set it exactly, so the caller never posts now
+ *  when a schedule was requested. Exported for calibration tests. */
+export async function setSchedule(page: Page, whenEpoch: number, operation: Operation): Promise<boolean> {
   operation.check();
   const when = new Date(whenEpoch * 1000);
-  // Choose the "Schedule" radio/option in the "When to post" section.
-  const option = page.getByText(/^\s*(Schedule|Lên lịch|Hẹn giờ)\s*$/i).first();
-  if (!(await option.isVisible().catch(() => false))) return false;
-  await option.click({ timeout: 5000 }).catch(() => {});
-  await new Promise(r => setTimeout(r, 800));
-  const pad = (n: number) => String(n).padStart(2, '0');
-  const hhmm = `${pad(when.getHours())}:${pad(when.getMinutes())}`;
-  const mmddyyyy = `${pad(when.getMonth() + 1)}-${pad(when.getDate())}-${when.getFullYear()}`;
-  // TikTok's picker is a custom widget; try native-ish date/time inputs first.
-  const timeInput = page.locator('input[placeholder*="time" i], input[name*="time" i], [data-e2e*="schedule-time" i] input, input[value*=":"]').first();
-  const dateInput = page.locator('input[placeholder*="date" i], input[name*="date" i], [data-e2e*="schedule-date" i] input').first();
-  let okTime = false, okDate = false;
-  if (await timeInput.isVisible().catch(() => false)) { await timeInput.fill(hhmm).catch(() => {}); await timeInput.press('Enter').catch(() => {}); okTime = (await timeInput.inputValue().catch(() => '')).includes(hhmm.slice(0, 2)); }
-  if (await dateInput.isVisible().catch(() => false)) { await dateInput.fill(mmddyyyy).catch(() => {}); await dateInput.press('Enter').catch(() => {}); okDate = /\d/.test(await dateInput.inputValue().catch(() => '')); }
-  // Only proceed if both the date and time were accepted; otherwise fail safe.
-  return okTime && okDate;
+  let hh = when.getHours();
+  let mm = Math.round(when.getMinutes() / 5) * 5; // the time list only offers 5-minute steps
+  if (mm === 60) { mm = 0; hh = (hh + 1) % 24; }
+  const wantDate = `${when.getFullYear()}-${pad2(when.getMonth() + 1)}-${pad2(when.getDate())}`;
+  const wantTime = `${pad2(hh)}:${pad2(mm)}`;
+
+  // 1. Select the "Schedule" radio in the "When to post" section.
+  const radio = page.locator('input[name="postSchedule"][value="schedule"]').first();
+  if (!(await radio.count())) return false;
+  await radio.click({ force: true }).catch(() => {});
+  await sleep(1200);
+  // 2. First time scheduling, TikTok asks to allow saving the video — confirm with "Allow".
+  const allow = page.locator('.TUXModal button, [role="dialog"] button').filter({ hasText: /^(Allow|Đồng ý|Cho phép)$/i }).first();
+  if (await allow.isVisible().catch(() => false)) { await allow.click({ timeout: 3000 }).catch(() => {}); await sleep(1500); }
+  if (!(await radio.isChecked().catch(() => false))) return false;
+
+  const container = page.locator('[data-e2e="schedule_container"]').first();
+  const timeInput = container.locator('input[type="text"]').nth(0);
+  const dateInput = container.locator('input[type="text"]').nth(1);
+
+  // 3. Date: open the calendar, page to the target month, click the matching valid day.
+  await dateInput.click({ timeout: 4000 }).catch(() => {});
+  await sleep(700);
+  const cal = page.locator('.calendar-wrapper').first();
+  if (!(await cal.isVisible().catch(() => false))) return false;
+  const targetMonth = when.toLocaleString('en-US', { month: 'long' });
+  const targetYear = String(when.getFullYear());
+  for (let i = 0; i < 4; i++) {
+    const mt = (await cal.locator('.month-title').first().innerText().catch(() => '')).trim();
+    const yt = (await cal.locator('.year-title').first().innerText().catch(() => '')).trim();
+    if (mt === targetMonth && yt === targetYear) break;
+    await cal.locator('.arrow').nth(1).click({ timeout: 2000 }).catch(() => {}); // second arrow = next month
+    await sleep(500);
+  }
+  const day = cal.locator('span.day.valid').filter({ hasText: new RegExp(`^${when.getDate()}$`) }).first();
+  if (!(await day.count())) return false; // not a selectable (future, within window) day
+  await day.click({ timeout: 3000 }).catch(() => {});
+  await sleep(600);
+  if ((await dateInput.inputValue().catch(() => '')) !== wantDate) return false;
+
+  // 4. Time: open the time list, pick the hour (left column) then minute (right column).
+  await timeInput.click({ timeout: 4000 }).catch(() => {});
+  await sleep(700);
+  const picker = page.locator('.tiktok-timepicker-time-picker-container').first();
+  await picker.locator('.tiktok-timepicker-left').filter({ hasText: new RegExp(`^${pad2(hh)}$`) }).first().click({ timeout: 3000 }).catch(() => {});
+  await sleep(300);
+  await picker.locator('.tiktok-timepicker-right').filter({ hasText: new RegExp(`^${pad2(mm)}$`) }).first().click({ timeout: 3000 }).catch(() => {});
+  await sleep(400);
+  // Close the time popover and confirm both fields hold exactly what we asked for.
+  await page.locator('[data-e2e="schedule_container"] .title-v2').first().click({ timeout: 2000 }).catch(() => {});
+  await sleep(300);
+  return (await timeInput.inputValue().catch(() => '')) === wantTime
+    && (await dateInput.inputValue().catch(() => '')) === wantDate;
 }

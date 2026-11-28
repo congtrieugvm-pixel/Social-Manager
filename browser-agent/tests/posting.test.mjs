@@ -32,8 +32,8 @@ test('posting takes one file, skips reserved files per account and records confi
   const page = {
     url: () => 'https://www.tiktok.com/tiktokstudio/upload',
     goto: async () => {},
-    locator: selector => ({ first: () => ({ isVisible: async () => false, getAttribute: async () => '/@fixture', waitFor: async () => {}, setInputFiles: async path => { chosen = path; }, fill: async value => { caption = value; } }) }),
-    getByRole: () => ({ first: () => ({ waitFor: async () => {}, isEnabled: async () => true, click: async () => { clicks++; } }) }),
+    locator: selector => ({ first: () => ({ isVisible: async () => false, getAttribute: async () => '/@fixture', waitFor: async () => {}, isEnabled: async () => true, click: async () => { clicks++; }, setInputFiles: async path => { chosen = path; }, fill: async value => { caption = value; } }) }),
+    getByRole: () => ({ first: () => ({ waitFor: async () => {}, isVisible: async () => false, isEnabled: async () => true, click: async () => { clicks++; } }) }),
     getByText: () => ({ first: () => ({ waitFor: async () => {} }) }),
   };
   const session = { inspect: async () => 'logged_in', context: { newPage: async () => page } };
