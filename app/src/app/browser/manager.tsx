@@ -51,6 +51,13 @@ export default function BrowserManager() {
   const [editing, setEditing] = useState(false); const [proxy, setProxy] = useState(blankProxy);
   const [postFolder, setPostFolder] = useState('');
   const [postCaption, setPostCaption] = useState('');
+  const [postMode, setPostMode] = useState<'now' | 'at' | 'window'>('now');
+  const [postAt, setPostAt] = useState('');
+  const [postDate, setPostDate] = useState('');
+  const [postStart, setPostStart] = useState('09:00');
+  const [postEnd, setPostEnd] = useState('21:00');
+  const [deleteAfter, setDeleteAfter] = useState(false);
+  const toMin = (hhmm: string) => { const [h, m] = hhmm.split(':').map(Number); return (h || 0) * 60 + (m || 0); };
   const [postGroup, setPostGroup] = useState('');
   const [loadingPostGroup, setLoadingPostGroup] = useState(false);
   const groupRequest = useRef(0);
@@ -166,12 +173,26 @@ export default function BrowserManager() {
   const canPost = !busy && !loadingPostGroup && selected.length > 0 && readyCount === selected.length;
   async function publish() {
     if (!canPost) return;
+    const body: Record<string, unknown> = { kind: 'post', ids: selected, deviceId, deleteAfter };
+    let when = 'ngay bây giờ';
+    if (postMode === 'at') {
+      if (!postAt) { setError('Chọn ngày giờ đăng.'); return; }
+      const at = Math.floor(new Date(postAt).getTime() / 1000);
+      if (!Number.isFinite(at) || at < Math.floor(Date.now() / 1000) + 300) { setError('Giờ lên lịch phải sau hiện tại ít nhất 5 phút.'); return; }
+      body.scheduleMode = 'at'; body.scheduleAt = at; when = new Date(postAt).toLocaleString('vi-VN');
+    } else if (postMode === 'window') {
+      if (!postDate) { setError('Chọn ngày đăng.'); return; }
+      const s = toMin(postStart), e = toMin(postEnd);
+      if (!(s < e)) { setError('Khung giờ không hợp lệ.'); return; }
+      body.scheduleMode = 'window'; body.dayEpoch = Math.floor(new Date(postDate + 'T00:00').getTime() / 1000); body.startMin = s; body.endMin = e;
+      when = `ngày ${postDate}, ngẫu nhiên ${postStart}–${postEnd}`;
+    }
     const confirmed = await confirmDialog({
       title: 'Đăng video lên TikTok',
-      message: `Đăng 1 video tiếp theo cho ${selected.length} tài khoản đã chọn trên ${selectedDevice?.name}?`,
-      confirmLabel: 'Đăng video',
+      message: `Đăng 1 video tiếp theo cho ${selected.length} tài khoản trên ${selectedDevice?.name}, thời gian: ${when}.${deleteAfter ? ' File sẽ bị XÓA sau khi đăng thành công.' : ''}`,
+      confirmLabel: postMode === 'now' ? 'Đăng ngay' : 'Lên lịch',
     });
-    if (confirmed) await act('jobs', { kind: 'post', ids: selected, deviceId });
+    if (confirmed) await act('jobs', body);
   }
   function changeSelection(accountId: number, checked: boolean) {
     setPostGroup('');
@@ -283,8 +304,18 @@ export default function BrowserManager() {
           <div className={styles.publishBox}>
             <Send size={24} /><h3>Lượt đăng tiếp theo</h3>
             <div><strong>{selected.length}</strong><span>tài khoản đã chọn</span></div>
-            <p>Mỗi tài khoản đăng một video chưa dùng, theo thứ tự tên file trong thư mục đã gán.</p>
-            <button className="btn btn-primary" disabled={!canPost} onClick={() => void publish()}><Send size={16} />Đăng video tiếp theo</button>
+            <p>Mỗi tài khoản đăng một video chưa dùng (theo tên file). Đăng ngay hoặc hẹn giờ bằng lịch TikTok; có thể xóa file sau khi đăng.</p>
+            <div className={styles.row} style={{ gap: 6, flexWrap: 'wrap', justifyContent: 'center' }}>
+              <label className={styles.inlineLabel}>Thời gian<select value={postMode} onChange={e => setPostMode(e.target.value as 'now' | 'at' | 'window')}><option value="now">Đăng ngay</option><option value="at">Giờ cụ thể</option><option value="window">Ngẫu nhiên trong khung</option></select></label>
+            </div>
+            {postMode === 'at' && <label className={styles.inlineLabel}>Ngày giờ<input type="datetime-local" value={postAt} onChange={e => setPostAt(e.target.value)} /></label>}
+            {postMode === 'window' && <div className={styles.row} style={{ gap: 6, flexWrap: 'wrap', justifyContent: 'center' }}>
+              <label className={styles.inlineLabel}>Ngày<input type="date" value={postDate} onChange={e => setPostDate(e.target.value)} /></label>
+              <label className={styles.inlineLabel}>Từ<input type="time" value={postStart} onChange={e => setPostStart(e.target.value)} /></label>
+              <label className={styles.inlineLabel}>Đến<input type="time" value={postEnd} onChange={e => setPostEnd(e.target.value)} /></label>
+            </div>}
+            <label className={styles.inlineLabel} style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}><input type="checkbox" checked={deleteAfter} onChange={e => setDeleteAfter(e.target.checked)} />Xóa file sau khi đăng thành công</label>
+            <button className="btn btn-primary" disabled={!canPost} onClick={() => void publish()}><Send size={16} />{postMode === 'now' ? 'Đăng video tiếp theo' : 'Lên lịch đăng'}</button>
             {!canPost && <small>{!selected.length ? 'Chọn tài khoản trong mục Tài khoản hoặc chọn nhóm.' : 'Xem trạng thái từng tài khoản bên dưới để hoàn tất chuẩn bị.'}</small>}
             <button className="btn btn-quiet" disabled={!selected.length || !selectedDevice || busy || loadingPostGroup} onClick={() => void act('jobs', { kind: 'open', ids: selected, deviceId, autofill })}><Play size={15} />Mở phiên đã chọn</button>
           </div>

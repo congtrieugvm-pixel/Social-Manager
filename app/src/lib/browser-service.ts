@@ -303,16 +303,25 @@ export async function queue(owner: number, b: Record<string, unknown>) {
         if (existing) fail('Tài khoản đang có lệnh đăng bài', 409);
         payload = JSON.stringify({ folder: settings.folder, caption: settings.caption });
         if (kind === 'post') {
-          const choices = Array.isArray(b.choices) ? b.choices : [];
-          const choice = choices.find(item => item && typeof item === 'object' && item.accountId === target);
-          if (!choice || typeof choice.previewId !== 'string') fail('Xem trước và chọn video trước khi đăng', 409);
-          const [preview] = await db.select().from(jobs).where(and(eq(jobs.id, choice.previewId), eq(jobs.ownerUserId, owner), eq(jobs.deviceId, deviceId), eq(jobs.accountId, target), eq(jobs.kind, 'preview'), eq(jobs.state, 'done')));
-          if (!preview || preview.expiresAt <= now() || preview.configKey !== config?.key || preview.payload !== payload) fail('Xem trước đã hết hạn hoặc cấu hình đã đổi. Hãy xem trước lại.', 409);
-          const file = previewFiles(preview.result).find(file => file.key === choice.fileKey);
-          if (!file) fail('Video không có trong lượt xem trước', 409);
-          const caption = typeof choice.caption === 'string' ? choice.caption : settings.caption;
-          if (caption.length > 2200) fail('Nội dung tối đa 2200 ký tự');
-          payload = JSON.stringify({ folder: settings.folder, caption, fileKey: file.key, fileName: file.name, previewId: preview.id });
+          // Post the next unused video in the folder. Post now, or schedule (a specific time, or a
+          // random minute inside a daily window), and optionally delete the file after it succeeds.
+          const deleteAfter = b.deleteAfter === true;
+          const mode = typeof b.scheduleMode === 'string' ? b.scheduleMode : 'now';
+          let scheduleAt: number | null = null;
+          if (mode === 'at') {
+            const at = Math.floor(Number(b.scheduleAt));
+            if (!Number.isFinite(at) || at < now() + 300) fail('Giờ lên lịch phải sau hiện tại ít nhất 5 phút', 400);
+            scheduleAt = at + result.length * 60; // stagger accounts 1 phút
+          } else if (mode === 'window') {
+            const dayEpoch = Math.floor(Number(b.dayEpoch)), s = Math.floor(Number(b.startMin)), e2 = Math.floor(Number(b.endMin));
+            if (!Number.isFinite(dayEpoch) || !(s >= 0 && e2 <= 1440 && s < e2)) fail('Khung giờ không hợp lệ', 400);
+            let when = dayEpoch + (s + Math.floor(Math.random() * (e2 - s))) * 60;
+            if (when < now() + 300) when = now() + 600;
+            scheduleAt = when;
+          }
+          if (scheduleAt && scheduleAt > now() + 10 * 86400) fail('TikTok chỉ cho lên lịch trước tối đa ~10 ngày', 400);
+          if ((scheduleAt || deleteAfter) && !atLeast(device.version, [1, 0, 13])) fail('Cập nhật chương trình Windows lên 1.0.13 để lên lịch / xóa file', 409);
+          payload = JSON.stringify({ folder: settings.folder, caption: settings.caption, scheduleAt, deleteAfter });
         }
       }
       await db.insert(jobs).values({ id: jobId, ownerUserId: owner, deviceId, kind, accountId: config ? target : null, proxyId: p?.id ?? null,
