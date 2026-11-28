@@ -336,9 +336,8 @@ export default function BrowserManager() {
           {editing && <form className={styles.form} onSubmit={event => { event.preventDefault(); void act('proxies/save', proxy); }}>
             <h3>{proxy.id ? 'Sửa proxy' : 'Thêm proxy'}</h3>
             <label>Tên<input required value={proxy.name} onChange={event => setProxy({ ...proxy, name: event.target.value })} /></label>
-            <label>Địa chỉ<input required placeholder="http://host:port" value={proxy.server} onChange={event => setProxy({ ...proxy, server: event.target.value })} /></label>
-            <label>Username<input autoComplete="off" placeholder="Để trống để giữ nguyên" value={proxy.username} onChange={event => setProxy({ ...proxy, username: event.target.value })} /></label>
-            <label>Password<input type="password" autoComplete="new-password" placeholder="Để trống để giữ nguyên" value={proxy.password} onChange={event => setProxy({ ...proxy, password: event.target.value })} /></label>
+            <label className={styles.wide}>Proxy<input required placeholder="host:port@user@pass" value={proxy.server} onChange={event => setProxy({ ...proxy, server: event.target.value })} /></label>
+            <small className={styles.hint}>Dán cả chuỗi: <code>host:port@user@pass</code>. Cũng nhận <code>host:port</code>, <code>user:pass@host:port</code>, <code>http://…</code>, <code>socks5://…</code>{proxy.id ? ' — để trống phần user:pass thì giữ nguyên thông tin cũ.' : ''}</small>
             <label><input type="checkbox" checked={proxy.enabled} onChange={event => setProxy({ ...proxy, enabled: event.target.checked })} />Bật proxy</label>
             {!!proxy.id && <><label><input type="checkbox" checked={proxy.clearUsername} onChange={event => setProxy({ ...proxy, clearUsername: event.target.checked })} />Xóa username đã lưu</label><label><input type="checkbox" checked={proxy.clearPassword} onChange={event => setProxy({ ...proxy, clearPassword: event.target.checked })} />Xóa password đã lưu</label></>}
             <div className={styles.row}><button className="btn btn-primary" disabled={busy}>Lưu</button><button type="button" className="btn" disabled={busy} onClick={() => { setEditing(false); setProxy(blankProxy); }}>Hủy</button></div>

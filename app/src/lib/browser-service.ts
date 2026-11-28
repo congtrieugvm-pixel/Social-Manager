@@ -52,6 +52,36 @@ export function normalizeServer(value: unknown): string {
   if (port < 1 || port > 65535) fail("Port proxy phải từ 1 đến 65535");
   return `${u.protocol}//${u.hostname}:${port}`;
 }
+
+/** Parse a single pasted proxy string into server + credentials, so the user can paste one
+ *  value and save. Accepts: host:port@user@pass (the standard we show), host:port,
+ *  user:pass@host:port, host:port:user:pass, and scheme://[user:pass@]host:port. Default
+ *  scheme is http://. The caller still runs the result through normalizeServer(). */
+export function parseProxyInput(value: unknown): { server: string; username: string; password: string } {
+  const raw = str(value, 400).trim();
+  if (!raw) fail("Nhập proxy, ví dụ 1.2.3.4:8000@user@pass");
+  const splitCreds = (s: string): [string, string] => { const i = s.indexOf(":"); return i < 0 ? [s, ""] : [s.slice(0, i), s.slice(i + 1)]; };
+  const hasScheme = /^[a-z][a-z0-9+.-]*:\/\//i.test(raw);
+  if (hasScheme) {
+    let u: URL; try { u = new URL(raw); } catch { return { server: raw, username: "", password: "" }; }
+    return { server: `${u.protocol}//${u.hostname}${u.port ? ":" + u.port : ""}`, username: decodeURIComponent(u.username || ""), password: decodeURIComponent(u.password || "") };
+  }
+  const isHostPort = (s: string) => /^[^\s:@]+:\d{1,5}$/.test(s);
+  let hostPort = raw, username = "", password = "";
+  if (raw.includes("@")) {
+    const parts = raw.split("@");
+    if (parts.length >= 3) { hostPort = parts[0]; username = parts[1]; password = parts.slice(2).join("@"); }
+    else {
+      const [a, b] = parts;
+      if (isHostPort(a) && !isHostPort(b)) { hostPort = a; [username, password] = splitCreds(b); }
+      else { hostPort = b; [username, password] = splitCreds(a); }
+    }
+  } else {
+    const seg = raw.split(":");
+    if (seg.length >= 4) { hostPort = `${seg[0]}:${seg[1]}`; username = seg[2]; password = seg.slice(3).join(":"); }
+  }
+  return { server: `http://${hostPort}`, username, password };
+}
 export async function proxyFor(owner: number, proxyId: number) {
   const [p] = await db.select().from(proxies).where(and(eq(proxies.id, proxyId), eq(proxies.ownerUserId, owner)));
   if (!p) fail("Không tìm thấy proxy", 404); return p;
@@ -162,9 +192,15 @@ export async function savePosting(owner: number, b: Record<string, unknown>) {
 export async function saveProxy(owner: number, b: Record<string, unknown>) {
   const previous = b.id ? await proxyFor(owner, id(b.id)) : null;
   for (const field of ['username', 'password']) if (b[field] !== undefined && (typeof b[field] !== 'string' || (b[field] as string).length > 1024)) fail('Thông tin xác thực proxy không hợp lệ');
-  const values = { ownerUserId: owner, name: str(b.name), server: normalizeServer(b.server), enabled: b.enabled === false ? 0 : 1,
-    encUsername: b.clearUsername ? null : typeof b.username === "string" && b.username ? await encrypt(b.username) : previous?.encUsername ?? null,
-    encPassword: b.clearPassword ? null : typeof b.password === "string" && b.password ? await encrypt(b.password) : previous?.encPassword ?? null,
+  // The "Proxy" field may carry credentials inline (host:port@user@pass, user:pass@host:port, …).
+  // Prefer those; fall back to the separate username/password fields if still sent by older clients.
+  const parsed = parseProxyInput(b.server);
+  const username = parsed.username || (typeof b.username === "string" ? b.username : "");
+  const password = parsed.password || (typeof b.password === "string" ? b.password : "");
+  if (username.length > 1024 || password.length > 1024) fail('Thông tin xác thực proxy không hợp lệ');
+  const values = { ownerUserId: owner, name: str(b.name), server: normalizeServer(parsed.server), enabled: b.enabled === false ? 0 : 1,
+    encUsername: b.clearUsername ? null : username ? await encrypt(username) : previous?.encUsername ?? null,
+    encPassword: b.clearPassword ? null : password ? await encrypt(password) : previous?.encPassword ?? null,
     revision: (previous?.revision ?? 0) + 1 };
   if (values.server.startsWith('socks5:') && (values.encUsername || values.encPassword)) fail('SOCKS5 có xác thực chưa được hỗ trợ; dùng HTTP/HTTPS hoặc SOCKS5 không xác thực.');
   if (previous) await db.update(proxies).set(values).where(and(eq(proxies.id, previous.id), eq(proxies.ownerUserId, owner)));
