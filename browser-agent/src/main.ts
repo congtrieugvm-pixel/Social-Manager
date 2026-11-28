@@ -12,12 +12,13 @@ import { openSession, checkProxy, type Job, type Report, type Session } from './
 import { Operation } from './operation.js';
 import { readPassword } from './password.js';
 import { postVideo } from './posting.js';
+import { opensOwnWindow } from './jobs.js';
 import { hidePosts, waitForLogin, type HideProgress } from './hide.js';
 import { browseFeed, type FeedProgress } from './feed.js';
 import { startManager, openManagerWindow, ensureShortcut, type Tile } from './manager.js';
 import { ensureAutostart, disableAutostart, EXIT_NO_RESTART } from './autostart.js';
 
-const VERSION = '1.0.17';
+const VERSION = '1.0.18';
 const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
 async function api<T>(s: Pick<Settings, 'origin'> & Partial<Settings>, route: string, body: unknown): Promise<T> {
   const payload = JSON.stringify(body).replace(/[\u007f-\uffff]/g, c => '\\u' + c.charCodeAt(0).toString(16).padStart(4, '0'));
@@ -277,7 +278,9 @@ async function run() {
               reports.set(job.id, { jobId: job.id, done: true, ...(sessions.has(job.profileId!) ? { error: 'PROFILE_BUSY' } : {}) });
               continue;
             }
-            if (job.profileId && (job.kind === 'open' || (job.kind === 'hide' && !job.reuse))) allowed.add(job.profileId);
+            // `allowed` came from the sync BEFORE this claim: a job that opens its own window must
+            // allow its profile now, or its first check sees "not allowed" and stops (INTERRUPTED).
+            if (job.profileId && opensOwnWindow(job)) allowed.add(job.profileId);
             void execute(job);
           } catch { /* expired or cancelled meanwhile */ }
         }
