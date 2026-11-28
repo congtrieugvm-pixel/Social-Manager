@@ -1793,6 +1793,9 @@ details.menu[open] > summary { background: var(--bg-2); }
 .tb-status.warn { color: var(--warn); border-color: color-mix(in srgb, var(--warn) 35%, transparent); background: color-mix(in srgb, var(--warn) 8%, transparent); }
 .tb-status.danger { color: var(--danger); border-color: color-mix(in srgb, var(--danger) 35%, transparent); background: var(--danger-soft); }
 .tb-status .tb-dot.on { box-shadow: none; }
+.tb-browser { display: inline-flex; align-items: center; justify-content: center; width: 22px; height: 22px; flex: 0 0 auto; border-radius: 6px; border: 1px solid var(--line); background: var(--bg-1); color: var(--dim); cursor: default; vertical-align: middle; }
+.tb-browser.good { color: var(--good); border-color: color-mix(in srgb, var(--good) 40%, transparent); background: color-mix(in srgb, var(--good) 10%, transparent); }
+.tb-browser.warn { color: var(--warn); border-color: color-mix(in srgb, var(--warn) 40%, transparent); background: color-mix(in srgb, var(--warn) 10%, transparent); }
 .tb-status.warn .tb-dot.on { background: var(--warn); }
 .tb-status.danger .tb-dot.on { background: var(--danger); }
 .tb-menu { padding: 4px 4px 6px; margin: 2px 0 4px; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); }

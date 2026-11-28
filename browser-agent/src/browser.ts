@@ -10,6 +10,8 @@ import { MAIL_CLIENT_ID } from './mailauth.js';
 import type { Operation } from './operation.js';
 
 export const BROWSER_BUILD = 'official/158.0.1-beta.41';
+/** Every browser window runs in English, whatever country its proxy is in. */
+export const TIKTOK_LOCALE = 'en-US';
 export interface MailLogin { email?: string; mailPassword?: string | null; recoveryEmail?: string | null; mailRefreshToken?: string | null; mailClientId?: string | null }
 export interface Job extends MailLogin { id: string; kind: string; ownerId: number; expiresAt: number; accountId?: number; profileId?: string; username?: string; password?: string | null; twofa?: string | null; autofill?: boolean; folder?: string; caption?: string; proxy?: { server: string; username?: string; password?: string } | null; reuse?: boolean; durationMs?: number; likeRate?: number; scheduleAt?: number; scheduleAts?: Array<number | null>; deleteAfter?: boolean }
 /** A mailbox OAuth token captured during this login, to be stored on the account. */
@@ -54,8 +56,12 @@ export async function openSession(origin: string, job: Job, operation: Operation
       identity = { build: BROWSER_BUILD, preset }; await saveJson(identityFile, identity);
     }
     if (identity.build !== BROWSER_BUILD) throw new Error('BROWSER_FAILED');
+    // geoip makes the timezone/location match the proxy IP, but it also switches the browser
+    // language to the IP's country (Spanish on a Mexico IP, Korean on a Korea IP…), and the
+    // login automation reads English text. An explicit locale overrides only the language.
     context = await Camoufox({ persistent_context: true, user_data_dir: join(dir, 'data'), browser: BROWSER_BUILD,
-      fingerprint_preset: identity.preset, headless: false, proxy: job.proxy ?? undefined, geoip: job.proxy ? true : undefined });
+      fingerprint_preset: identity.preset, headless: false, proxy: job.proxy ?? undefined, geoip: job.proxy ? true : undefined,
+      locale: TIKTOK_LOCALE });
     const ownedContext = context;
     ownedContext.on('close', () => { closed = true; void unlink(lock).catch(() => {}); });
     await operation.own(() => ownedContext.close());

@@ -45,7 +45,7 @@ import { SkeletonRows } from "./_components/skeleton";
 import { DensityToggle } from "./_components/density-toggle";
 import { Sheet } from "./_components/sheet";
 import { HotmailConnect } from "./_components/hotmail-connect";
-import { BrowserBulkActions, BrowserMenuItems, BrowserRowStatus, useTikTokBrowser } from "./_components/tiktok-browser";
+import { BrowserBadge, BrowserBulkActions, BrowserMenuItems, BrowserRowStatus, useTikTokBrowser } from "./_components/tiktok-browser";
 import { AccountProxy } from "./_components/account-proxy";
 
 interface Video {
@@ -1720,6 +1720,7 @@ export default function Dashboard() {
                       >
                         @{r.username}
                       </a>
+                      <BrowserBadge profile={browser.profiles.get(r.id)} />
                       {idleCfg.enabled && <IdleDaysBadge videos={r.lastVideos} cfg={idleCfg} />}
                       <BrowserRowStatus view={browser.views.get(r.id)} />
                     </div>
@@ -2092,7 +2093,7 @@ export default function Dashboard() {
                   >
                     <AccountAvatar src={r.avatarUrl} name={r.username} mobile />
                     <span className="m-text">
-                      <span className="m-title">@{r.username}</span>
+                      <span className="m-title">@{r.username} <BrowserBadge profile={browser.profiles.get(r.id)} /></span>
                       <span className="m-meta">
                         <b>{fmtNum(r.followerCount)}</b> follower
                         {r.videoCount != null && <> · <b>{fmtNum(r.videoCount)}</b> video</>}

@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
-import { Clapperboard, EyeOff, Loader2, Monitor, Play, Square } from "lucide-react";
+import { Clapperboard, EyeOff, Globe, Loader2, Monitor, Play, Square } from "lucide-react";
 import { postJson, safeJson } from "@/lib/req-body";
 import { confirmDialog, notify } from "./notify";
 
@@ -211,7 +211,10 @@ export function useTikTokBrowser(usernames: (id: number) => string | undefined) 
     await refresh().catch(() => {});
   }, [device, sending, usernames, views, refresh]);
 
-  return { state, online, device, deviceId, setDeviceId, views, run, sending };
+  /** Each account's browser profile (if it ever had one), for the icon next to the username. */
+  const profiles = useMemo(() => new Map((state?.profiles ?? []).map((p) => [p.accountId, p])), [state]);
+
+  return { state, online, device, deviceId, setDeviceId, views, profiles, run, sending };
 }
 export type TikTokBrowser = ReturnType<typeof useTikTokBrowser>;
 
@@ -259,6 +262,23 @@ export function BrowserBulkActions({ browser, ids }: { browser: TikTokBrowser; i
         {busy("close") ? <Loader2 size={15} className="spin" aria-hidden="true" /> : <Square size={14} aria-hidden="true" />}Đóng
       </button>
     </div>
+  );
+}
+
+/** Browser icon next to the username for accounts that already have a browser profile on a
+ *  Windows machine. Green while its window is open and signed in; amber while open but not yet
+ *  verified; grey when the profile is saved but the window is closed. Hidden if never opened. */
+export function BrowserBadge({ profile }: { profile?: Profile }) {
+  if (!profile || profile.status === "revoked") return null;
+  const open = OPEN_STATUSES.includes(profile.status);
+  const tone = !open ? "" : profile.status === "logged_in" ? " good" : " warn";
+  const label = open
+    ? `Có trình duyệt · đang mở (${STATUS_LABEL[profile.status] ?? profile.status})`
+    : "Có trình duyệt · hồ sơ đã lưu, cửa sổ đang đóng";
+  return (
+    <span className={`tb-browser${tone}`} title={label} aria-label={label} role="img">
+      <Globe size={13} aria-hidden="true" />
+    </span>
   );
 }
 

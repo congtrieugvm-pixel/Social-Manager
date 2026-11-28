@@ -5,6 +5,7 @@ import { createHash } from 'node:crypto';
 import type { Session, Job } from './browser.js';
 import type { Operation } from './operation.js';
 import { root, siteKey, saveJson } from './storage.js';
+import { inEnglish } from './login.js';
 
 export async function reserveVideo(origin: string, job: Job) {
   if (!job.folder || !isAbsolute(job.folder)) throw new Error('FOLDER_INVALID');
@@ -36,7 +37,7 @@ export async function postVideo(origin: string, session: Session, job: Job, oper
   const page = await session.context.newPage();
   let submitted = false;
   try {
-    await page.goto('https://www.tiktok.com/tiktokstudio/upload', { waitUntil: 'domcontentloaded', timeout: 45000 });
+    await page.goto(inEnglish('https://www.tiktok.com/tiktokstudio/upload'), { waitUntil: 'domcontentloaded', timeout: 45000 });
     operation.check();
     // TikTok Studio has no site profile-icon to read, so identity was proven at session open
     // (session.inspect on the main tab). Here, only guard against a logged-out redirect.

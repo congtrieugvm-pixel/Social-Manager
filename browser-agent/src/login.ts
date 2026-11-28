@@ -29,7 +29,11 @@ export async function observe(page: Page, expected: string): Promise<string> {
  */
 export interface LoginOutcome { result: 'logged_in' | 'submitted' | 'pending' | 'challenge' | 'rejected' | 'no_form' | 'no_password' | 'wrong_account'; error?: string }
 
-const LOGIN_URL = 'https://www.tiktok.com/login/phone-or-email/email';
+/** Ask TikTok for its English UI whatever the IP's country (the automation reads English text).
+ *  Pairs with the browser-wide en-US locale set when the window is launched. */
+export const inEnglish = (url: string) => url + (url.includes('?') ? '&' : '?') + 'lang=en';
+const HOME_URL = inEnglish('https://www.tiktok.com/');
+const LOGIN_URL = inEnglish('https://www.tiktok.com/login/phone-or-email/email');
 const ERROR_TEXT = /incorrect|wrong|try again|too many|maximum number|doesn['’]t exist|not registered|sai|không đúng|không chính xác|thử lại|quá nhiều|không tồn tại/i;
 const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 const onLoginPage = (page: Page) => { try { return new URL(page.url()).pathname.startsWith('/login'); } catch { return false; } };
@@ -182,7 +186,7 @@ async function signedInAs(page: Page, username: string, ms: number) {
 }
 
 export async function navigateAccount(page: Page, hasSession: boolean, username: string, password: string | null, autofill: boolean, check = () => {}, twofa: string | null = null, getMailCode?: MailCodeResolver): Promise<LoginOutcome> {
-  await page.goto('https://www.tiktok.com/', { timeout: 45000, waitUntil: 'domcontentloaded' }).catch(() => {});
+  await page.goto(HOME_URL, { timeout: 45000, waitUntil: 'domcontentloaded' }).catch(() => {});
   check();
   // A session cookie alone isn't proof: expired/revoked sessions keep their cookies.
   if (hasSession) {

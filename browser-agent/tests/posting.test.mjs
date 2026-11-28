@@ -16,12 +16,12 @@ const navPage = (signedIn, urls) => ({
 test('a session that the page confirms survives TikTok redirect without filling login', async () => {
   const urls = [];
   assert.deepEqual(await navigateAccount(navPage(true, urls), true, 'fixture', 'password', true), { result: 'logged_in' });
-  assert.deepEqual(urls, ['https://www.tiktok.com/']);
+  assert.deepEqual(urls, ['https://www.tiktok.com/?lang=en']);
 });
 test('an expired session cookie no longer skips the saved-credentials login', async () => {
   const urls = [];
   await navigateAccount(navPage(false, urls), true, 'fixture', 'password', true);
-  assert.deepEqual(urls, ['https://www.tiktok.com/', 'https://www.tiktok.com/login/phone-or-email/email']);
+  assert.deepEqual(urls, ['https://www.tiktok.com/?lang=en', 'https://www.tiktok.com/login/phone-or-email/email?lang=en']);
 });
 test('posting takes one file, skips reserved files per account and records confirmation', async () => {
   const folder = await mkdtemp(join(tmpdir(), 'sm-post-fixture-'));
