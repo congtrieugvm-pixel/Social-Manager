@@ -35,6 +35,7 @@ const ERROR_TEXT: Record<string, string> = {
   POST_UNKNOWN: "Đã bấm Đăng nhưng chưa thấy TikTok xác nhận — kiểm tra trang cá nhân trước khi đăng lại",
   POST_SCHEDULE_MANUAL: "Không đặt được giờ lên lịch — đã dừng để không đăng sai giờ",
   FOLDER_EMPTY: "Thư mục đã hết video chưa đăng", FOLDER_INVALID: "Không tìm thấy thư mục trên máy Windows",
+  UPLOAD_FAILED: "TikTok tải video lên không được (đã tự thử lại) hoặc quá chậm — thường do mạng/proxy; video được trả lại hàng chờ để đăng lần sau",
 };
 const KIND_TEXT: Record<Kind, string> = { open: "mở trình duyệt", close: "đóng trình duyệt", hide: "ẩn bài", feed: "lướt feed", post: "đăng bài" };
 interface PostResult { posted: number; total: number; error?: string }

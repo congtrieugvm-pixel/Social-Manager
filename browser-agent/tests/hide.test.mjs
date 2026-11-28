@@ -19,7 +19,7 @@ function fakeSession(states, { url = STUDIO_CONTENT } = {}) {
     },
     close: async () => { closed = true; },
   };
-  return { session: { context: { newPage: async () => page } }, calls, isClosed: () => closed };
+  return { session: { context: { pages: () => [page], newPage: async () => { throw new Error('must not open a new window'); } } }, calls, isClosed: () => closed };
 }
 
 test('runs the Studio engine, streams progress and returns the completed result', async () => {
@@ -34,7 +34,8 @@ test('runs the Studio engine, streams progress and returns the completed result'
   assert.equal('caption' in result, false, 'page data other than counters must not leave the machine');
   assert.equal(calls[0][1], STUDIO_CONTENT);
   assert.ok(seen.some(p => p.changed === 1));
-  assert.ok(isClosed(), 'the Studio tab is closed afterwards');
+  assert.equal(isClosed(), false, 'the account window itself is never closed');
+  assert.deepEqual(calls.at(-1), ['goto', 'https://www.tiktok.com/?lang=en'], 'it returns to TikTok home afterwards');
 });
 
 test('a redirect away from Studio (logged out) stops with HIDE_MANUAL', async () => {

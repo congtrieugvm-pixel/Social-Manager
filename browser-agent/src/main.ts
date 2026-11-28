@@ -18,7 +18,7 @@ import { browseFeed, type FeedProgress } from './feed.js';
 import { startManager, openManagerWindow, ensureShortcut, type Tile } from './manager.js';
 import { ensureAutostart, disableAutostart, EXIT_NO_RESTART } from './autostart.js';
 
-const VERSION = '1.0.19';
+const VERSION = '1.0.20';
 const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
 async function api<T>(s: Pick<Settings, 'origin'> & Partial<Settings>, route: string, body: unknown): Promise<T> {
   const payload = JSON.stringify(body).replace(/[\u007f-\uffff]/g, c => '\\u' + c.charCodeAt(0).toString(16).padStart(4, '0'));
@@ -223,7 +223,7 @@ async function run() {
         if (stopped || Date.now() - lastLease > 90000 || !allowed.has(job.profileId!)) await close(job.profileId!);
       }
     } catch (e) {
-      const error = e instanceof Error && ['PROFILE_BUSY', 'INTERRUPTED', 'FOLDER_EMPTY', 'FOLDER_INVALID', 'POST_UNKNOWN', 'POST_MANUAL', 'POST_SCHEDULE_MANUAL', 'HIDE_MANUAL', 'HIDE_FAILED', 'FEED_MANUAL', 'FEED_FAILED'].includes(e.message) ? e.message : job.proxy ? 'PROXY_FAILED' : 'BROWSER_FAILED';
+      const error = e instanceof Error && ['PROFILE_BUSY', 'INTERRUPTED', 'FOLDER_EMPTY', 'FOLDER_INVALID', 'POST_UNKNOWN', 'POST_MANUAL', 'POST_SCHEDULE_MANUAL', 'UPLOAD_FAILED', 'HIDE_MANUAL', 'HIDE_FAILED', 'FEED_MANUAL', 'FEED_FAILED'].includes(e.message) ? e.message : job.proxy ? 'PROXY_FAILED' : 'BROWSER_FAILED';
       // A window this job opened keeps reporting its status under job.id; give the outcome its own key.
       reports.set(sessions.get(job.profileId!)?.job.id === job.id ? `${job.id}:done` : job.id, { jobId: job.id, profileId: job.profileId, status: 'error', done: true, error });
     } finally { job.password = null; job.twofa = null; running.delete(job.id); }

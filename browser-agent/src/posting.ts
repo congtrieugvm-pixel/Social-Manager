@@ -2,7 +2,7 @@ import { readdir, stat, mkdir, readFile, writeFile, unlink } from 'node:fs/promi
 import type { Page } from 'playwright-core';
 import { join, extname, basename, isAbsolute } from 'node:path';
 import { createHash } from 'node:crypto';
-import type { Session, Job } from './browser.js';
+import { mainPage, type Session, type Job } from './browser.js';
 import type { Operation } from './operation.js';
 import { root, siteKey, saveJson } from './storage.js';
 import { inEnglish } from './login.js';
@@ -27,19 +27,49 @@ export async function reserveVideo(origin: string, job: Job) {
     const receipt = join(ledger, key + '.json');
     try {
       await writeFile(receipt, JSON.stringify({ jobId: job.id, state: 'reserved', file: file.name }), { flag: 'wx' });
-      return { video, receipt };
+      return { video, receipt, attempts: 0 };
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
     }
+    // A video that failed before TikTok ever got it ('retry') may be tried again, 3 times at most.
+    // Claim it under an exclusive lock file and re-read the receipt inside it, so two windows can
+    // never take the same one (the receipt itself is never absent, so fresh 'wx' reservations
+    // can't slip in either).
+    const readReceipt = () => readFile(receipt, 'utf8').then(t => JSON.parse(t) as { state?: string; attempts?: number }, () => null);
+    const retryable = (r: { state?: string; attempts?: number } | null) => r?.state === 'retry' && (r.attempts ?? 1) < MAX_ATTEMPTS;
+    if (!retryable(await readReceipt())) continue;
+    const lock = `${receipt}.lock`;
+    if (!(await takeLock(lock))) continue; // another window is claiming it
+    try {
+      const prev = await readReceipt();
+      if (!retryable(prev)) continue;
+      await writeFile(receipt, JSON.stringify({ jobId: job.id, state: 'reserved', file: file.name, attempts: prev!.attempts ?? 1 }));
+      return { video, receipt, attempts: prev!.attempts ?? 1 };
+    } finally { await unlink(lock).catch(() => {}); }
   }
   throw new Error('FOLDER_EMPTY');
+}
+const MAX_ATTEMPTS = 3;
+/** Create `lock` exclusively; a lock left behind by a crash (older than 10 min) is taken over. */
+async function takeLock(lock: string): Promise<boolean> {
+  for (let i = 0; i < 2; i++) {
+    try { await writeFile(lock, String(process.pid), { flag: 'wx' }); return true; }
+    catch (e) {
+      if ((e as NodeJS.ErrnoException).code !== 'EEXIST') throw e;
+      const age = await stat(lock).then(s => Date.now() - s.mtimeMs, () => 0);
+      if (age < 10 * 60_000) return false;
+      await unlink(lock).catch(() => {});
+    }
+  }
+  return false;
 }
 
 export async function postVideo(origin: string, session: Session, job: Job, operation: Operation) {
   operation.check();
   if (await session.inspect() !== 'logged_in') throw new Error('POST_MANUAL');
   const item = await reserveVideo(origin, job);
-  const page = await session.context.newPage();
+  // Work in the account's own window (no new window per video).
+  const page = await mainPage(session.context);
   let submitted = false;
   let step = 'open upload page';
   try {
@@ -66,10 +96,7 @@ export async function postVideo(origin: string, session: Session, job: Job, oper
     step = 'wait for upload';
     const button = page.locator('[data-e2e="post_video_button"]').first();
     await button.waitFor({ timeout: 90000 });
-    // Wait for TikTok to finish processing the selected file.
-    for (let i = 0; i < 120 && !await button.isEnabled(); i++) {
-      operation.check(); await new Promise(resolve => setTimeout(resolve, 1000));
-    }
+    await waitForUpload(page, button, operation);
     operation.check();
     // Re-verify identity on the main-site tab (Studio can't show it) and that TikTok finished processing.
     if (new URL(page.url()).pathname.startsWith('/login') || await session.inspect() !== 'logged_in' || !await button.isEnabled()) throw new Error('POST_MANUAL');
@@ -98,16 +125,46 @@ export async function postVideo(origin: string, session: Session, job: Job, oper
     await saveJson(item.receipt, { jobId: job.id, state: deleted ? 'posted-deleted' : 'posted', file: basename(item.video) });
   } catch (e) {
     const manual = !submitted;
-    await saveJson(item.receipt, { jobId: job.id, state: submitted ? 'unknown' : 'needs_review', file: basename(item.video), step });
+    // Failed BEFORE the Post click landed: TikTok never got it, so the video goes back to the pool
+    // ('retry', tried at most 3 times). After the click the outcome is unknown: never reuse it.
+    await saveJson(item.receipt, submitted
+      ? { jobId: job.id, state: 'unknown', file: basename(item.video), step }
+      : { jobId: job.id, state: 'retry', attempts: item.attempts + 1, file: basename(item.video), step });
     // Keep what the page showed, for diagnosis: %LOCALAPPDATA%\SocialManagerBrowser\posting\debug.
     await saveDebug(page, job, step, e).catch(() => {});
-    if (e instanceof Error && e.message === 'POST_SCHEDULE_MANUAL') throw e;
+    if (e instanceof Error && (e.message === 'POST_SCHEDULE_MANUAL' || e.message === 'UPLOAD_FAILED')) throw e;
     throw new Error(manual ? 'POST_MANUAL' : 'POST_UNKNOWN');
   }
   // Leave the upload/result tab open so the user can inspect confirmation or finish a challenge.
 }
 
 const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
+
+const UPLOAD_LIMIT_MS = 25 * 60_000; // a big file over a shared proxy can take many minutes
+const UPLOAD_STALL_MS = 5 * 60_000;  // …but give up when its progress stops moving
+const UPLOAD_FAILED_TEXT = /Couldn.t upload|Upload failed|Không thể tải lên|Tải lên thất bại/i;
+/** TikTok enables Post once the upload and processing are done. Wait while the upload progresses;
+ *  when TikTok says the upload failed, press its Retry (3 times at most). */
+export async function waitForUpload(page: Page, button: { isEnabled: () => Promise<boolean> }, operation: Operation) {
+  const started = Date.now();
+  let lastProgress = '', lastMove = Date.now(), retries = 0;
+  while (!(await button.isEnabled().catch(() => false))) {
+    operation.check();
+    const failed = await page.getByText(UPLOAD_FAILED_TEXT).first().isVisible().catch(() => false);
+    if (failed) {
+      if (retries >= 3) throw new Error('UPLOAD_FAILED');
+      const dialog = page.locator('[role="dialog"], .TUXModal').filter({ hasText: UPLOAD_FAILED_TEXT }).first();
+      const scope = (await dialog.isVisible().catch(() => false)) ? dialog : page;
+      await scope.getByRole('button', { name: /^\s*(Retry|Thử lại)\s*$/i }).first().click({ timeout: 5000 }).catch(() => {});
+      retries++; lastMove = Date.now(); await sleep(3000); continue;
+    }
+    // The upload card shows "35.09%": any change counts as progress.
+    const progress = await page.evaluate(() => (document.body.innerText.match(/\b(\d{1,3}(?:\.\d+)?)%/) || [])[1] ?? '').catch(() => '');
+    if (progress !== lastProgress) { lastProgress = progress; lastMove = Date.now(); }
+    if (Date.now() - lastMove > UPLOAD_STALL_MS || Date.now() - started > UPLOAD_LIMIT_MS) throw new Error('UPLOAD_FAILED');
+    await sleep(2000);
+  }
+}
 
 /** A screenshot + what was being done when a post failed (the 30 newest are kept). */
 async function saveDebug(page: Page, job: Job, step: string, error: unknown) {

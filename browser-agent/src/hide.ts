@@ -1,7 +1,8 @@
 import { readFile } from 'node:fs/promises';
 import type { Page } from 'playwright-core';
-import type { Session, Job } from './browser.js';
+import { mainPage, type Session, type Job } from './browser.js';
 import type { Operation } from './operation.js';
+import { inEnglish } from './login.js';
 
 // "Ẩn bài": switch every public post of the signed-in account to Only me in
 // TikTok Studio. The DOM work is the TikTok Studio Private extension's engine
@@ -89,7 +90,8 @@ export async function waitForLogin(session: Session, operation: Operation, repor
 
 export async function hidePosts(session: Session, job: Job, operation: Operation, report: (p: HideProgress) => void): Promise<HideProgress> {
   operation.check();
-  const page = await session.context.newPage();
+  // Work in the account's own window (no extra window).
+  const page = await mainPage(session.context);
   let last: HideProgress = { changed: 0, skipped: 0, scanned: 0, message: 'Đang mở TikTok Studio…' };
   report(last);
   try {
@@ -114,7 +116,7 @@ export async function hidePosts(session: Session, job: Job, operation: Operation
       if (last.status) return last;
     }
   } finally {
-    // Close only the Studio tab; the profile window itself is managed by the session.
-    await page.close().catch(() => {});
+    // This is the account's own window: leave Studio for TikTok's home page instead of closing it.
+    await page.goto(inEnglish('https://www.tiktok.com/'), { waitUntil: 'domcontentloaded', timeout: 30000 }).catch(() => {});
   }
 }

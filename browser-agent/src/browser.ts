@@ -1,5 +1,5 @@
 import { Camoufox, getRandomPreset } from 'camoufox';
-import type { BrowserContext } from 'playwright-core';
+import type { BrowserContext, Page } from 'playwright-core';
 import { mkdir, readFile, writeFile, unlink } from 'node:fs/promises';
 import { join } from 'node:path';
 import { isIP } from 'node:net';
@@ -18,8 +18,14 @@ export interface Job extends MailLogin { id: string; kind: string; ownerId: numb
 export interface MailCapture { refreshToken: string; clientId: string }
 export interface Report { jobId: string; profileId?: string; status?: string; done?: boolean; ip?: string; latency?: number; error?: string; mail?: MailCapture; twofaSecret?: string; hide?: { changed: number; skipped: number; scanned: number; message: string; status?: string; errorCode?: string }; feed?: { watched: number; liked: number; message: string; status?: string; errorCode?: string }; post?: { posted: number; total: number; error?: string }; handle?: string; login?: string }
 export interface Session { context: BrowserContext; job: Job; inspect: () => Promise<string>; close: () => Promise<void>; login?: LoginOutcome; mailCapture?: MailCapture; handle?: string }
-export async function check(context: BrowserContext) {
-  const page = await context.newPage();
+/** The account's one window: every job works in its first open page, so no extra windows pop up
+ *  (in Camoufox/Firefox a new page is a new window). A new page only if the window has none. */
+export async function mainPage(context: BrowserContext): Promise<Page> {
+  return context.pages().find(p => !p.isClosed?.()) ?? await context.newPage();
+}
+/** Check the proxy's exit IP — in `reuse` (the account's window) when given, else a throwaway page. */
+export async function check(context: BrowserContext, reuse?: Page) {
+  const page = reuse ?? await context.newPage();
   const start = Date.now();
   try {
     const res = await page.goto('https://api.ipify.org?format=json', { timeout: 30000 });
@@ -27,8 +33,10 @@ export async function check(context: BrowserContext) {
     const { ip } = await res.json();
     if (typeof ip !== 'string' || !isIP(ip)) throw new Error('PROXY_FAILED');
     return { ip, latency: Date.now() - start };
-  } finally { await page.close(); }
+  } finally { if (!reuse) await page.close(); }
 }
+/** TikTok Studio only opens for a signed-in account (logged out, it redirects to /login). */
+const onStudio = (url: string) => { try { const u = new URL(url); return u.hostname === 'www.tiktok.com' && u.pathname.startsWith('/tiktokstudio'); } catch { return false; } };
 export async function checkProxy(job: Job, operation: Operation) {
   operation.check();
   if (!job.proxy) throw new Error('PROXY_FAILED');
@@ -72,10 +80,11 @@ export async function openSession(origin: string, job: Job, operation: Operation
     ownedContext.on('close', () => { closed = true; void unlink(lock).catch(() => {}); });
     await operation.own(() => ownedContext.close());
     operation.check();
+    // The account's one window: the proxy check and TikTok both run in it (no extra window).
+    const page = await mainPage(context);
     // This request uses the browser's proxy. Failure never retries without a proxy.
-    if (job.proxy) await check(context);
+    if (job.proxy) await check(context, page);
     operation.check();
-    const page = context.pages()[0] ?? await context.newPage();
     // Preserve an authenticated profile's landing page. TikTok may abort the
     // requested login navigation while redirecting an already logged-in user.
     const loginCookies = await context.cookies('https://www.tiktok.com');
@@ -104,7 +113,18 @@ export async function openSession(origin: string, job: Job, operation: Operation
     }
     job.password = null; job.twofa = null; job.mailPassword = null; job.mailRefreshToken = null;
     const activeContext = context;
-    return { context: activeContext, job, login, mailCapture: captured.mail, handle, inspect: async () => closed ? 'closed' : observe(activeContext.pages().find(p => p.url().startsWith('https://www.tiktok.com/')) ?? page, job.username!).catch(() => 'unverified'),
+    // Jobs work in this one window, often on TikTok Studio, which has no nav profile link to read.
+    // Once this session has seen the right account, Studio (signed-in only; a logout lands on
+    // /login) still counts as that account.
+    let verified = false;
+    const inspect = async () => {
+      if (closed) return 'closed';
+      const current = activeContext.pages().find(p => p.url().startsWith('https://www.tiktok.com/')) ?? page;
+      const status = await observe(current, job.username!).catch(() => 'unverified');
+      if (status === 'logged_in') verified = true;
+      return status === 'unverified' && verified && onStudio(current.url()) ? 'logged_in' : status;
+    };
+    return { context: activeContext, job, login, mailCapture: captured.mail, handle, inspect,
       close: async () => { await activeContext.close(); await unlink(lock).catch(() => {}); } };
   } catch (e) {
     job.password = null; job.twofa = null; job.mailPassword = null; job.mailRefreshToken = null;

@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtemp, writeFile, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { reserveVideo, postVideo } from '../dist/posting.js';
+import { reserveVideo, postVideo, waitForUpload } from '../dist/posting.js';
 import { Operation } from '../dist/operation.js';
 import { navigateAccount } from '../dist/login.js';
 
@@ -43,6 +43,46 @@ test('a shared scenario folder gives each video to exactly one account, even in 
   const own = await reserveVideo('https://fixture.invalid', { ...base, shared: false, id: 'j5', accountId: 5 });
   assert.equal(own.video, join(folder, '01.mp4'));
 });
+test('a video that failed before TikTok got it returns to the pool (3 tries), one window at a time', async () => {
+  const { writeFile: wf } = await import('node:fs/promises');
+  const folder = await mkdtemp(join(tmpdir(), 'sm-retry-fixture-'));
+  await writeFile(join(folder, '01.mp4'), 'fixture');
+  const base = { kind: 'post', ownerId: Date.now(), folder, shared: true };
+  const first = await reserveVideo('https://fixture.invalid', { ...base, id: 'a', accountId: 1 });
+  assert.equal(first.attempts, 0);
+  // Upload failed before the Post click: marked 'retry' → two windows race for it, exactly one wins.
+  await wf(first.receipt, JSON.stringify({ state: 'retry', attempts: 1, file: '01.mp4' }));
+  const race = await Promise.allSettled([1, 2].map(n => reserveVideo('https://fixture.invalid', { ...base, id: `r${n}`, accountId: 1 + n })));
+  assert.equal(race.filter(r => r.status === 'fulfilled').length, 1);
+  assert.equal(race.find(r => r.status === 'fulfilled').value.attempts, 1);
+  assert.match(String(race.find(r => r.status === 'rejected').reason), /FOLDER_EMPTY/);
+  // Tried 3 times: kept out of the pool. Posted / unknown: never reused.
+  for (const state of [{ state: 'retry', attempts: 3 }, { state: 'unknown' }, { state: 'posted' }]) {
+    await wf(first.receipt, JSON.stringify({ ...state, file: '01.mp4' }));
+    await assert.rejects(reserveVideo('https://fixture.invalid', { ...base, id: 'x', accountId: 9 }), /FOLDER_EMPTY/, JSON.stringify(state));
+  }
+});
+test('waiting for the upload presses Retry when TikTok says it failed, and gives up after 3', async () => {
+  const fakePage = (failures, enableAfterPolls) => {
+    let polls = 0, retries = 0;
+    const failedNow = () => retries < failures;
+    const retryBtn = { first: () => ({ click: async () => { retries++; } }) };
+    const page = {
+      getByText: () => ({ first: () => ({ isVisible: async () => failedNow() }) }),
+      locator: () => ({ filter: () => ({ first: () => ({ isVisible: async () => true, getByRole: () => retryBtn }) }) }),
+      getByRole: () => retryBtn,
+      evaluate: async () => String(polls),
+    };
+    const button = { isEnabled: async () => !failedNow() && ++polls > enableAfterPolls };
+    return { page, button, retries: () => retries };
+  };
+  const ok = fakePage(2, 1);
+  await waitForUpload(ok.page, ok.button, new Operation(() => true));
+  assert.equal(ok.retries(), 2, 'two failed uploads were retried, then it finished');
+  const bad = fakePage(9, 0);
+  await assert.rejects(waitForUpload(bad.page, bad.button, new Operation(() => true)), /UPLOAD_FAILED/);
+  assert.equal(bad.retries(), 3);
+});
 test('posting takes one file, skips reserved files per account and records confirmation', async () => {
   const folder = await mkdtemp(join(tmpdir(), 'sm-post-fixture-'));
   await writeFile(join(folder, '01.mp4'), 'fixture');
@@ -57,7 +97,8 @@ test('posting takes one file, skips reserved files per account and records confi
     getByRole: () => ({ first: () => ({ waitFor: async () => {}, isVisible: async () => false, isEnabled: async () => true, click: async () => { clicks++; } }) }),
     getByText: () => ({ first: () => ({ waitFor: async () => {} }) }),
   };
-  const session = { inspect: async () => 'logged_in', context: { newPage: async () => page } };
+  // The account's one window is reused for every video; opening another window is a failure.
+  const session = { inspect: async () => 'logged_in', context: { pages: () => [page], newPage: async () => { throw new Error('must not open a new window'); } } };
   await postVideo('https://fixture.invalid', session, job, new Operation(() => true));
   assert.equal(clicks, 1); assert.equal(caption, 'Fixture caption'); assert.equal(chosen, join(folder, '01.mp4'));
   const next = await reserveVideo('https://fixture.invalid', { ...job, id: 'second' });

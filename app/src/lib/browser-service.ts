@@ -17,7 +17,7 @@ export const token = () => Array.from(crypto.getRandomValues(new Uint8Array(32))
 const pending = ["queued", "claimed"];
 const active = [...pending, "running"];
 const statuses = ["starting", "open", "needs_verification", "unverified", "logged_in", "wrong_account", "closed", "error", "interrupted"];
-const errorCodes = ["PROXY_FAILED", "BROWSER_FAILED", "PROFILE_BUSY", "LOGIN_MANUAL", "NETWORK", "INTERRUPTED", "CONFIG_CHANGED", "CLOSED", 'FOLDER_EMPTY', 'FOLDER_INVALID', 'POST_UNKNOWN', 'POST_MANUAL', 'POST_SCHEDULE_MANUAL', 'FILE_CHANGED', 'HIDE_MANUAL', 'HIDE_FAILED', 'FEED_MANUAL', 'FEED_FAILED'];
+const errorCodes = ["PROXY_FAILED", "BROWSER_FAILED", "PROFILE_BUSY", "LOGIN_MANUAL", "NETWORK", "INTERRUPTED", "CONFIG_CHANGED", "CLOSED", 'FOLDER_EMPTY', 'FOLDER_INVALID', 'POST_UNKNOWN', 'POST_MANUAL', 'POST_SCHEDULE_MANUAL', 'UPLOAD_FAILED', 'FILE_CHANGED', 'HIDE_MANUAL', 'HIDE_FAILED', 'FEED_MANUAL', 'FEED_FAILED'];
 const atLeast = (version: string, [a, b, c]: [number, number, number]) => {
   if (!/^\d+\.\d+\.\d+$/.test(version)) return false;
   const [x, y, z] = version.split('.').map(Number);
