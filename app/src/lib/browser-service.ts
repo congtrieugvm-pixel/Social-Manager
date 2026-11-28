@@ -90,18 +90,32 @@ export async function accountFor(owner: number, accountId: number) {
   const [a] = await db.select().from(accounts).where(and(eq(accounts.id, accountId), eq(accounts.ownerUserId, owner)));
   if (!a) fail("Không tìm thấy tài khoản", 404); return a;
 }
-export async function effective(owner: number, accountId: number) {
-  const a = await accountFor(owner, accountId);
+type ProxyRow = typeof proxies.$inferSelect;
+type ConfigAccount = { groupId: number | null; browserProxyMode: string; browserProxyId: number | null; username: string };
+/** Which proxy an account's browser uses (its own, its group's, or none) — pure, so a batch of
+ *  accounts can be resolved from rows loaded once (see queue()). */
+function resolveConfig<A extends ConfigAccount>(a: A, groupProxy: (groupId: number) => number | null | undefined, proxyById: (id: number) => ProxyRow | undefined) {
   let proxyId = a.browserProxyMode === "custom" ? a.browserProxyId : null;
   let source = a.browserProxyMode === "custom" ? "Riêng" : "Trực tiếp";
   if (a.browserProxyMode === "inherit" && a.groupId !== null) {
-    const [g] = await db.select().from(groups).where(and(eq(groups.id, a.groupId), eq(groups.ownerUserId, owner)));
-    if (!g) fail("Nhóm không thuộc tài khoản website này", 409);
-    proxyId = g.browserProxyId; source = proxyId ? "Nhóm" : "Trực tiếp";
+    const g = groupProxy(a.groupId);
+    if (g === undefined) fail("Nhóm không thuộc tài khoản website này", 409);
+    proxyId = g ?? null; source = proxyId ? "Nhóm" : "Trực tiếp";
   }
   if (a.browserProxyMode === "custom" && !proxyId) fail("Chưa chọn proxy riêng", 409);
-  const proxy = proxyId ? await proxyFor(owner, proxyId) : null;
+  const proxy = proxyId ? proxyById(proxyId) ?? fail("Không tìm thấy proxy", 404) : null;
   return { account: a, proxy, source, label: proxy ? `${source}: ${proxy.name}` : "Không dùng proxy", key: JSON.stringify([a.groupId, a.browserProxyMode, proxyId, proxy?.revision ?? 0, a.username]) };
+}
+export async function effective(owner: number, accountId: number) {
+  const a = await accountFor(owner, accountId);
+  let groupProxy: number | null | undefined;
+  if (a.browserProxyMode === "inherit" && a.groupId !== null) {
+    const [g] = await db.select({ proxyId: groups.browserProxyId }).from(groups).where(and(eq(groups.id, a.groupId), eq(groups.ownerUserId, owner)));
+    groupProxy = g ? g.proxyId : undefined;
+  }
+  const proxyId = a.browserProxyMode === "custom" ? a.browserProxyId : groupProxy ?? null;
+  const p = proxyId ? await proxyFor(owner, proxyId) : undefined;
+  return resolveConfig(a, () => groupProxy, () => p);
 }
 export const MAX_WINDOWS = 10;
 export async function expireJobs(owner: number) {
@@ -306,37 +320,54 @@ export async function queue(owner: number, b: Record<string, unknown>) {
   const outstanding = await db.select({ id: jobs.id }).from(jobs).where(and(eq(jobs.deviceId, deviceId), inArray(jobs.state, pending)));
   if (outstanding.length + targets.length > 40) fail("Hàng đợi đầy. Hãy đợi hoặc hủy lệnh cũ.", 409);
   const result: Array<{ id: number; ok: boolean; error?: string }> = [];
+  // Free-plan Workers get ~10 ms CPU per request and each D1 query costs ~1 ms, so load what every
+  // target needs in a handful of batched queries (not ~6 per account), decide in memory, and
+  // insert the jobs together at the end.
+  const accountRows = kind === "check_proxy" || !targets.length ? [] : await db.select({ id: accounts.id, groupId: accounts.groupId, browserProxyMode: accounts.browserProxyMode, browserProxyId: accounts.browserProxyId, username: accounts.username })
+    .from(accounts).where(and(eq(accounts.ownerUserId, owner), inArray(accounts.id, targets)));
+  const accountById = new Map(accountRows.map(a => [a.id, a]));
+  const groupIds = [...new Set(accountRows.filter(a => a.browserProxyMode === "inherit" && a.groupId !== null).map(a => a.groupId!))];
+  const accountIds = accountRows.map(a => a.id);
+  const [groupRows, profileRows, activeRows, postingRows] = await Promise.all([
+    groupIds.length ? db.select({ id: groups.id, proxyId: groups.browserProxyId }).from(groups).where(and(eq(groups.ownerUserId, owner), inArray(groups.id, groupIds))) : Promise.resolve([]),
+    accountIds.length ? db.select().from(profiles).where(inArray(profiles.accountId, accountIds)) : Promise.resolve([]),
+    accountIds.length ? db.select({ accountId: jobs.accountId, kind: jobs.kind, ownerUserId: jobs.ownerUserId }).from(jobs).where(and(inArray(jobs.accountId, accountIds), inArray(jobs.state, active))) : Promise.resolve([]),
+    (kind === 'post' || kind === 'preview') && accountIds.length ? db.select().from(browserPosting).where(and(eq(browserPosting.ownerUserId, owner), eq(browserPosting.deviceId, deviceId), inArray(browserPosting.accountId, accountIds))) : Promise.resolve([]),
+  ]);
+  const groupProxy = new Map(groupRows.map(g => [g.id, g.proxyId]));
+  const proxyIds = [...new Set([
+    ...(kind === "check_proxy" ? targets : []),
+    ...accountRows.map(a => a.browserProxyMode === "custom" ? a.browserProxyId : a.browserProxyMode === "inherit" && a.groupId !== null ? groupProxy.get(a.groupId) ?? null : null),
+  ].filter((v): v is number => typeof v === "number"))];
+  const proxyRows = proxyIds.length ? await db.select().from(proxies).where(and(eq(proxies.ownerUserId, owner), inArray(proxies.id, proxyIds))) : [];
+  const proxyById = new Map(proxyRows.map(p => [p.id, p]));
+  const profileByAccount = new Map(profileRows.map(p => [p.accountId, p]));
+  const busy = (aid: number, k: string, mine = true) => activeRows.some(j => j.accountId === aid && j.kind === k && (!mine || j.ownerUserId === owner));
+  const postingByAccount = new Map(postingRows.map(s => [s.accountId, s]));
+  const inserts: Array<typeof jobs.$inferInsert> = [];
   for (const target of targets) {
     try {
-      const config = kind !== "check_proxy" ? await effective(owner, target) : null;
-      const p = kind === "check_proxy" ? await proxyFor(owner, target) : config?.proxy;
+      const a = kind !== "check_proxy" ? accountById.get(target) ?? fail("Không tìm thấy tài khoản", 404) : null;
+      const config = a ? resolveConfig(a, g => groupProxy.has(g) ? groupProxy.get(g) : undefined, pid => proxyById.get(pid)) : null;
+      const p = kind === "check_proxy" ? proxyById.get(target) ?? fail("Không tìm thấy proxy", 404) : config?.proxy;
       if (kind !== "close" && p && !p.enabled) fail("Proxy đã bị vô hiệu hóa", 409);
-      const [profile] = config ? await db.select().from(profiles).where(eq(profiles.accountId, target)) : [];
+      const profile = config ? profileByAccount.get(target) : undefined;
       if (kind !== 'preview' && profile && profile.ownerUserId === owner && profile.deviceId !== deviceId && profile.status !== "revoked") fail("Hồ sơ nằm trên máy khác. Dùng Tạo hồ sơ trên máy khác trước.", 409);
       if (kind === "close" && (!profile || profile.ownerUserId !== owner)) fail("Chưa có hồ sơ", 409);
-      if (kind === 'open') {
-        const [existing] = await db.select().from(jobs).where(and(eq(jobs.accountId, target), eq(jobs.ownerUserId, owner), eq(jobs.kind, 'open'), inArray(jobs.state, active)));
-        if (existing) { result.push({ id: target, ok: true }); continue; }
-      }
-      if (kind === 'hide') {
-        const [existing] = await db.select().from(jobs).where(and(eq(jobs.accountId, target), eq(jobs.ownerUserId, owner), eq(jobs.kind, 'hide'), inArray(jobs.state, active)));
-        if (existing) fail('Tài khoản đang ẩn bài', 409);
-      }
+      if (kind === 'open' && (busy(target, 'open') || inserts.some(j => j.accountId === target))) { result.push({ id: target, ok: true }); continue; }
+      if (kind === 'hide' && busy(target, 'hide')) fail('Tài khoản đang ẩn bài', 409);
       const jobId = uuid();
       let payload: string | null = null;
       if (kind === 'feed') {
-        const [existing] = await db.select().from(jobs).where(and(eq(jobs.accountId, target), eq(jobs.ownerUserId, owner), eq(jobs.kind, 'feed'), inArray(jobs.state, active)));
-        if (existing) fail('Tài khoản đang lướt feed', 409);
+        if (busy(target, 'feed')) fail('Tài khoản đang lướt feed', 409);
         const durationMs = Math.min(60 * 60 * 1000, Math.max(30 * 1000, Number(b.durationMs) || 5 * 60 * 1000));
         const likeRate = Math.min(0.6, Math.max(0, Number(b.likeRate) ?? 0.15));
         payload = JSON.stringify({ durationMs, likeRate });
       }
       if (kind === 'post' || kind === 'preview') {
         if (kind === 'post' && (!profile || profile.deviceId !== deviceId || profile.status !== 'logged_in')) fail('Mở trình duyệt và xác minh đúng tài khoản trước khi đăng', 409);
-        const [settings] = await db.select().from(browserPosting).where(and(eq(browserPosting.accountId, target), eq(browserPosting.ownerUserId, owner), eq(browserPosting.deviceId, deviceId)));
-        if (!settings) fail('Chưa gán thư mục trên máy này', 409);
-        const [existing] = await db.select().from(jobs).where(and(eq(jobs.accountId, target), eq(jobs.kind, kind), inArray(jobs.state, active)));
-        if (existing) fail('Tài khoản đang có lệnh đăng bài', 409);
+        const settings = postingByAccount.get(target) ?? fail('Chưa gán thư mục trên máy này', 409);
+        if (busy(target, kind, false)) fail('Tài khoản đang có lệnh đăng bài', 409);
         payload = JSON.stringify({ folder: settings.folder, caption: settings.caption });
         if (kind === 'post') {
           // Post the next unused video(s) in the folder: `perAccount` of them per account. Post now,
@@ -368,11 +399,13 @@ export async function queue(owner: number, b: Record<string, unknown>) {
           payload = JSON.stringify({ folder: settings.folder, caption: settings.caption, scheduleAt: scheduleAts[0], scheduleAts, deleteAfter });
         }
       }
-      await db.insert(jobs).values({ id: jobId, ownerUserId: owner, deviceId, kind, accountId: config ? target : null, proxyId: p?.id ?? null,
+      inserts.push({ id: jobId, ownerUserId: owner, deviceId, kind, accountId: config ? target : null, proxyId: p?.id ?? null,
         payload, configKey: config?.key ?? String(p?.revision), autofill: b.autofill === false ? 0 : 1, createdAt: now(), expiresAt: now() + (['open', 'hide', 'feed'].includes(kind) ? 3600 : 600) }); // open/hide/feed may wait for a free window
       result.push({ id: target, ok: true });
     } catch (e) { result.push({ id: target, ok: false, error: e instanceof AuthError ? e.message : "Đã có lệnh/phiên đang chạy cho tài khoản này" }); }
   }
+  // D1 allows 100 bound parameters per statement; a job row binds 11 → 8 rows per INSERT.
+  for (let i = 0; i < inserts.length; i += 8) await db.insert(jobs).values(inserts.slice(i, i + 8));
   return { results: result };
 }
 export async function cancel(owner: number, jobId: string) {
@@ -405,12 +438,27 @@ export async function sync(device: Device, b: Record<string, unknown>) {
   const version = typeof b.version === 'string' && /^\d+\.\d+\.\d+$/.test(b.version) ? b.version.slice(0, 30) : device.version;
   await db.update(devices).set({ lastSeenAt: now(), runId, version }).where(eq(devices.id, device.id));
   await expireJobs(device.ownerUserId);
-  const reports = Array.isArray(b.reports) ? b.reports.slice(0, 25) : [];
-  for (const raw of reports) {
-    if (!raw || typeof raw !== "object") continue;
-    const r = raw as Record<string, unknown>;
-    const [job] = await db.select().from(jobs).where(and(eq(jobs.id, String(r.jobId)), eq(jobs.deviceId, device.id), eq(jobs.ownerUserId, device.ownerUserId), eq(jobs.state, "running")));
-    if (!job) continue;
+  const reports = (Array.isArray(b.reports) ? b.reports.slice(0, 25) : []).filter(isRecord);
+  // The agent re-reports every open window on every sync. Load the reported jobs and their
+  // profiles in two queries (not one per report) and skip writes that change nothing — Free-plan
+  // Workers get ~10 ms CPU per request and each D1 query costs ~1 ms.
+  const reportIds = [...new Set(reports.map(r => String(r.jobId)))];
+  const jobRows = reportIds.length ? await db.select().from(jobs).where(and(inArray(jobs.id, reportIds), eq(jobs.deviceId, device.id), eq(jobs.ownerUserId, device.ownerUserId), eq(jobs.state, "running"))) : [];
+  const jobById = new Map(jobRows.map(j => [j.id, j]));
+  const profileAccountIds = [...new Set(jobRows.map(j => j.accountId).filter((v): v is number => v !== null))];
+  const profileRows = profileAccountIds.length ? await db.select({ accountId: profiles.accountId, id: profiles.id, jobId: profiles.jobId, status: profiles.status }).from(profiles)
+    .where(and(inArray(profiles.accountId, profileAccountIds), eq(profiles.ownerUserId, device.ownerUserId))) : [];
+  const profileByAccount = new Map(profileRows.map(p => [p.accountId, p]));
+  /** A status report that would not change the stored profile needs no write. */
+  const unchanged = (job: typeof jobRows[number], status: string, profileId: unknown) => {
+    const p = profileByAccount.get(job.accountId!);
+    return !!p && p.status === status && p.jobId === job.id && p.id === String(profileId);
+  };
+  const remember = (job: typeof jobRows[number], status: string) => { const p = profileByAccount.get(job.accountId!); if (p && p.jobId === job.id) p.status = status; };
+  const finished = new Set<string>(); // jobs ended earlier in this batch: later reports for them are ignored (as before)
+  for (const r of reports) {
+    const job = jobById.get(String(r.jobId));
+    if (!job || finished.has(job.id)) continue;
     // The real @handle seen after the agent logged in with this account's own credentials (the
     // saved username was a stale handle TikTok no longer knows) → correct the account's username,
     // unless another account of this owner already uses it.
@@ -439,27 +487,30 @@ export async function sync(device: Device, b: Record<string, unknown>) {
       if (r.done === true) {
         const files = previewFiles(r.files);
         await db.update(jobs).set({ state: files.length ? 'done' : 'error', result: JSON.stringify(files), error: files.length ? null : code(r.error ?? 'FOLDER_EMPTY') }).where(eq(jobs.id, job.id));
+        finished.add(job.id);
       }
     } else if (job.kind === "check_proxy") {
       if (r.done === true) {
         const ip = typeof r.ip === "string" && /^[0-9a-fA-F.:]{3,45}$/.test(r.ip) ? r.ip : null;
         await db.insert(checks).values({ jobId: job.id, ownerUserId: device.ownerUserId, deviceId: device.id, proxyId: job.proxyId!, revision: Number(job.configKey), ip, latency: Number.isFinite(r.latency) ? Math.max(0, Math.min(60000, Number(r.latency))) : null, error: ip ? null : code(r.error), checkedAt: now() }).onConflictDoNothing();
         await db.update(jobs).set({ state: ip ? "done" : "error", error: ip ? null : code(r.error) }).where(eq(jobs.id, job.id));
+        finished.add(job.id);
       }
     } else if (job.kind === 'feed') {
       const status = typeof r.status === "string" && statuses.includes(r.status) ? r.status : null;
-      if (status) await db.update(profiles).set({ status, updatedAt: now() }).where(and(eq(profiles.accountId, job.accountId!), eq(profiles.jobId, job.id), eq(profiles.ownerUserId, device.ownerUserId), eq(profiles.id, String(r.profileId))));
+      if (status && !unchanged(job, status, r.profileId)) { await db.update(profiles).set({ status, updatedAt: now() }).where(and(eq(profiles.accountId, job.accountId!), eq(profiles.jobId, job.id), eq(profiles.ownerUserId, device.ownerUserId), eq(profiles.id, String(r.profileId)))); remember(job, status); }
       const progress = feedProgress(r.feed);
       if (progress) await db.update(jobs).set({ result: JSON.stringify(progress) }).where(eq(jobs.id, job.id));
       if (r.done === true) {
         await db.update(jobs).set({ state: r.error ? "error" : "done", error: r.error ? code(r.error) : null }).where(eq(jobs.id, job.id));
         await db.update(profiles).set({ status: "closed", updatedAt: now() }).where(and(eq(profiles.accountId, job.accountId!), eq(profiles.jobId, job.id), eq(profiles.ownerUserId, device.ownerUserId)));
+        finished.add(job.id);
       }
-      else if (status && ["closed", "error", "interrupted"].includes(status)) await db.update(jobs).set({ state: "error", error: status === "closed" ? "CLOSED" : code(r.error) }).where(eq(jobs.id, job.id));
+      else if (status && ["closed", "error", "interrupted"].includes(status)) { await db.update(jobs).set({ state: "error", error: status === "closed" ? "CLOSED" : code(r.error) }).where(eq(jobs.id, job.id)); finished.add(job.id); }
     } else if (job.kind === 'hide') {
       // Window status (only when this job opened the profile) …
       const status = typeof r.status === "string" && statuses.includes(r.status) ? r.status : null;
-      if (status) await db.update(profiles).set({ status, updatedAt: now() }).where(and(eq(profiles.accountId, job.accountId!), eq(profiles.jobId, job.id), eq(profiles.ownerUserId, device.ownerUserId), eq(profiles.id, String(r.profileId))));
+      if (status && !unchanged(job, status, r.profileId)) { await db.update(profiles).set({ status, updatedAt: now() }).where(and(eq(profiles.accountId, job.accountId!), eq(profiles.jobId, job.id), eq(profiles.ownerUserId, device.ownerUserId), eq(profiles.id, String(r.profileId)))); remember(job, status); }
       // … Studio progress …
       const progress = hideProgress(r.hide);
       if (progress) await db.update(jobs).set({ result: JSON.stringify(progress) }).where(eq(jobs.id, job.id));
@@ -468,16 +519,20 @@ export async function sync(device: Device, b: Record<string, unknown>) {
         await db.update(jobs).set({ state: r.error ? "error" : "done", error: r.error ? code(r.error) : null }).where(eq(jobs.id, job.id));
         // A window this job opened is closed by the agent once the job ends (it is no longer allowed).
         await db.update(profiles).set({ status: "closed", updatedAt: now() }).where(and(eq(profiles.accountId, job.accountId!), eq(profiles.jobId, job.id), eq(profiles.ownerUserId, device.ownerUserId)));
+        finished.add(job.id);
       }
-      else if (status && ["closed", "error", "interrupted"].includes(status)) await db.update(jobs).set({ state: "error", error: status === "closed" ? "CLOSED" : code(r.error) }).where(eq(jobs.id, job.id));
+      else if (status && ["closed", "error", "interrupted"].includes(status)) { await db.update(jobs).set({ state: "error", error: status === "closed" ? "CLOSED" : code(r.error) }).where(eq(jobs.id, job.id)); finished.add(job.id); }
     } else if (job.kind === "close" || job.kind === 'post') {
-      if (r.done === true) await db.update(jobs).set({ state: r.error ? "error" : "done", error: r.error ? code(r.error) : null }).where(eq(jobs.id, job.id));
+      if (r.done === true) { await db.update(jobs).set({ state: r.error ? "error" : "done", error: r.error ? code(r.error) : null }).where(eq(jobs.id, job.id)); finished.add(job.id); }
     } else {
       const status = typeof r.status === "string" && statuses.includes(r.status) ? r.status : null;
       if (!status) continue;
-      // A revoked/relocated generation cannot update the new profile.
-      await db.update(profiles).set({ status, updatedAt: now() }).where(and(eq(profiles.accountId, job.accountId!), eq(profiles.jobId, job.id), eq(profiles.ownerUserId, device.ownerUserId), eq(profiles.id, String(r.profileId))));
-      if (["closed", "error", "interrupted"].includes(status)) await db.update(jobs).set({ state: status === "closed" ? "done" : "error", error: status === "closed" ? null : code(r.error) }).where(eq(jobs.id, job.id));
+      // A revoked/relocated generation cannot update the new profile. Same status → nothing to write.
+      if (!unchanged(job, status, r.profileId)) {
+        await db.update(profiles).set({ status, updatedAt: now() }).where(and(eq(profiles.accountId, job.accountId!), eq(profiles.jobId, job.id), eq(profiles.ownerUserId, device.ownerUserId), eq(profiles.id, String(r.profileId))));
+        remember(job, status);
+      }
+      if (["closed", "error", "interrupted"].includes(status)) { await db.update(jobs).set({ state: status === "closed" ? "done" : "error", error: status === "closed" ? null : code(r.error) }).where(eq(jobs.id, job.id)); finished.add(job.id); }
     }
   }
   const allow = await allowedProfiles(device);

@@ -96,6 +96,11 @@ export async function safeJson<T = unknown>(
   try {
     return JSON.parse(text) as T & { error?: string };
   } catch {
+    // Cloudflare's own HTML error page (e.g. 503 when a request runs over the Workers Free plan's
+    // CPU limit) means nothing to the user — say what happened instead of dumping the HTML.
+    if (res.status >= 500 && /^\s*</.test(text)) {
+      return { error: `Máy chủ Cloudflare tạm quá tải (HTTP ${res.status}) — thử lại sau vài giây` } as T & { error?: string };
+    }
     return {
       error: `Response không phải JSON (HTTP ${res.status}): ${text.slice(0, 120)}`,
     } as T & { error?: string };

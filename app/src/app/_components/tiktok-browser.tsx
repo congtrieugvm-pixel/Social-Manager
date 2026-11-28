@@ -198,7 +198,11 @@ export function useTikTokBrowser(usernames: (id: number) => string | undefined) 
     try {
       for (let i = 0; i < targets.length; i += 20) {
         const chunk = targets.slice(i, i + 20);
-        const res = await postJson("/api/browser/jobs", { kind, ids: chunk, deviceId: device.id, autofill: true, ...extra });
+        const body = { kind, ids: chunk, deviceId: device.id, autofill: true, ...extra };
+        let res = await postJson("/api/browser/jobs", body);
+        // Cloudflare may stop a request that runs over the Free plan's CPU limit (HTML 502/503).
+        // The server only writes jobs at the very end and de-duplicates them, so one retry is safe.
+        if (res.status === 502 || res.status === 503) { await new Promise((r) => setTimeout(r, 1500)); res = await postJson("/api/browser/jobs", body); }
         const data = await safeJson<{ results: { id: number; ok: boolean; error?: string }[] }>(res);
         if (data.error) { failed.push(data.error); continue; }
         for (const r of data.results) r.ok ? sent++ : failed.push(`@${usernames(r.id) ?? r.id}: ${r.error}`);
